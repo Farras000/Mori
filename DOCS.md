@@ -903,3 +903,51 @@ All `x`/`y` values are in **tile coordinates** (pixels ÷ 32). The bot's positio
 | `server_overload_secs` | 30s | Reconnect wait after server overload |
 | `too_many_logins_secs` | 5s | Reconnect wait after too-many-logins rejection |
 | `maintenance_secs` | 600s | Reconnect wait after server maintenance rejection |
+
+---
+
+## gRPC API
+
+External control plane for other languages (Python, Go, Node, …), mirroring the Lua API (`LUA.md`). Runs alongside the web UI.
+
+**Endpoint**: `localhost:50051` (override with `MORI_GRPC_ADDR`, e.g. `127.0.0.1:50051`)
+**Schema**: `proto/mori.proto` (service `mori.v1.Mori`)
+
+### Auth (from env)
+
+If `MORI_GRPC_TOKEN` is set, every RPC must carry `authorization: Bearer <token>` metadata, else `UNAUTHENTICATED`. If unset, the server starts unauthenticated (warning logged).
+
+```bash
+MORI_GRPC_TOKEN=secret ./target/release/Mori
+```
+
+### Python example
+
+```bash
+pip install grpcio grpcio-tools
+python -m grpc_tools.protoc -I proto --python_out=examples --grpc_python_out=examples proto/mori.proto
+MORI_GRPC_TOKEN=secret python examples/python_grpc_bot.py
+```
+
+See `examples/python_grpc_bot.py` for spawn/query/action/event-streaming usage.
+
+### RPC groups
+
+| Group | RPCs |
+|-------|------|
+| Manager | `SpawnBot`, `SpawnLtokenBot`, `StopBot`, `ListBots`, `GetBotState`, `GetConfig` |
+| World actions | `Say`, `Warp`, `LeaveWorld`, `Respawn`, `Active`, `Enter`, `AcceptAccess` |
+| Tile / inventory | `Place`, `Hit`, `Wrench`, `WrenchPlayer`, `Wear`, `Unwear`, `Drop`, `Trash`, `FastDrop`, `FastTrash`, `Buy` |
+| Movement | `MoveRelative`, `MoveTo`, `WalkTo`, `SetDirection`, `FindPath` |
+| Collection | `Collect`, `CollectObject` (fire-and-forget; count not returned) |
+| Connection / raw | `Reconnect`, `Disconnect`, `SendPacket`, `SendRaw`, `SetMac` |
+| Settings | `SetAutoCollect`, `SetIgnoreGems`, `SetIgnoreEssences`, `SetAutoLeaveOnMod`, `SetAutoBan`, `SetCollectPathCheck`, `SetAutoReconnect`, `SetCollectInterval`, `SetCollectRange`, `SetReconnectInterval`, `SetPlaceDelay`, `SetWalkDelay`, `SetDelays`, `SetCollectConfig` |
+| Scripts | `RunScript`, `StopScript` (same embedded Lua runner) |
+| Queries | `GetWorld`, `GetInventory`, `GetPlayers`, `GetPlayer`, `GetTile`, `GetObject`, `GetItemInfo`, `ListItems`, `GetLocal`, `GetPing`, `IsInWorld`, `IsInTile` |
+| Events | `SubscribeEvents` (server-streaming; replaces Lua `listenEvents`) |
+
+Notes:
+
+* `place`/`hit`/`wrench`/`active` `x`/`y` are offsets from the bot's tile, like Lua.
+* Reads come from the shared `BotState` snapshot; writes go through the `BotCommand` queue. Unknown `bot_id` → `NOT_FOUND`.
+* `GetWorld` returns full tile lists — poll `GetTile`/`GetObject` for hot loops instead.

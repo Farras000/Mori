@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::mpsc;
+use crate::protocol::packet::GameUpdatePacket;
 use crate::world::TileType;
 
 #[derive(Default, Clone, Serialize, PartialEq)]
@@ -190,6 +191,8 @@ impl Default for BotState {
 pub enum BotCommand {
     Move { x: i32, y: i32 },
     WalkTo { x: u32, y: u32 },
+    /// Absolute tile walk (no pathfinding), mirrors Lua `moveTile`.
+    MoveTo { x: i32, y: i32 },
     RunScript { content: String },
     StopScript,
     Say { text: String },
@@ -199,13 +202,25 @@ pub enum BotCommand {
     Place { x: i32, y: i32, item: u32 },
     Hit { x: i32, y: i32 },
     Wrench { x: i32, y: i32 },
+    WrenchPlayer { net_id: u32 },
+    Active { x: i32, y: i32 },
+    Enter { pass: Option<String> },
     Wear { item_id: u32 },
     Unwear { item_id: u32 },
     Drop { item_id: u32, count: u32 },
     Trash { item_id: u32, count: u32 },
+    FastDrop { item_id: u32, count: u32 },
+    FastTrash { item_id: u32, count: u32 },
+    Buy { pack_id: String },
     LeaveWorld,
     Respawn,
     FindPath { x: u32, y: u32 },
+    SetDirection { facing_left: bool },
+    CollectObject { oid: u32, range: f32 },
+    Collect { range: f32, interval_ms: u64 },
+    SendRaw { pkt: GameUpdatePacket },
+    SendPacket { ptype: u8, text: String },
+    SetMac { mac: String },
     SetDelays(BotDelays),
     SetAutoCollect { enabled: bool },
     SetCollectConfig {
@@ -213,6 +228,16 @@ pub enum BotCommand {
         blacklist: Vec<u16>,
     },
     SetAutoReconnect { enabled: bool },
+    SetIgnoreGems { enabled: bool },
+    SetIgnoreEssences { enabled: bool },
+    SetAutoLeaveOnMod { enabled: bool },
+    SetAutoBan { enabled: bool },
+    SetCollectInterval { ms: u64 },
+    SetCollectRange { tiles: u8 },
+    SetCollectPathCheck { enabled: bool },
+    SetReconnectInterval { ms: u64 },
+    SetPlaceDelay { ms: u64 },
+    SetWalkDelay { ms: u64 },
     AcceptAccess,
 }
 

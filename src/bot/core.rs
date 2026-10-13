@@ -2653,6 +2653,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::WalkTo { x, y } => {
                 self.find_path(x, y);
             }
+            BotCommand::MoveTo { x, y } => {
+                if x >= 0 && y >= 0 {
+                    self.walk(x as u32, y as u32);
+                }
+            }
             BotCommand::RunScript { content } => {
                 // Stop any currently running script first.
                 self.script_stop.store(true, Ordering::Relaxed);
@@ -2712,6 +2717,21 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::Wrench { x, y } => {
                 self.wrench_at(x, y);
             }
+            BotCommand::WrenchPlayer { net_id } => {
+                self.wrench_player(net_id);
+            }
+            BotCommand::Active { x, y } => {
+                self.active_tile(x, y);
+            }
+            BotCommand::Enter { pass } => {
+                if let Some(pw) = pass {
+                    self.send_text(&format!("action|input\n|text|{pw}\n"));
+                } else {
+                    let cx = (self.pos_x / 32.0) as i32;
+                    let cy = (self.pos_y / 32.0) as i32;
+                    self.active_tile(cx, cy);
+                }
+            }
             BotCommand::Wear { item_id } => {
                 self.wear(item_id);
             }
@@ -2724,6 +2744,15 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::Trash { item_id, count } => {
                 self.trash_item(item_id, count);
             }
+            BotCommand::FastDrop { item_id, count } => {
+                self.fast_drop(item_id, count);
+            }
+            BotCommand::FastTrash { item_id, count } => {
+                self.fast_trash(item_id, count);
+            }
+            BotCommand::Buy { pack_id } => {
+                self.buy(&pack_id);
+            }
             BotCommand::LeaveWorld => {
                 self.leave_world();
             }
@@ -2732,6 +2761,29 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             BotCommand::FindPath { x, y } => {
                 self.find_path(x, y);
+            }
+            BotCommand::SetDirection { facing_left } => {
+                self.set_direction(facing_left);
+            }
+            BotCommand::CollectObject { oid, range } => {
+                self.collect_object_at(oid, range);
+            }
+            BotCommand::Collect { range, interval_ms } => {
+                self.collect(Some(range as u8), Some(interval_ms));
+            }
+            BotCommand::SendRaw { pkt } => {
+                self.send_game_packet(&pkt, true);
+            }
+            BotCommand::SendPacket { ptype, text } => {
+                match ptype {
+                    2 => self.send_text(&text),
+                    3 => self.send_game_message(&text),
+                    _ => {}
+                }
+            }
+            BotCommand::SetMac { mac } => {
+                self.mac = mac.clone();
+                self.state.write().unwrap().mac = mac;
             }
             BotCommand::SetDelays(d) => {
                 self.delays = d.clone();
@@ -2754,6 +2806,44 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::SetAutoReconnect { enabled } => {
                 self.auto_reconnect = enabled;
                 self.state.write().unwrap().auto_reconnect = enabled;
+            }
+            BotCommand::SetIgnoreGems { enabled } => {
+                self.ignore_gems = enabled;
+                self.state.write().unwrap().ignore_gems = enabled;
+            }
+            BotCommand::SetIgnoreEssences { enabled } => {
+                self.ignore_essences = enabled;
+                self.state.write().unwrap().ignore_essences = enabled;
+            }
+            BotCommand::SetAutoLeaveOnMod { enabled } => {
+                self.auto_leave_on_mod = enabled;
+                self.state.write().unwrap().auto_leave_on_mod = enabled;
+            }
+            BotCommand::SetAutoBan { enabled } => {
+                self.auto_ban = enabled;
+                self.state.write().unwrap().auto_ban = enabled;
+            }
+            BotCommand::SetCollectInterval { ms } => {
+                self.collect_interval = ms;
+            }
+            BotCommand::SetCollectRange { tiles } => {
+                self.collect_radius_tiles = tiles.clamp(1, 5);
+                self.state.write().unwrap().collect_radius_tiles = self.collect_radius_tiles;
+            }
+            BotCommand::SetCollectPathCheck { enabled } => {
+                self.collect_path_check = enabled;
+                self.state.write().unwrap().collect_path_check = enabled;
+            }
+            BotCommand::SetReconnectInterval { ms } => {
+                self.reconnect_interval = ms;
+            }
+            BotCommand::SetPlaceDelay { ms } => {
+                self.delays.place_ms = ms;
+                self.state.write().unwrap().delays.place_ms = ms;
+            }
+            BotCommand::SetWalkDelay { ms } => {
+                self.delays.walk_ms = ms;
+                self.state.write().unwrap().delays.walk_ms = ms;
             }
             BotCommand::SetCollectConfig {
                 radius_tiles,

@@ -1,3 +1,12 @@
 /target
 dist
 user.json
+.env
+world.dat
+# Generated gRPC stubs (auto-created on first example run)
+examples/mori_pb2*.py
+__pycache__/
+# Local AI agent skills (environment-specific, not part of the repo)
+.agents/
+.claude/
+skills-lock.json

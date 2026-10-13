@@ -8,6 +8,7 @@ pub mod events;
 mod bot_state;
 mod bot_manager;
 mod dashboard;
+pub mod grpc;
 pub mod items;
 mod login;
 mod lua;
@@ -28,5 +29,13 @@ use bot_manager::BotManager;
 async fn main() {
     let (ws_tx, _) = tokio::sync::broadcast::channel(256);
     let mgr = Arc::new(Mutex::new(BotManager::new(ws_tx.clone())));
-    web::serve(mgr, ws_tx).await;
+    let grpc_handle = tokio::spawn(grpc::serve(mgr.clone(), ws_tx.clone()));
+    tokio::select! {
+        _ = web::serve(mgr, ws_tx) => {},
+        r = grpc_handle => {
+            if let Err(e) = r {
+                eprintln!("[gRPC] server task failed: {e}");
+            }
+        }
+    }
 }

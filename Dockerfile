@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     git \
     cmake \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETPLATFORM
@@ -37,7 +38,8 @@ RUN xx-apt-get update && xx-apt-get install -y \
 WORKDIR /app
 
 # Cache dependencies
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto ./proto
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 
 # Use xx-cargo for cross-compilation
@@ -65,6 +67,6 @@ COPY --from=builder /app/Mori ./Mori
 COPY --from=web-builder /app/dist ./dist
 COPY items.dat ./items.dat
 
-EXPOSE 3000
+EXPOSE 3000 50051
 
 CMD ["./Mori"]

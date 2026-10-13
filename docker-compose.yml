@@ -1,8 +1,15 @@
 services:
   mori:
     build: .
+    restart: unless-stopped
+    ports:
+      - "3003:3000"
+      - "50051:50051"
     volumes:
       - mori-data:/app/data
+    environment:
+      - MORI_GRPC_TOKEN=${MORI_GRPC_TOKEN:-}
+      - MORI_GRPC_ADDR=${MORI_GRPC_ADDR:-0.0.0.0:50051}
 
 volumes:
   mori-data:
