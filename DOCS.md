@@ -909,6 +909,8 @@ All `x`/`y` values are in **tile coordinates** (pixels ÷ 32). The bot's positio
 
 ## gRPC API
 
+> Public docs (no login): pretty HTML at `/docs/grpc`, raw agent-friendly markdown at `/docs/grpc/index.md` (+ one file per group), proto at `/docs/mori.proto`.
+
 External control plane for other languages (Python, Go, Node, …), mirroring the Lua API (`LUA.md`). Runs alongside the web UI.
 
 **Endpoint**: `localhost:50051` (override with `MORI_GRPC_ADDR`, e.g. `127.0.0.1:50051`)
