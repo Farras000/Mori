@@ -326,13 +326,13 @@ Enable or disable automatic reconnection after a disconnect.
 ```
 
 #### `disconnect`
-Disconnect the bot from the current server. If auto-reconnect is enabled, the bot will reconnect automatically.
+Disconnect the bot from the current server. Manual disconnects stay offline until `reconnect` — `auto_reconnect` only applies to unexpected server disconnects.
 ```json
 { "type": "disconnect" }
 ```
 
 #### `reconnect`
-Force a reconnect. If the bot is currently connected, it disconnects first and reconnects via the normal disconnect handler. If already disconnected, reconnects immediately.
+Force a reconnect. Clears any manual-disconnect latch. If the bot is currently connected, it disconnects first and reconnects via the normal disconnect handler. If already disconnected, reconnects immediately.
 ```json
 { "type": "reconnect" }
 ```
@@ -883,6 +883,7 @@ Fired when any delay value is changed — via the HTTP `set_delays` command or v
 | `connecting` | Initial state, attempting to connect |
 | `connected` | Connected to game server |
 | `in_game` | In-game — world select screen or inside a world |
+| `disconnected` | Manually disconnected — stays offline until reconnect |
 | `two_factor_auth` | Blocked by 2FA — retries after `twofa_secs` |
 | `server_overloaded` | Server overloaded — retries after `server_overload_secs` |
 | `too_many_logins` | Too many concurrent logins — retries after `too_many_logins_secs` |

@@ -163,6 +163,9 @@ pub struct Bot {
     pub auto_ban: bool,
     /// Whether the bot should automatically reconnect after a disconnect.
     pub auto_reconnect: bool,
+    /// Set by an explicit user `disconnect` (control plane / Lua) — stays
+    /// offline until an explicit `reconnect`. Server kicks still auto-reconnect.
+    manual_disconnect: bool,
     /// Delay in ms before reconnecting after a disconnect (default 0).
     pub reconnect_interval: u64,
     /// Auto-collect range in tiles (1–5); pixel radius is `tiles × 32`.
@@ -300,6 +303,7 @@ impl Bot {
             auto_leave_on_mod: false,
             auto_ban: false,
             auto_reconnect: true,
+            manual_disconnect: false,
             reconnect_interval: 0,
             collect_radius_tiles: 3,
             collect_blacklist: HashSet::new(),
@@ -464,6 +468,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             auto_leave_on_mod: false,
             auto_ban: false,
             auto_reconnect: true,
+            manual_disconnect: false,
             reconnect_interval: 0,
             collect_radius_tiles: 3,
             collect_blacklist: HashSet::new(),
@@ -711,7 +716,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             if let Some(at) = self.reconnect_after {
                 if std::time::Instant::now() >= at {
                     self.reconnect_after = None;
-                    if self.auto_reconnect {
+                    if self.manual_disconnect {
+                        self.log_console(
+                            "[Bot] Reconnect timer elapsed — staying offline (manual disconnect)"
+                                .to_string(),
+                        );
+                    } else if self.auto_reconnect {
                         self.log_console(
                             "[Bot] 2FA cooldown elapsed — re-fetching token and server data"
                                 .to_string(),
@@ -771,20 +781,34 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     self.log_console(format!("[Bot] Disconnected: peer {}", id.0));
                     {
                         let mut s = self.state.write().unwrap();
-                        s.status = BotStatus::Connecting;
                         s.world_name = String::new();
                         s.players = Vec::new();
                         s.ping_ms = 0;
+                        if self.manual_disconnect {
+                            s.status = BotStatus::Disconnected;
+                        } else {
+                            s.status = BotStatus::Connecting;
+                        }
                     }
                     self.emit(WsEvent::BotStatus {
                         bot_id: self.bot_id,
-                        status: "connecting".into(),
+                        status: if self.manual_disconnect {
+                            "disconnected".into()
+                        } else {
+                            "connecting".into()
+                        },
                     });
                     self.emit(WsEvent::BotWorld {
                         bot_id: self.bot_id,
                         world_name: String::new(),
                     });
-                    if let Some(r) = self.redirect.as_ref() {
+                    if self.manual_disconnect {
+                        self.reconnect_after = None;
+                        self.log_console(
+                            "[Bot] Manual disconnect — staying offline until reconnect"
+                                .to_string(),
+                        );
+                    } else if let Some(r) = self.redirect.as_ref() {
                         let addr: SocketAddr = format!("{}:{}", r.server, r.port)
                             .parse()
                             .expect("Invalid redirect address");
@@ -2702,11 +2726,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.disconnect();
             }
             BotCommand::Reconnect => {
-                if self.peer_id.is_some() {
-                    self.disconnect();
-                } else {
-                    self.reconnect_main();
-                }
+                self.reconnect();
             }
             BotCommand::Place { x, y, item } => {
                 self.place(x, y, item, false);
@@ -2861,14 +2881,59 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
     // ── Lua-callable helpers ────────────────────────────────────────────────────
 
+    /// User-requested disconnect: stays offline until `reconnect()`.
+    /// Cancels any pending auto-reconnect timer; the ENet `Disconnect`
+    /// event completes the transition to `Disconnected` status.
     pub fn disconnect(&mut self) {
+        self.manual_disconnect = true;
+        self.reconnect_after = None;
+        if let Some(id) = self.peer_id {
+            self.host.peer_disconnect(id, 0);
+        } else {
+            {
+                let mut s = self.state.write().unwrap();
+                s.status = BotStatus::Disconnected;
+                s.world_name = String::new();
+                s.players = Vec::new();
+                s.ping_ms = 0;
+            }
+            self.emit(WsEvent::BotStatus {
+                bot_id: self.bot_id,
+                status: "disconnected".into(),
+            });
+            self.emit(WsEvent::BotWorld {
+                bot_id: self.bot_id,
+                world_name: String::new(),
+            });
+            self.log_console("[Bot] Manual disconnect — staying offline until reconnect".to_string());
+        }
+    }
+
+    fn disconnect_raw(&mut self) {
         if let Some(id) = self.peer_id {
             self.host.peer_disconnect(id, 0);
         }
     }
 
+    /// User-requested reconnect: clears the manual-disconnect latch, then
+    /// reconnects immediately if offline or via the disconnect handler if online.
     pub fn reconnect(&mut self) {
-        self.reconnect_main();
+        self.manual_disconnect = false;
+        self.reconnect_after = None;
+        if self.peer_id.is_some() {
+            self.disconnect_raw();
+        } else {
+            {
+                let mut s = self.state.write().unwrap();
+                s.status = BotStatus::Connecting;
+            }
+            self.emit(WsEvent::BotStatus {
+                bot_id: self.bot_id,
+                status: "connecting".into(),
+            });
+            self.log_console("[Bot] Manual reconnect requested".to_string());
+            self.reconnect_main();
+        }
     }
 
     pub fn say(&mut self, text: &str) {

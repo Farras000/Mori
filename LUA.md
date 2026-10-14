@@ -168,8 +168,8 @@ The main bot object returned by `getBot()`.
 
 **Network**
 
-* `connect()` — Triggers a reconnect.
-* `disconnect()` — Disconnects from the server.
+* `connect()` — Triggers a reconnect (clears manual-disconnect latch).
+* `disconnect()` — Disconnects from the server (stays offline until `connect()`).
 * `sendRaw(pkt: GameUpdatePacket)` — Sends a raw `GameUpdatePacket` to the server.
 * `sendPacket(type: number, text: string)` — Sends a raw text packet of the given type.
 
