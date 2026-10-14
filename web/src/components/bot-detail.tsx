@@ -40,6 +40,7 @@ const STATUS_DOT: Record<BotStatus, string> = {
   connecting: "bg-yellow-500",
   connected: "bg-blue-500",
   in_game: "bg-emerald-500",
+  disconnected: "bg-gray-500",
   two_factor_auth: "bg-orange-500",
   server_overloaded: "bg-red-500",
   too_many_logins: "bg-purple-500",
@@ -121,10 +122,10 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
             {bot.gems.toLocaleString()}
           </span>
         )}
-        {bot.ping_ms > 0 && (
+        {(bot.ping_ms > 0 || bot.status === "disconnected") && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <Wifi className="w-3 h-3" />
-            {bot.ping_ms}ms
+            {bot.status === "disconnected" ? "-" : `${bot.ping_ms}ms`}
           </span>
         )}
         <button

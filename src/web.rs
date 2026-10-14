@@ -49,6 +49,9 @@ async fn auth_middleware(
     if path.starts_with("/auth/")
         || path == "/"
         || path.starts_with("/assets/")
+        || path.starts_with("/docs")
+        || path == "/favicon.svg"
+        || path == "/icons.svg"
         || path.starts_with("/growtopia-cdn/")
     {
         return next.run(req).await;

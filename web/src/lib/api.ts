@@ -52,6 +52,7 @@ export type BotStatus =
   | "connecting"
   | "connected"
   | "in_game"
+  | "disconnected"
   | "two_factor_auth"
   | "server_overloaded"
   | "too_many_logins"

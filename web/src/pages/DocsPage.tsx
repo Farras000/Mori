@@ -3,7 +3,6 @@ import { BookOpen, Code2, Search, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { LUA_DOC_SECTIONS, LUA_DOC_VERSION, type DocSection } from '@/lib/lua-docs'
 import { cn } from '@/lib/utils'
@@ -78,8 +77,8 @@ export function DocsPage() {
   )
 
   return (
-    <div className="h-full overflow-hidden bg-background">
-      <div className="border-b border-border bg-card/80 backdrop-blur">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+      <div className="z-10 shrink-0 border-b border-border bg-card/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-6 py-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-3">
@@ -132,13 +131,15 @@ export function DocsPage() {
         </div>
       </div>
 
-      <div className="mx-auto grid h-[calc(100%-14.5rem)] max-w-7xl xl:grid-cols-[260px_minmax(0,1fr)]">
-        <aside className="hidden border-r border-border/70 bg-card/40 xl:block">
-          <ScrollArea className="h-full">
-            <div className="space-y-2 p-4">
+      <div className="mx-auto grid w-full max-w-7xl min-h-0 flex-1 xl:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="hidden min-h-0 border-r border-border/70 bg-card/40 xl:block">
+          <div className="h-full overflow-y-auto overscroll-contain">
+            <div className="sticky top-0 z-10 bg-card/95 px-4 pb-2 pt-4 backdrop-blur">
               <p className="px-3 text-[10px] font-semibold uppercase tracking-[0.26em] text-muted-foreground">
                 Jump to section
               </p>
+            </div>
+            <div className="space-y-2 px-4 pb-4">
               {filtered.map((section) => (
                 <button
                   key={section.id}
@@ -157,16 +158,16 @@ export function DocsPage() {
                 </button>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </aside>
 
-        <ScrollArea className="h-full">
+        <main className="min-h-0 overflow-y-auto overscroll-contain">
           <div className="mx-auto flex max-w-5xl flex-col gap-5 px-6 py-6">
             {filtered.map((section) => (
               <section
                 key={section.id}
                 id={section.id}
-                className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm"
+                className="scroll-mt-4 overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm"
               >
                 <div className="border-b border-border/70 bg-gradient-to-r from-muted/70 via-card to-card px-6 py-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -279,7 +280,7 @@ export function DocsPage() {
               </div>
             )}
           </div>
-        </ScrollArea>
+        </main>
       </div>
     </div>
   )

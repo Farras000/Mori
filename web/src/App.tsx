@@ -1,21 +1,24 @@
 import { useState, useEffect } from 'react'
-import { Bot, Package, BookOpen, ShieldCheck, LogOut } from 'lucide-react'
+import { Bot, Package, BookOpen, Network, ShieldCheck, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BotsPage } from '@/pages/BotsPage'
 import { ItemsPage } from '@/pages/ItemsPage'
 import { DocsPage } from '@/pages/DocsPage'
+import { GrpcDocsPage } from '@/pages/GrpcDocsPage'
 import { ProxyPage } from '@/pages/ProxyPage'
 import { SetupPage } from '@/pages/SetupPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { authStore } from '@/lib/auth'
 import { api } from '@/lib/api'
 
-type Page = 'bots' | 'items' | 'proxy' | 'docs'
+type Page = 'bots' | 'items' | 'proxy' | 'docs' | 'grpc'
 type AuthState = 'loading' | 'setup' | 'login' | 'authenticated'
 
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>('loading')
   const [page, setPage] = useState<Page>('bots')
+  const isPublicGrpcRoute =
+    typeof window !== 'undefined' && window.location.pathname.startsWith('/docs/grpc')
 
   // On mount: determine auth state
   useEffect(() => {
@@ -46,6 +49,16 @@ export default function App() {
     setAuthState('login')
   }
 
+  if (isPublicGrpcRoute) {
+    return (
+      <div className="h-full flex flex-col antialiased text-sm">
+        <div className="flex-1 overflow-hidden">
+          <GrpcDocsPage isPublic />
+        </div>
+      </div>
+    )
+  }
+
   if (authState === 'loading') {
     return (
       <div className="h-full flex items-center justify-center text-muted-foreground text-xs">
@@ -73,6 +86,7 @@ export default function App() {
           <NavBtn active={page === 'items'} onClick={() => setPage('items')} icon={<Package className="w-3 h-3" />} label="Items" />
           <NavBtn active={page === 'proxy'} onClick={() => setPage('proxy')} icon={<ShieldCheck className="w-3 h-3" />} label="Proxy" />
           <NavBtn active={page === 'docs'} onClick={() => setPage('docs')} icon={<BookOpen className="w-3 h-3" />} label="Docs" />
+          <NavBtn active={page === 'grpc'} onClick={() => setPage('grpc')} icon={<Network className="w-3 h-3" />} label="gRPC" />
           <button
             onClick={handleLogout}
             title="Logout"
@@ -87,6 +101,7 @@ export default function App() {
         {page === 'items' && <ItemsPage />}
         {page === 'proxy' && <ProxyPage />}
         {page === 'docs' && <DocsPage />}
+        {page === 'grpc' && <GrpcDocsPage />}
       </div>
     </div>
   )

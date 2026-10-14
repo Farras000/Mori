@@ -1,0 +1,617 @@
+syntax = "proto3";
+
+package mori.v1;
+
+// ── Mori gRPC API ──────────────────────────────────────────────────────────
+// External control plane for bots, mirroring the in-process Lua API
+// (see LUA.md). Reads come from the shared BotState snapshot; writes go
+// through the same BotCommand queue the web UI uses.
+//
+// Auth: if the server was started with MORI_GRPC_TOKEN set, every call
+// must carry `authorization: Bearer <token>` metadata.
+// Positional note: place/hit/wrench/active x/y are offsets relative to
+// the bot's current tile, exactly like the Lua API.
+
+// ── Common ─────────────────────────────────────────────────────────────────
+
+message Empty {}
+
+message BotRef {
+  uint32 bot_id = 1;
+}
+
+message ProxyConfig {
+  string host = 1;
+  uint32 port = 2;
+  string username = 3;
+  string password = 4;
+}
+
+// ── Manager ────────────────────────────────────────────────────────────────
+
+message SpawnBotRequest {
+  string username = 1;
+  string password = 2;
+  ProxyConfig proxy = 3;
+  bool has_proxy = 4;
+}
+
+message SpawnLtokenRequest {
+  string ltoken = 1;
+  ProxyConfig proxy = 2;
+  bool has_proxy = 3;
+}
+
+message SpawnBotResponse {
+  uint32 bot_id = 1;
+}
+
+message BotInfo {
+  uint32 bot_id = 1;
+  string username = 2;
+  string status = 3;
+  string world = 4;
+  float pos_x = 5;
+  float pos_y = 6;
+  int32 gems = 7;
+  uint32 ping_ms = 8;
+}
+
+message ListBotsResponse {
+  repeated BotInfo bots = 1;
+}
+
+// ── State snapshots ────────────────────────────────────────────────────────
+
+message InvSlot {
+  uint32 item_id = 1;
+  uint32 amount = 2;
+  bool is_active = 3;
+  uint32 action_type = 4;
+}
+
+message WorldObject {
+  uint32 uid = 1;
+  uint32 item_id = 2;
+  float x = 3;
+  float y = 4;
+  uint32 count = 5;
+}
+
+message PlayerInfo {
+  uint32 net_id = 1;
+  string name = 2;
+  float pos_x = 3;
+  float pos_y = 4;
+  string country = 5;
+}
+
+message TileInfo {
+  uint32 x = 1;
+  uint32 y = 2;
+  uint32 fg_item_id = 3;
+  uint32 bg_item_id = 4;
+  uint32 flags = 5;
+  string tile_type = 6;
+}
+
+message BotDelays {
+  uint64 place_ms = 1;
+  uint64 walk_ms = 2;
+  uint64 twofa_secs = 3;
+  uint64 server_overload_secs = 4;
+  uint64 too_many_logins_secs = 5;
+  uint64 maintenance_secs = 6;
+}
+
+message BotConfig {
+  bool auto_collect = 1;
+  uint32 collect_radius_tiles = 2;
+  repeated uint32 collect_blacklist = 3;
+  bool ignore_gems = 4;
+  bool ignore_essences = 5;
+  bool auto_leave_on_mod = 6;
+  bool auto_ban = 7;
+  bool collect_path_check = 8;
+  bool auto_reconnect = 9;
+  BotDelays delays = 10;
+}
+
+message BotState {
+  string status = 1;
+  string username = 2;
+  string mac = 3;
+  string world_name = 4;
+  float pos_x = 5;
+  float pos_y = 6;
+  uint32 world_width = 7;
+  uint32 world_height = 8;
+  repeated WorldObject objects = 9;
+  repeated PlayerInfo players = 10;
+  repeated InvSlot inventory = 11;
+  uint32 inventory_size = 12;
+  int32 gems = 13;
+  repeated string console = 14;
+  uint32 ping_ms = 15;
+  BotConfig config = 16;
+}
+
+message WorldResponse {
+  string name = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  repeated TileInfo tiles = 4;
+  repeated WorldObject objects = 5;
+  repeated PlayerInfo players = 6;
+}
+
+message InventoryResponse {
+  uint32 size = 1;
+  int32 gems = 2;
+  repeated InvSlot items = 3;
+}
+
+message ItemInfo {
+  uint32 id = 1;
+  string name = 2;
+  uint32 action_type = 3;
+  uint32 collision_type = 4;
+  uint32 clothing_type = 5;
+  uint32 rarity = 6;
+  uint32 grow_time = 7;
+  uint32 drop_chance = 8;
+  string texture = 9;
+  uint32 texture_hash = 10;
+  uint32 texture_x = 11;
+  uint32 texture_y = 12;
+  uint32 seed_color = 13;
+  uint32 seed_overlay_color = 14;
+  uint32 strength = 15;
+}
+
+// ── Action requests ────────────────────────────────────────────────────────
+
+message SayRequest {
+  BotRef bot = 1;
+  string text = 2;
+}
+
+message WarpRequest {
+  BotRef bot = 1;
+  string name = 2;
+  string id = 3;
+}
+
+message TileActionRequest {
+  BotRef bot = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message PlaceRequest {
+  BotRef bot = 1;
+  int32 x = 2;
+  int32 y = 3;
+  uint32 item_id = 4;
+}
+
+message InventoryActionRequest {
+  BotRef bot = 1;
+  uint32 item_id = 2;
+  uint32 count = 3;
+}
+
+message ItemRequest {
+  BotRef bot = 1;
+  uint32 item_id = 2;
+}
+
+message WrenchPlayerRequest {
+  BotRef bot = 1;
+  uint32 net_id = 2;
+}
+
+message EnterRequest {
+  BotRef bot = 1;
+  string pass = 2;
+  bool has_pass = 3;
+}
+
+message MoveRequest {
+  BotRef bot = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message MoveToRequest {
+  BotRef bot = 1;
+  int32 x = 2;
+  int32 y = 3;
+}
+
+message SetDirectionRequest {
+  BotRef bot = 1;
+  bool facing_left = 2;
+}
+
+message BuyRequest {
+  BotRef bot = 1;
+  string pack_id = 2;
+}
+
+message CollectObjectRequest {
+  BotRef bot = 1;
+  uint32 oid = 2;
+  float range = 3;
+}
+
+message CollectRequest {
+  BotRef bot = 1;
+  float range = 2;
+  uint64 interval_ms = 3;
+}
+
+message SendPacketRequest {
+  BotRef bot = 1;
+  uint32 packet_type = 2;
+  string text = 3;
+}
+
+message GameUpdatePacket {
+  uint32 type = 1;
+  uint32 object_type = 2;
+  uint32 count1 = 3;
+  uint32 count2 = 4;
+  uint32 netid = 5;
+  int32 item = 6;
+  uint32 flags = 7;
+  float float_var = 8;
+  uint32 int_data = 9;
+  float vec_x = 10;
+  float vec_y = 11;
+  float vec2_x = 12;
+  float vec2_y = 13;
+  float particle_rotation = 14;
+  int32 int_x = 15;
+  int32 int_y = 16;
+}
+
+message SendRawRequest {
+  BotRef bot = 1;
+  GameUpdatePacket packet = 2;
+}
+
+message SetMacRequest {
+  BotRef bot = 1;
+  string mac = 2;
+}
+
+message SetBoolRequest {
+  BotRef bot = 1;
+  bool enabled = 2;
+}
+
+message SetUintRequest {
+  BotRef bot = 1;
+  uint64 value = 2;
+}
+
+message SetDelaysRequest {
+  BotRef bot = 1;
+  BotDelays delays = 2;
+}
+
+message SetCollectConfigRequest {
+  BotRef bot = 1;
+  uint32 radius_tiles = 2;
+  repeated uint32 blacklist = 3;
+}
+
+message RunScriptRequest {
+  BotRef bot = 1;
+  string content = 2;
+}
+
+// ── Query requests ─────────────────────────────────────────────────────────
+
+message GetTileRequest {
+  BotRef bot = 1;
+  uint32 x = 2;
+  uint32 y = 3;
+}
+
+message GetPlayerRequest {
+  BotRef bot = 1;
+  oneof key {
+    uint32 net_id = 2;
+    string name = 3;
+  }
+}
+
+message IsInWorldRequest {
+  BotRef bot = 1;
+  string name = 2;
+  bool has_name = 3;
+}
+
+message IsInTileRequest {
+  BotRef bot = 1;
+  uint32 x = 2;
+  uint32 y = 3;
+}
+
+message BoolResponse {
+  bool value = 1;
+}
+
+message PlayersResponse {
+  repeated PlayerInfo players = 1;
+}
+
+message GetObjectRequest {
+  BotRef bot = 1;
+  uint32 oid = 2;
+}
+
+message GetItemInfoRequest {
+  oneof key {
+    uint32 id = 1;
+    string name = 2;
+  }
+}
+
+message ListItemsRequest {
+  string query = 1;
+  uint32 page = 2;
+  uint32 page_size = 3;
+}
+
+message ListItemsResponse {
+  repeated ItemInfo items = 1;
+  uint64 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+}
+
+message PingResponse {
+  uint32 ping_ms = 1;
+}
+
+message LocalPlayer {
+  uint32 net_id = 1;
+  string username = 2;
+  float pos_x = 3;
+  float pos_y = 4;
+  string mac = 5;
+}
+
+// ── Events (replaces Lua listenEvents) ─────────────────────────────────────
+
+message SubscribeRequest {
+  repeated uint32 bot_ids = 1;
+}
+
+message TileEvent {
+  uint32 bot_id = 1;
+  uint32 fg = 2;
+  uint32 bg = 3;
+  uint32 flags = 4;
+  string tile_type = 5;
+}
+
+message WorldLoadedEvent {
+  uint32 bot_id = 1;
+  string name = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  repeated TileEvent tiles = 5;
+}
+
+message TileUpdateEvent {
+  uint32 bot_id = 1;
+  uint32 x = 2;
+  uint32 y = 3;
+  uint32 fg = 4;
+  uint32 bg = 5;
+}
+
+message ObjectsUpdateEvent {
+  uint32 bot_id = 1;
+  repeated WorldObject objects = 2;
+}
+
+message InventoryUpdateEvent {
+  uint32 bot_id = 1;
+  int32 gems = 2;
+  uint32 inventory_size = 3;
+  repeated InvSlot items = 4;
+}
+
+message PlayerSpawnEvent {
+  uint32 bot_id = 1;
+  uint32 net_id = 2;
+  string name = 3;
+  string country = 4;
+  float x = 5;
+  float y = 6;
+}
+
+message PlayerMoveEvent {
+  uint32 bot_id = 1;
+  uint32 net_id = 2;
+  float x = 3;
+  float y = 4;
+}
+
+message DelaysEvent {
+  uint32 bot_id = 1;
+  BotDelays delays = 2;
+}
+
+message BotStatusEvent {
+  uint32 bot_id = 1;
+  string status = 2;
+}
+
+message BotWorldEvent {
+  uint32 bot_id = 1;
+  string world_name = 2;
+}
+
+message BotMoveEvent {
+  uint32 bot_id = 1;
+  float x = 2;
+  float y = 3;
+}
+
+message BotGemsEvent {
+  uint32 bot_id = 1;
+  int32 gems = 2;
+}
+
+message BotPingEvent {
+  uint32 bot_id = 1;
+  uint32 ping_ms = 2;
+}
+
+message ConsoleEvent {
+  uint32 bot_id = 1;
+  string message = 2;
+}
+
+message TrackInfoEvent {
+  uint32 bot_id = 1;
+  uint32 level = 2;
+  uint64 grow_id = 3;
+  uint64 install_date = 4;
+  uint64 global_playtime = 5;
+  uint32 awesomeness = 6;
+}
+
+message UsernameEvent {
+  uint32 bot_id = 1;
+  string username = 2;
+}
+
+message AutoCollectEvent {
+  uint32 bot_id = 1;
+  bool enabled = 2;
+}
+
+message PlayerLeaveEvent {
+  uint32 bot_id = 1;
+  uint32 net_id = 2;
+}
+
+message BotEvent {
+  oneof event {
+    BotInfo bot_added = 1;
+    BotRef bot_removed = 2;
+    BotStatusEvent bot_status = 20;
+    BotWorldEvent bot_world = 3;
+    BotMoveEvent bot_move = 4;
+    BotGemsEvent bot_gems = 5;
+    BotPingEvent bot_ping = 6;
+    PlayerSpawnEvent player_spawn = 7;
+    PlayerMoveEvent player_move = 8;
+    PlayerLeaveEvent player_leave = 9;
+    WorldLoadedEvent world_loaded = 10;
+    TileUpdateEvent tile_update = 11;
+    ObjectsUpdateEvent objects_update = 12;
+    InventoryUpdateEvent inventory_update = 13;
+    ConsoleEvent console = 21;
+    TrackInfoEvent track_info = 14;
+    UsernameEvent username = 15;
+    AutoCollectEvent auto_collect = 16;
+    DelaysEvent delays = 17;
+  }
+}
+
+// ── Service ────────────────────────────────────────────────────────────────
+
+service Mori {
+  // Manager
+  rpc SpawnBot(SpawnBotRequest) returns (SpawnBotResponse);
+  rpc SpawnLtokenBot(SpawnLtokenRequest) returns (SpawnBotResponse);
+  rpc StopBot(BotRef) returns (Empty);
+  rpc ListBots(Empty) returns (ListBotsResponse);
+  rpc GetBotState(BotRef) returns (BotState);
+  rpc GetConfig(BotRef) returns (BotConfig);
+
+  // World actions
+  rpc Say(SayRequest) returns (Empty);
+  rpc Warp(WarpRequest) returns (Empty);
+  rpc LeaveWorld(BotRef) returns (Empty);
+  rpc Respawn(BotRef) returns (Empty);
+  rpc Active(TileActionRequest) returns (Empty);
+  rpc Enter(EnterRequest) returns (Empty);
+  rpc AcceptAccess(BotRef) returns (Empty);
+
+  // Tile / inventory actions (x/y are offsets from the bot, like Lua)
+  rpc Place(PlaceRequest) returns (Empty);
+  rpc Hit(TileActionRequest) returns (Empty);
+  rpc Wrench(TileActionRequest) returns (Empty);
+  rpc WrenchPlayer(WrenchPlayerRequest) returns (Empty);
+  rpc Wear(ItemRequest) returns (Empty);
+  rpc Unwear(ItemRequest) returns (Empty);
+  rpc Drop(InventoryActionRequest) returns (Empty);
+  rpc Trash(InventoryActionRequest) returns (Empty);
+  rpc FastDrop(InventoryActionRequest) returns (Empty);
+  rpc FastTrash(InventoryActionRequest) returns (Empty);
+  rpc Buy(BuyRequest) returns (Empty);
+
+  // Movement
+  rpc MoveRelative(MoveRequest) returns (Empty);
+  rpc MoveTo(MoveToRequest) returns (Empty);
+  rpc WalkTo(MoveToRequest) returns (Empty);
+  rpc SetDirection(SetDirectionRequest) returns (Empty);
+  rpc FindPath(MoveToRequest) returns (Empty);
+
+  // Collection (Collect is fire-and-forget over gRPC; count not returned)
+  rpc Collect(CollectRequest) returns (Empty);
+  rpc CollectObject(CollectObjectRequest) returns (Empty);
+
+  // Connection / raw
+  rpc Reconnect(BotRef) returns (Empty);
+  rpc Disconnect(BotRef) returns (Empty);
+  rpc SendPacket(SendPacketRequest) returns (Empty);
+  rpc SendRaw(SendRawRequest) returns (Empty);
+  rpc SetMac(SetMacRequest) returns (Empty);
+
+  // Settings
+  rpc SetAutoCollect(SetBoolRequest) returns (Empty);
+  rpc SetIgnoreGems(SetBoolRequest) returns (Empty);
+  rpc SetIgnoreEssences(SetBoolRequest) returns (Empty);
+  rpc SetAutoLeaveOnMod(SetBoolRequest) returns (Empty);
+  rpc SetAutoBan(SetBoolRequest) returns (Empty);
+  rpc SetCollectPathCheck(SetBoolRequest) returns (Empty);
+  rpc SetAutoReconnect(SetBoolRequest) returns (Empty);
+  rpc SetCollectInterval(SetUintRequest) returns (Empty);
+  rpc SetCollectRange(SetUintRequest) returns (Empty);
+  rpc SetReconnectInterval(SetUintRequest) returns (Empty);
+  rpc SetPlaceDelay(SetUintRequest) returns (Empty);
+  rpc SetWalkDelay(SetUintRequest) returns (Empty);
+  rpc SetDelays(SetDelaysRequest) returns (Empty);
+  rpc SetCollectConfig(SetCollectConfigRequest) returns (Empty);
+
+  // Scripts (same embedded Lua runner)
+  rpc RunScript(RunScriptRequest) returns (Empty);
+  rpc StopScript(BotRef) returns (Empty);
+
+  // Queries
+  rpc GetWorld(BotRef) returns (WorldResponse);
+  rpc GetInventory(BotRef) returns (InventoryResponse);
+  rpc GetPlayers(BotRef) returns (PlayersResponse);
+  rpc GetPlayer(GetPlayerRequest) returns (PlayerInfo);
+  rpc GetTile(GetTileRequest) returns (TileInfo);
+  rpc GetObject(GetObjectRequest) returns (WorldObject);
+  rpc GetItemInfo(GetItemInfoRequest) returns (ItemInfo);
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse);
+  rpc GetLocal(BotRef) returns (LocalPlayer);
+  rpc GetPing(BotRef) returns (PingResponse);
+  rpc IsInWorld(IsInWorldRequest) returns (BoolResponse);
+  rpc IsInTile(IsInTileRequest) returns (BoolResponse);
+
+  // Events
+  rpc SubscribeEvents(SubscribeRequest) returns (stream BotEvent);
+}
