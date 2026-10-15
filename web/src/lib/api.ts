@@ -246,6 +246,44 @@ export interface ItemsPage {
   page_size: number;
 }
 
+export interface SeedCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+}
+
+export type OAuthStatus =
+  | { status: "waiting_browser" }
+  | { status: "watching" }
+  | { status: "validating" }
+  | { status: "validated"; token: string; account_type: string }
+  | { status: "failed"; reason: string };
+
+export interface OAuthSession {
+  id: string;
+  created_at: number;
+  authorize_url: string;
+  seed_cookies: SeedCookie[];
+  status: OAuthStatus;
+  ltoken: string | null;
+  viewer_live: boolean;
+}
+
+export interface OAuthProxy {
+  proxy_host?: string;
+  proxy_port?: number;
+  proxy_username?: string;
+  proxy_password?: string;
+}
+
+export interface BrowserStatus {
+  configured: boolean;
+  reachable: boolean;
+  page_ws_found: boolean;
+  detail: string;
+}
+
 export const api = {
   authStatus: () =>
     fetch(`${BASE}/auth/status`).then((r) => r.json()) as Promise<{
@@ -283,6 +321,20 @@ export const api = {
     req<ItemRecord[]>("GET", `/items?get-items=${ids.join(",")}`),
   testProxy: (body: ProxyTestRequest) =>
     req<ProxyTestResult>("POST", "/proxy/test", body),
+  oauthGoogleStart: (body: OAuthProxy & { watch_timeout_secs?: number }) =>
+    req<OAuthSession>("POST", "/oauth/google/start", body),
+  oauthGoogleStatus: (id: string) =>
+    req<OAuthSession>("GET", `/oauth/google/${id}`),
+  oauthGoogleCallback: (id: string, callback_url: string) =>
+    req<OAuthSession>("POST", `/oauth/google/${id}/callback`, { callback_url }),
+  oauthGoogleToken: (id: string, token: string) =>
+    req<OAuthSession>("POST", `/oauth/google/${id}/token`, { token }),
+  oauthGoogleRefresh: (id: string) =>
+    req<OAuthSession>("POST", `/oauth/google/${id}/refresh`, {}),
+  oauthGoogleSpawn: (id: string, body: OAuthProxy) =>
+    req<{ id: number; oauth_id: string }>("POST", `/oauth/google/${id}/spawn`, body),
+  oauthBrowserStatus: () =>
+    req<BrowserStatus>("GET", "/oauth/browser/status"),
 };
 
 export const external_api = {

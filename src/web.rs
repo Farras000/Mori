@@ -21,6 +21,7 @@ use crate::bot_manager::{BotInfo, BotManager};
 use crate::bot_state::{BotCommand, BotDelays, BotState};
 use crate::events::WsTx;
 use crate::items::ItemInfo;
+use crate::oauth_session::{OAuthSessionView, OAuthStore};
 use crate::proxy_test::{ProxyTestResult, run_proxy_test};
 
 pub type SharedManager = Arc<Mutex<BotManager>>;
@@ -30,6 +31,20 @@ pub struct AppState {
     pub manager: SharedManager,
     pub ws_tx:   WsTx,
     pub auth:    AuthState,
+    pub oauth:   OAuthStore,
+}
+
+fn proxy_from_parts(
+    host: Option<String>,
+    port: Option<u16>,
+    username: Option<String>,
+    password: Option<String>,
+) -> Option<Socks5Config> {
+    let (host, port) = (host?, port?);
+    let addr: SocketAddr = format!("{host}:{port}").parse().ok().or_else(|| {
+        format!("{host}:{port}").to_socket_addrs().ok().and_then(|mut a| a.next())
+    })?;
+    Some(Socks5Config { proxy_addr: addr, username, password })
 }
 
 // ── Auth middleware ────────────────────────────────────────────────────────────
@@ -58,7 +73,8 @@ async fn auth_middleware(
     }
 
     // WebSocket token is passed as a query param `?token=…`
-    if path == "/ws" {
+    // (both the event socket and per-session browser viewers).
+    if path == "/ws" || (path.starts_with("/oauth/google/") && path.ends_with("/view")) {
         let token = req.uri().query()
             .and_then(|q| {
                 url::form_urlencoded::parse(q.as_bytes())
@@ -405,6 +421,193 @@ async fn proxy_check(
     Ok(Json(result))
 }
 
+// ── Google OAuth (browser-assisted login) ───────────────────────────────────
+
+#[derive(Deserialize)]
+struct OAuthStartRequest {
+    proxy_host:         Option<String>,
+    proxy_port:         Option<u16>,
+    proxy_username:     Option<String>,
+    proxy_password:     Option<String>,
+    watch_timeout_secs: Option<u64>,
+}
+
+type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
+
+fn api_err(msg: impl ToString) -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": msg.to_string() })))
+}
+
+/// POST /oauth/google/start — mint dashboard state, open authorize URL in
+/// CloakBrowser (when configured), start background watch.
+async fn oauth_google_start(
+    State(s): State<AppState>,
+    Json(req): Json<OAuthStartRequest>,
+) -> ApiResult<OAuthSessionView> {
+    let proxy = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    s.oauth
+        .start(proxy, req.watch_timeout_secs.unwrap_or(600).clamp(60, 3600))
+        .await
+        .map(Json)
+        .map_err(api_err)
+}
+
+/// GET /oauth/google/:id — poll session status (validated bundle appears here).
+async fn oauth_google_status(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<OAuthSessionView>, StatusCode> {
+    s.oauth.get(&id).map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+#[derive(Deserialize)]
+struct OAuthCallbackRequest {
+    callback_url: String,
+}
+
+/// POST /oauth/google/:id/callback — manual path: fetch a pasted
+/// `/google/callback?code&state` URL on the session jar, then validate.
+async fn oauth_google_callback(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<OAuthCallbackRequest>,
+) -> ApiResult<OAuthSessionView> {
+    if req.callback_url.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "callback_url required" }))));
+    }
+    s.oauth.submit_callback_url(&id, req.callback_url).await.map(Json).map_err(|e| {
+        if e.contains("unknown oauth session") {
+            (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e })))
+        } else {
+            api_err(e)
+        }
+    })
+}
+
+#[derive(Deserialize)]
+struct OAuthTokenRequest {
+    token: String,
+}
+
+/// POST /oauth/google/:id/token — manual path: validate a pasted landing token.
+async fn oauth_google_token(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<OAuthTokenRequest>,
+) -> ApiResult<OAuthSessionView> {
+    if req.token.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "token required" }))));
+    }
+    s.oauth.submit_landing_token(&id, req.token).await.map(Json).map_err(|e| {
+        if e.contains("unknown oauth session") {
+            (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e })))
+        } else {
+            api_err(e)
+        }
+    })
+}
+
+/// POST /oauth/google/:id/refresh — browserless re-login: single checktoken
+/// POST with the stored descriptor. Fails → token dead → do a browser run.
+async fn oauth_google_refresh(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<OAuthSessionView> {
+    s.oauth.refresh(&id).await.map(Json).map_err(|e| {
+        if e.contains("unknown oauth session") {
+            (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e })))
+        } else {
+            api_err(e)
+        }
+    })
+}
+
+#[derive(Deserialize)]
+struct OAuthSpawnRequest {
+    proxy_host:     Option<String>,
+    proxy_port:     Option<u16>,
+    proxy_username: Option<String>,
+    proxy_password: Option<String>,
+}
+
+/// POST /oauth/google/:id/spawn — spawn a bot from the validated bundle.
+async fn oauth_google_spawn(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<OAuthSpawnRequest>,
+) -> ApiResult<serde_json::Value> {
+    let ltoken = s.oauth.ltoken_bundle(&id).ok_or_else(|| {
+        if s.oauth.get(&id).is_none() {
+            (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "unknown oauth session" })))
+        } else {
+            (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "session not validated yet" })))
+        }
+    })?;
+    let proxy = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    let bot_id = s.manager.lock().unwrap().spawn_ltoken(ltoken, proxy);
+    Ok(Json(serde_json::json!({ "id": bot_id, "oauth_id": id })))
+}
+
+/// GET /oauth/browser/status — CloakBrowser provider health.
+async fn oauth_browser_status() -> Json<crate::remote_view::BrowserStatus> {
+    Json(crate::remote_view::browser_status().await)
+}
+
+/// GET /oauth/google/:id/view — remote browser viewer socket.
+/// Binary down: JPEG frames. Text up: viewer input JSON (`PROTOCOL.md` shapes).
+/// Auth via `?token=` (see middleware). No `goto`: tab is server-navigated.
+async fn oauth_google_view(
+    ws: WebSocketUpgrade,
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let frames = s.oauth.subscribe_frames(&id);
+    let Some(frames) = frames else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    ws.on_upgrade(move |socket| handle_view_socket(socket, s.oauth, id, frames))
+        .into_response()
+}
+
+async fn handle_view_socket(
+    mut socket: WebSocket,
+    oauth: crate::oauth_session::OAuthStore,
+    id: String,
+    mut frames: tokio::sync::broadcast::Receiver<Vec<u8>>,
+) {
+    loop {
+        tokio::select! {
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<crate::remote_view::ViewerMsg>(&text) {
+                            Ok(input) => {
+                                if !oauth.submit_input(&id, input).await {
+                                    break;
+                                }
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    _ => continue,
+                }
+            }
+            frame = frames.recv() => {
+                match frame {
+                    Ok(bytes) => {
+                        if socket.send(Message::Binary(bytes.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+}
+
 // ── WebSocket handler ─────────────────────────────────────────────────────────
 
 async fn ws_handler(
@@ -476,7 +679,7 @@ async fn index_html() -> impl IntoResponse {
 
 pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
     let auth = AuthState::new();
-    let state = AppState { manager, ws_tx, auth };
+    let state = AppState { manager, ws_tx, auth, oauth: OAuthStore::new() };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -506,6 +709,14 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
         .route("/items/names", get(item_names))
         .route("/items/colors", get(item_colors))
         .route("/proxy/test", post(proxy_check))
+        .route("/oauth/google/start", post(oauth_google_start))
+        .route("/oauth/google/{id}", get(oauth_google_status))
+        .route("/oauth/google/{id}/callback", post(oauth_google_callback))
+        .route("/oauth/google/{id}/token", post(oauth_google_token))
+        .route("/oauth/google/{id}/refresh", post(oauth_google_refresh))
+        .route("/oauth/google/{id}/spawn", post(oauth_google_spawn))
+        .route("/oauth/google/{id}/view", get(oauth_google_view))
+        .route("/oauth/browser/status", get(oauth_browser_status))
         .route("/growtopia-cdn/{*path}", get(growtopia_cdn))
         .route("/ws", get(ws_handler))
 
