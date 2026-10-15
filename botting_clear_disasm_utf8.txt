@@ -1,0 +1,3311 @@
+﻿=== CLASS/FUNC: ClearWorldBot ===
+ 53           RESUME                   0
+              LOAD_NAME                0 (__name__)
+              STORE_NAME               1 (__module__)
+              LOAD_CONST               0 ('ClearWorldBot')
+              STORE_NAME               2 (__qualname__)
+              LOAD_CONST               1 (53)
+              STORE_NAME               3 (__firstlineno__)
+
+ 54           LOAD_CONST              19 (('config', 'BotConfig', 'return', 'None'))
+              LOAD_CONST               2 (<code object __init__ at 0x00000211A5ECE2A0, file "botting/clear_world.py", line 54>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME               4 (__init__)
+
+ 77           LOAD_CONST              20 (('return', 'bool'))
+              LOAD_CONST               3 (<code object connect at 0x00000211A641FB10, file "botting/clear_world.py", line 77>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME               5 (connect)
+
+161           LOAD_CONST              20 (('return', 'bool'))
+              LOAD_CONST               4 (<code object sync_world at 0x00000211A63F6C40, file "botting/clear_world.py", line 161>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME               6 (sync_world)
+
+189           LOAD_CONST              21 (('return', 'None'))
+              LOAD_CONST               5 (<code object start_event_listener at 0x00000211A63A4AE0, file "botting/clear_world.py", line 189>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME               7 (start_event_listener)
+
+225           LOAD_CONST              22 (('x', 'int', 'y', 'int', 'return', 'Optional[pb.TileInfo]'))
+              LOAD_CONST               6 (<code object get_tile at 0x00000211A63F71A0, file "botting/clear_world.py", line 225>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME               8 (get_tile)
+
+242           LOAD_CONST              23 (('facing_left', 'bool', 'return', 'None'))
+              LOAD_CONST               7 (<code object set_facing at 0x00000211A63DCB20, file "botting/clear_world.py", line 242>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME               9 (set_facing)
+
+252           LOAD_CONST              24 (('target_x', 'int', 'target_y', 'int', 'return', 'bool'))
+              LOAD_CONST               8 (<code object hold_punch at 0x00000211A6420860, file "botting/clear_world.py", line 252>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              10 (hold_punch)
+
+310           LOAD_CONST              25 (('next_x', 'int', 'next_y', 'int', 'return', 'bool'))
+              LOAD_CONST               9 (<code object walk_step at 0x00000211A63FBCD0, file "botting/clear_world.py", line 310>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              11 (walk_step)
+
+343           LOAD_CONST              21 (('return', 'None'))
+              LOAD_CONST              10 (<code object respawn_and_sync at 0x00000211A62EB5F0, file "botting/clear_world.py", line 343>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              12 (respawn_and_sync)
+
+353           LOAD_CONST              26 (('return', 'Optional[int]'))
+              LOAD_CONST              11 (<code object find_topmost_target_layer at 0x00000211A6257B30, file "botting/clear_world.py", line 353>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              13 (find_topmost_target_layer)
+
+363           LOAD_CONST              27 (('y', 'int', 'return', 'bool'))
+              LOAD_CONST              12 (<code object has_target_blocks_on_layer at 0x00000211A6359430, file "botting/clear_world.py", line 363>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              14 (has_target_blocks_on_layer)
+
+372           LOAD_CONST              28 (('y', 'int', 'return', 'int'))
+              LOAD_CONST              13 (<code object count_target_blocks_on_layer at 0x00000211A6359E30, file "botting/clear_world.py", line 372>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              15 (count_target_blocks_on_layer)
+
+382           LOAD_CONST              29 (('return', 'int'))
+              LOAD_CONST              14 (<code object count_remaining_target_blocks at 0x00000211A5F1F830, file "botting/clear_world.py", line 382>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              16 (count_remaining_target_blocks)
+
+391           LOAD_CONST              30 (('top_y', 'int', 'return', 'bool'))
+              LOAD_CONST              15 (<code object align_to_layer at 0x00000211A64111C0, file "botting/clear_world.py", line 391>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              17 (align_to_layer)
+
+430           LOAD_CONST              21 (('return', 'None'))
+              LOAD_CONST              16 (<code object run_clear_world at 0x00000211A64230D0, file "botting/clear_world.py", line 430>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   4 (annotations)
+              STORE_NAME              18 (run_clear_world)
+              LOAD_CONST              17 (('bot_id', 'bot_ref', 'channel', 'config', 'cur_x', 'cur_y', 'metadata', 'running', 'stub', 'tiles', 'tiles_lock', 'total_broken', 'username', 'world_height', 'world_name', 'world_width'))
+              STORE_NAME              19 (__static_attributes__)
+              RETURN_CONST            18 (None)
+
+Disassembly of <code object __init__ at 0x00000211A5ECE2A0, file "botting/clear_world.py", line 54>:
+ 54           RESUME                   0
+
+ 55           LOAD_FAST_LOAD_FAST     16 (config, self)
+              STORE_ATTR               0 (config)
+
+ 56           LOAD_CONST               0 (None)
+              LOAD_FAST                0 (self)
+              STORE_ATTR               1 (channel)
+
+ 57           LOAD_CONST               0 (None)
+              LOAD_FAST                0 (self)
+              STORE_ATTR               2 (stub)
+
+ 58           BUILD_LIST               0
+              LOAD_FAST                0 (self)
+              STORE_ATTR               3 (metadata)
+
+ 59           LOAD_CONST               0 (None)
+              LOAD_FAST                0 (self)
+              STORE_ATTR               4 (bot_ref)
+
+ 60           LOAD_CONST               1 (0)
+              LOAD_FAST                0 (self)
+              STORE_ATTR               5 (bot_id)
+
+ 61           LOAD_CONST               2 ('')
+              LOAD_FAST                0 (self)
+              STORE_ATTR               6 (username)
+
+ 62           LOAD_CONST               2 ('')
+              LOAD_FAST                0 (self)
+              STORE_ATTR               7 (world_name)
+
+ 63           LOAD_CONST               3 (100)
+              LOAD_FAST                0 (self)
+              STORE_ATTR               8 (world_width)
+
+ 64           LOAD_CONST               4 (60)
+              LOAD_FAST                0 (self)
+              STORE_ATTR               9 (world_height)
+
+ 67           BUILD_MAP                0
+              LOAD_FAST                0 (self)
+              STORE_ATTR              10 (tiles)
+
+ 68           LOAD_GLOBAL             22 (threading)
+              LOAD_ATTR               24 (Lock)
+              PUSH_NULL
+              CALL                     0
+              LOAD_FAST                0 (self)
+              STORE_ATTR              13 (tiles_lock)
+
+ 71           LOAD_CONST               1 (0)
+              LOAD_FAST                0 (self)
+              STORE_ATTR              14 (cur_x)
+
+ 72           LOAD_CONST               1 (0)
+              LOAD_FAST                0 (self)
+              STORE_ATTR              15 (cur_y)
+
+ 74           LOAD_CONST               5 (True)
+              LOAD_FAST                0 (self)
+              STORE_ATTR              16 (running)
+
+ 75           LOAD_CONST               1 (0)
+              LOAD_FAST                0 (self)
+              STORE_ATTR              17 (total_broken)
+              RETURN_CONST             0 (None)
+
+Disassembly of <code object connect at 0x00000211A641FB10, file "botting/clear_world.py", line 77>:
+  77            RESUME                   0
+
+  79            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               1 ('[ClearWorld] Connecting to Mori gRPC @ ')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR                4 (grpc_addr)
+                FORMAT_SIMPLE
+                LOAD_CONST               2 ('...')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+  80            LOAD_GLOBAL              6 (grpc)
+                LOAD_ATTR                8 (insecure_channel)
+                PUSH_NULL
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR                4 (grpc_addr)
+                CALL                     1
+                LOAD_FAST                0 (self)
+                STORE_ATTR               5 (channel)
+
+  81            LOAD_GLOBAL             12 (rpc)
+                LOAD_ATTR               15 (MoriStub + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               10 (channel)
+                CALL                     1
+                LOAD_FAST                0 (self)
+                STORE_ATTR               8 (stub)
+
+  83            LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               18 (token)
+                LOAD_ATTR               21 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST               1 (token)
+
+  84            LOAD_FAST                1 (token)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       14 (to L1)
+
+  85            LOAD_CONST               3 ('authorization')
+                LOAD_CONST               4 ('Bearer ')
+                LOAD_FAST                1 (token)
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                BUILD_TUPLE              2
+                BUILD_LIST               1
+                LOAD_FAST                0 (self)
+                STORE_ATTR              11 (metadata)
+                JUMP_FORWARD             7 (to L2)
+
+  87    L1:     BUILD_LIST               0
+                LOAD_FAST                0 (self)
+                STORE_ATTR              11 (metadata)
+
+  90    L2:     NOP
+
+  91    L3:     LOAD_FAST                0 (self)
+                LOAD_ATTR               16 (stub)
+                LOAD_ATTR               25 (ListBots + NULL|self)
+                LOAD_GLOBAL             26 (pb)
+                LOAD_ATTR               29 (Empty + NULL|self)
+                CALL                     0
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               22 (metadata)
+                LOAD_CONST               5 (10)
+                LOAD_CONST               6 (('metadata', 'timeout'))
+                CALL_KW                  3
+                STORE_FAST               2 (bots_resp)
+
+ 122    L4:     LOAD_FAST                2 (bots_resp)
+                LOAD_ATTR               64 (bots)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        70 (to L5)
+
+ 123            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              24 ('[ClearWorld] No bots found on server!')
+                CALL                     1
+                POP_TOP
+
+ 124            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              25 ('[ClearWorld] Open control plane http://')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               58 (host)
+                FORMAT_SIMPLE
+                LOAD_CONST              26 (':')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               66 (control_port)
+                FORMAT_SIMPLE
+                LOAD_CONST              27 (' to spawn a bot first.')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 125            RETURN_CONST            12 (False)
+
+ 128    L5:     LOAD_CONST              11 (None)
+                STORE_FAST               5 (selected)
+
+ 129            LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               68 (bot_id)
+                TO_BOOL
+                POP_JUMP_IF_FALSE      103 (to L11)
+
+ 130            LOAD_FAST                2 (bots_resp)
+                LOAD_ATTR               64 (bots)
+                GET_ITER
+        L6:     FOR_ITER                43 (to L8)
+                STORE_FAST               6 (b)
+
+ 131            LOAD_FAST                6 (b)
+                LOAD_ATTR               68 (bot_id)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               68 (bot_id)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_TRUE         2 (to L7)
+                JUMP_BACKWARD           41 (to L6)
+
+ 132    L7:     LOAD_FAST                6 (b)
+                STORE_FAST               5 (selected)
+
+ 133            POP_TOP
+                JUMP_FORWARD             2 (to L9)
+
+ 130    L8:     END_FOR
+                POP_TOP
+
+ 134    L9:     LOAD_FAST                5 (selected)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        36 (to L10)
+
+ 135            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              28 ('[ClearWorld] Bot with ID ')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               68 (bot_id)
+                FORMAT_SIMPLE
+                LOAD_CONST              29 (' not found.')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 136            RETURN_CONST            12 (False)
+
+ 134   L10:     JUMP_FORWARD            62 (to L16)
+
+ 139   L11:     LOAD_FAST                2 (bots_resp)
+                LOAD_ATTR               64 (bots)
+                GET_ITER
+       L12:     FOR_ITER                24 (to L14)
+                STORE_FAST               6 (b)
+
+ 140            LOAD_FAST                6 (b)
+                LOAD_ATTR               70 (world)
+                TO_BOOL
+                POP_JUMP_IF_TRUE         2 (to L13)
+                JUMP_BACKWARD           22 (to L12)
+
+ 141   L13:     LOAD_FAST                6 (b)
+                STORE_FAST               5 (selected)
+
+ 142            POP_TOP
+                JUMP_FORWARD             2 (to L15)
+
+ 139   L14:     END_FOR
+                POP_TOP
+
+ 143   L15:     LOAD_FAST                5 (selected)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        15 (to L16)
+
+ 144            LOAD_FAST                2 (bots_resp)
+                LOAD_ATTR               64 (bots)
+                LOAD_CONST              30 (0)
+                BINARY_SUBSCR
+                STORE_FAST               5 (selected)
+
+ 146   L16:     LOAD_FAST                5 (selected)
+                LOAD_ATTR               68 (bot_id)
+                LOAD_FAST                0 (self)
+                STORE_ATTR              34 (bot_id)
+
+ 147            LOAD_GLOBAL             26 (pb)
+                LOAD_ATTR               73 (BotRef + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               68 (bot_id)
+                LOAD_CONST              31 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST                0 (self)
+                STORE_ATTR              37 (bot_ref)
+
+ 148            LOAD_FAST                5 (selected)
+                LOAD_ATTR               76 (username)
+                LOAD_FAST                0 (self)
+                STORE_ATTR              38 (username)
+
+ 149            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              32 ('[ClearWorld] Attached to bot #')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               68 (bot_id)
+                FORMAT_SIMPLE
+                LOAD_CONST              33 (" ('")
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               76 (username)
+                FORMAT_SIMPLE
+                LOAD_CONST              34 ("') in world '")
+                LOAD_FAST                5 (selected)
+                LOAD_ATTR               70 (world)
+                FORMAT_SIMPLE
+                LOAD_CONST              35 ("'")
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 152            NOP
+
+ 153   L17:     LOAD_FAST                0 (self)
+                LOAD_ATTR               16 (stub)
+                LOAD_ATTR               79 (SetPlaceDelay + NULL|self)
+                LOAD_GLOBAL             26 (pb)
+                LOAD_ATTR               81 (SetUintRequest + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               74 (bot_ref)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               82 (place_delay_ms)
+                LOAD_CONST              36 (('bot', 'value'))
+                CALL_KW                  2
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               22 (metadata)
+                LOAD_CONST              37 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 154            LOAD_FAST                0 (self)
+                LOAD_ATTR               16 (stub)
+                LOAD_ATTR               85 (SetWalkDelay + NULL|self)
+                LOAD_GLOBAL             26 (pb)
+                LOAD_ATTR               81 (SetUintRequest + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               74 (bot_ref)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               86 (walk_delay_ms)
+                LOAD_CONST              36 (('bot', 'value'))
+                CALL_KW                  2
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               22 (metadata)
+                LOAD_CONST              37 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 155            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              38 ('[ClearWorld] Configured delays: place_delay=')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               82 (place_delay_ms)
+                FORMAT_SIMPLE
+                LOAD_CONST              39 ('ms, walk_delay=')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               86 (walk_delay_ms)
+                FORMAT_SIMPLE
+                LOAD_CONST              40 ('ms')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 159   L18:     RETURN_CONST            42 (True)
+
+  --   L19:     PUSH_EXC_INFO
+
+  92            LOAD_GLOBAL              6 (grpc)
+                LOAD_ATTR               30 (RpcError)
+                CHECK_EXC_MATCH
+                EXTENDED_ARG             2
+                POP_JUMP_IF_FALSE      648 (to L36)
+                STORE_FAST               3 (e)
+
+  93   L20:     LOAD_FAST                3 (e)
+                LOAD_ATTR               33 (code + NULL|self)
+                CALL                     0
+                LOAD_GLOBAL              6 (grpc)
+                LOAD_ATTR               34 (StatusCode)
+                LOAD_ATTR               36 (UNAUTHENTICATED)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE      242 (to L31)
+
+  94            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               7 ('[ClearWorld] ERROR: Mori server requires authentication token!')
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+  95            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               9 ('[ClearWorld] Please set MORI_GRPC_TOKEN in .env or pass --token <token>')
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+  98            LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               42 (stdin)
+                LOAD_ATTR               45 (isatty + NULL|self)
+                CALL                     0
+                TO_BOOL
+                POP_JUMP_IF_FALSE      154 (to L30)
+
+  99   L21:     NOP
+
+ 100   L22:     LOAD_GLOBAL             47 (input + NULL)
+                LOAD_CONST              10 ('Enter MORI_GRPC_TOKEN: ')
+                CALL                     1
+                LOAD_ATTR               21 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST               4 (entered_token)
+
+ 101            LOAD_FAST                4 (entered_token)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       90 (to L24)
+
+ 102            LOAD_FAST_LOAD_FAST     64 (entered_token, self)
+                LOAD_ATTR                2 (config)
+                STORE_ATTR               9 (token)
+
+ 103            LOAD_CONST               3 ('authorization')
+                LOAD_CONST               4 ('Bearer ')
+                LOAD_FAST                4 (entered_token)
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                BUILD_TUPLE              2
+                BUILD_LIST               1
+                LOAD_FAST                0 (self)
+                STORE_ATTR              11 (metadata)
+
+ 104            LOAD_FAST                0 (self)
+                LOAD_ATTR               16 (stub)
+                LOAD_ATTR               25 (ListBots + NULL|self)
+                LOAD_GLOBAL             26 (pb)
+                LOAD_ATTR               29 (Empty + NULL|self)
+                CALL                     0
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               22 (metadata)
+                LOAD_CONST               5 (10)
+                LOAD_CONST               6 (('metadata', 'timeout'))
+                CALL_KW                  3
+                STORE_FAST               2 (bots_resp)
+       L23:     POP_EXCEPT
+                LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                EXTENDED_ARG             3
+                JUMP_BACKWARD_NO_INTERRUPT 899 (to L4)
+
+ 106   L24:     POP_EXCEPT
+                LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                RETURN_CONST            12 (False)
+
+  --   L25:     PUSH_EXC_INFO
+
+ 107            LOAD_GLOBAL             48 (KeyboardInterrupt)
+                LOAD_GLOBAL             50 (EOFError)
+                BUILD_TUPLE              2
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        7 (to L28)
+                POP_TOP
+
+ 108   L26:     POP_EXCEPT
+       L27:     POP_EXCEPT
+                LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                RETURN_CONST            12 (False)
+
+ 107   L28:     RERAISE                  0
+
+  --   L29:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+
+ 110   L30:     POP_EXCEPT
+                LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                RETURN_CONST            12 (False)
+
+ 111   L31:     LOAD_FAST                3 (e)
+                LOAD_ATTR               33 (code + NULL|self)
+                CALL                     0
+                LOAD_GLOBAL              6 (grpc)
+                LOAD_ATTR               34 (StatusCode)
+                LOAD_ATTR               52 (DEADLINE_EXCEEDED)
+                LOAD_GLOBAL              6 (grpc)
+                LOAD_ATTR               34 (StatusCode)
+                LOAD_ATTR               54 (UNAVAILABLE)
+                BUILD_TUPLE              2
+                CONTAINS_OP              0
+                POP_JUMP_IF_FALSE      224 (to L33)
+
+ 112            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              13 ('[ClearWorld] ERROR: Cannot connect to Mori server at ')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR                4 (grpc_addr)
+                FORMAT_SIMPLE
+                LOAD_CONST              14 (' (')
+                LOAD_FAST                3 (e)
+                LOAD_ATTR               33 (code + NULL|self)
+                CALL                     0
+                LOAD_ATTR               56 (name)
+                FORMAT_SIMPLE
+                LOAD_CONST              15 (')!')
+                BUILD_STRING             5
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+ 113            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              16 ('[ClearWorld] Troubleshooting:')
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+ 114            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              17 ('  1. Check if the remote PC (')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               58 (host)
+                FORMAT_SIMPLE
+                LOAD_CONST              18 (') is online and connected to ZeroTier.')
+                BUILD_STRING             3
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+ 115            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              19 ('  2. Verify Mori is running on that machine (port ')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (config)
+                LOAD_ATTR               60 (grpc_port)
+                FORMAT_SIMPLE
+                LOAD_CONST              20 (').')
+                BUILD_STRING             3
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+ 116            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              21 ('  3. If Mori is running locally on this PC instead, pass: --host 127.0.0.1')
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+ 117   L32:     POP_EXCEPT
+                LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                RETURN_CONST            12 (False)
+
+ 119   L33:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              22 ('[ClearWorld] Connection error: ')
+                LOAD_FAST                3 (e)
+                LOAD_ATTR               33 (code + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                LOAD_CONST              23 (' - ')
+                LOAD_FAST                3 (e)
+                LOAD_ATTR               63 (details + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                BUILD_STRING             4
+                LOAD_GLOBAL             38 (sys)
+                LOAD_ATTR               40 (stderr)
+                LOAD_CONST               8 (('file',))
+                CALL_KW                  2
+                POP_TOP
+
+ 120   L34:     POP_EXCEPT
+                LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                RETURN_CONST            12 (False)
+
+  --   L35:     LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                RERAISE                  1
+
+  92   L36:     RERAISE                  0
+
+  --   L37:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L38:     PUSH_EXC_INFO
+
+ 156            LOAD_GLOBAL              6 (grpc)
+                LOAD_ATTR               30 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       38 (to L42)
+                STORE_FAST               3 (e)
+
+ 157   L39:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              41 ('[ClearWorld] Warning configuring delays: ')
+                LOAD_FAST                3 (e)
+                LOAD_ATTR               63 (details + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                CALL                     1
+                POP_TOP
+       L40:     POP_EXCEPT
+                LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+
+ 159            RETURN_CONST            42 (True)
+
+  --   L41:     LOAD_CONST              11 (None)
+                STORE_FAST               3 (e)
+                DELETE_FAST              3 (e)
+                RERAISE                  1
+
+ 156   L42:     RERAISE                  0
+
+  --   L43:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L3 to L4 -> L19 [0]
+  L17 to L18 -> L38 [0]
+  L19 to L20 -> L37 [1] lasti
+  L20 to L21 -> L35 [1] lasti
+  L22 to L23 -> L25 [1]
+  L25 to L26 -> L29 [2] lasti
+  L26 to L27 -> L35 [1] lasti
+  L28 to L29 -> L29 [2] lasti
+  L29 to L30 -> L35 [1] lasti
+  L31 to L32 -> L35 [1] lasti
+  L33 to L34 -> L35 [1] lasti
+  L35 to L37 -> L37 [1] lasti
+  L38 to L39 -> L43 [1] lasti
+  L39 to L40 -> L41 [1] lasti
+  L41 to L43 -> L43 [1] lasti
+
+Disassembly of <code object sync_world at 0x00000211A63F6C40, file "botting/clear_world.py", line 161>:
+ 161            RESUME                   0
+
+ 163            NOP
+
+ 164    L1:     LOAD_FAST                0 (self)
+                LOAD_ATTR                0 (stub)
+                LOAD_ATTR                3 (GetBotState + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (bot_ref)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                6 (metadata)
+                LOAD_CONST               1 (5)
+                LOAD_CONST               2 (('metadata', 'timeout'))
+                CALL_KW                  3
+                STORE_FAST               1 (state)
+
+ 165            LOAD_FAST                1 (state)
+                LOAD_ATTR                8 (world_name)
+                LOAD_FAST                0 (self)
+                STORE_ATTR               4 (world_name)
+
+ 166            LOAD_GLOBAL             11 (int + NULL)
+                LOAD_GLOBAL             13 (round + NULL)
+                LOAD_FAST                1 (state)
+                LOAD_ATTR               14 (pos_x)
+                CALL                     1
+                CALL                     1
+                LOAD_FAST                0 (self)
+                STORE_ATTR               8 (cur_x)
+
+ 167            LOAD_GLOBAL             11 (int + NULL)
+                LOAD_GLOBAL             13 (round + NULL)
+                LOAD_FAST                1 (state)
+                LOAD_ATTR               18 (pos_y)
+                CALL                     1
+                CALL                     1
+                LOAD_FAST                0 (self)
+                STORE_ATTR              10 (cur_y)
+
+ 169            LOAD_FAST                0 (self)
+                LOAD_ATTR                8 (world_name)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        25 (to L3)
+
+ 170            LOAD_GLOBAL             23 (print + NULL)
+                LOAD_CONST               3 ('[ClearWorld] Bot is not in any world! Status: ')
+                LOAD_FAST                1 (state)
+                LOAD_ATTR               24 (status)
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                CALL                     1
+                POP_TOP
+
+ 171    L2:     RETURN_CONST             4 (False)
+
+ 173    L3:     LOAD_FAST                0 (self)
+                LOAD_ATTR                0 (stub)
+                LOAD_ATTR               27 (GetWorld + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (bot_ref)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                6 (metadata)
+                LOAD_CONST               5 (10)
+                LOAD_CONST               2 (('metadata', 'timeout'))
+                CALL_KW                  3
+                STORE_FAST               2 (world)
+
+ 174            LOAD_FAST                2 (world)
+                LOAD_ATTR               28 (width)
+                LOAD_CONST               6 (0)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE       12 (to L4)
+                LOAD_FAST                2 (world)
+                LOAD_ATTR               28 (width)
+                JUMP_FORWARD             1 (to L5)
+        L4:     LOAD_CONST               7 (100)
+        L5:     LOAD_FAST                0 (self)
+                STORE_ATTR              15 (world_width)
+
+ 175            LOAD_FAST                2 (world)
+                LOAD_ATTR               32 (height)
+                LOAD_CONST               6 (0)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE       12 (to L6)
+                LOAD_FAST                2 (world)
+                LOAD_ATTR               32 (height)
+                JUMP_FORWARD             1 (to L7)
+        L6:     LOAD_CONST               8 (60)
+        L7:     LOAD_FAST                0 (self)
+                STORE_ATTR              17 (world_height)
+
+ 177            LOAD_FAST                0 (self)
+                LOAD_ATTR               36 (tiles_lock)
+                BEFORE_WITH
+        L8:     POP_TOP
+
+ 178            LOAD_FAST                0 (self)
+                LOAD_ATTR               38 (tiles)
+                LOAD_ATTR               41 (clear + NULL|self)
+                CALL                     0
+                POP_TOP
+
+ 179            LOAD_FAST                2 (world)
+                LOAD_ATTR               38 (tiles)
+                GET_ITER
+        L9:     FOR_ITER                39 (to L10)
+                STORE_FAST               3 (t)
+
+ 180            LOAD_FAST_LOAD_FAST     48 (t, self)
+                LOAD_ATTR               38 (tiles)
+                LOAD_FAST                3 (t)
+                LOAD_ATTR               42 (x)
+                LOAD_FAST                3 (t)
+                LOAD_ATTR               44 (y)
+                BUILD_TUPLE              2
+                STORE_SUBSCR
+                JUMP_BACKWARD           41 (to L9)
+
+ 179   L10:     END_FOR
+                POP_TOP
+
+ 177   L11:     LOAD_CONST               9 (None)
+                LOAD_CONST               9 (None)
+                LOAD_CONST               9 (None)
+                CALL                     2
+                POP_TOP
+
+ 182   L12:     LOAD_GLOBAL             23 (print + NULL)
+                LOAD_CONST              10 ("[ClearWorld] World '")
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                8 (world_name)
+                FORMAT_SIMPLE
+                LOAD_CONST              11 ("' loaded: ")
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               30 (world_width)
+                FORMAT_SIMPLE
+                LOAD_CONST              12 ('x')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               34 (world_height)
+                FORMAT_SIMPLE
+                LOAD_CONST              13 (' tiles.')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 183            LOAD_GLOBAL             23 (print + NULL)
+                LOAD_CONST              14 ('[ClearWorld] Bot position: (')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               16 (cur_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              15 (', ')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               20 (cur_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              16 (')')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 184   L13:     RETURN_CONST            17 (True)
+
+ 177   L14:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L15)
+                RERAISE                  2
+       L15:     POP_TOP
+       L16:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+                JUMP_BACKWARD_NO_INTERRUPT 104 (to L12)
+
+  --   L17:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L18:     PUSH_EXC_INFO
+
+ 185            LOAD_GLOBAL             46 (grpc)
+                LOAD_ATTR               48 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       55 (to L22)
+                STORE_FAST               4 (e)
+
+ 186   L19:     LOAD_GLOBAL             23 (print + NULL)
+                LOAD_CONST              18 ('[ClearWorld] Failed to fetch world: ')
+                LOAD_FAST                4 (e)
+                LOAD_ATTR               51 (code + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                LOAD_CONST              19 (' - ')
+                LOAD_FAST                4 (e)
+                LOAD_ATTR               53 (details + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                BUILD_STRING             4
+                CALL                     1
+                POP_TOP
+
+ 187   L20:     POP_EXCEPT
+                LOAD_CONST               9 (None)
+                STORE_FAST               4 (e)
+                DELETE_FAST              4 (e)
+                RETURN_CONST             4 (False)
+
+  --   L21:     LOAD_CONST               9 (None)
+                STORE_FAST               4 (e)
+                DELETE_FAST              4 (e)
+                RERAISE                  1
+
+ 185   L22:     RERAISE                  0
+
+  --   L23:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L2 -> L18 [0]
+  L3 to L8 -> L18 [0]
+  L8 to L11 -> L14 [1] lasti
+  L11 to L13 -> L18 [0]
+  L14 to L16 -> L17 [3] lasti
+  L16 to L18 -> L18 [0]
+  L18 to L19 -> L23 [1] lasti
+  L19 to L20 -> L21 [1] lasti
+  L21 to L23 -> L23 [1] lasti
+
+Disassembly of <code object start_event_listener at 0x00000211A63A4AE0, file "botting/clear_world.py", line 189>:
+  --           MAKE_CELL                0 (self)
+
+ 189           RESUME                   0
+
+ 191           LOAD_FAST                0 (self)
+               BUILD_TUPLE              1
+               LOAD_CONST               1 (<code object _listen at 0x00000211A641ABA0, file "botting/clear_world.py", line 191>)
+               MAKE_FUNCTION
+               SET_FUNCTION_ATTRIBUTE   8 (closure)
+               STORE_FAST               1 (_listen)
+
+ 222           LOAD_GLOBAL              0 (threading)
+               LOAD_ATTR                2 (Thread)
+               PUSH_NULL
+               LOAD_FAST                1 (_listen)
+               LOAD_CONST               2 (True)
+               LOAD_CONST               3 (('target', 'daemon'))
+               CALL_KW                  2
+               STORE_FAST               2 (t)
+
+ 223           LOAD_FAST                2 (t)
+               LOAD_ATTR                5 (start + NULL|self)
+               CALL                     0
+               POP_TOP
+               RETURN_CONST             4 (None)
+
+Disassembly of <code object _listen at 0x00000211A641ABA0, file "botting/clear_world.py", line 191>:
+  --            COPY_FREE_VARS           1
+
+ 191            RESUME                   0
+
+ 192            NOP
+
+ 193    L1:     LOAD_DEREF               8 (self)
+                LOAD_ATTR                0 (stub)
+                LOAD_ATTR                3 (SubscribeEvents + NULL|self)
+
+ 194            LOAD_GLOBAL              4 (pb)
+                LOAD_ATTR                7 (SubscribeRequest + NULL|self)
+                LOAD_DEREF               8 (self)
+                LOAD_ATTR                8 (bot_id)
+                BUILD_LIST               1
+                LOAD_CONST               1 (('bot_ids',))
+                CALL_KW                  1
+
+ 195            LOAD_DEREF               8 (self)
+                LOAD_ATTR               10 (metadata)
+
+ 193            LOAD_CONST               2 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST               0 (stream)
+
+ 197            LOAD_FAST                0 (stream)
+                GET_ITER
+        L2:     EXTENDED_ARG             1
+                FOR_ITER               363 (to L14)
+                STORE_FAST               1 (ev)
+
+ 198            LOAD_DEREF               8 (self)
+                LOAD_ATTR               12 (running)
+                TO_BOOL
+                POP_JUMP_IF_TRUE         2 (to L4)
+
+ 199            POP_TOP
+        L3:     RETURN_CONST             0 (None)
+
+ 200    L4:     LOAD_FAST                1 (ev)
+                LOAD_ATTR               15 (WhichOneof + NULL|self)
+                LOAD_CONST               3 ('event')
+                CALL                     1
+                STORE_FAST               2 (event_type)
+
+ 201            LOAD_FAST                2 (event_type)
+                LOAD_CONST               4 ('tile_update')
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE      226 (to L11)
+
+ 202            LOAD_FAST                1 (ev)
+                LOAD_ATTR               16 (tile_update)
+                STORE_FAST               3 (tu)
+
+ 203            LOAD_DEREF               8 (self)
+                LOAD_ATTR               18 (tiles_lock)
+                BEFORE_WITH
+        L5:     POP_TOP
+
+ 204            LOAD_DEREF               8 (self)
+                LOAD_ATTR               20 (tiles)
+                LOAD_ATTR               23 (get + NULL|self)
+                LOAD_FAST                3 (tu)
+                LOAD_ATTR               24 (x)
+                LOAD_FAST                3 (tu)
+                LOAD_ATTR               26 (y)
+                BUILD_TUPLE              2
+                CALL                     1
+                STORE_FAST               4 (existing)
+
+ 205            LOAD_FAST                4 (existing)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       12 (to L6)
+                LOAD_FAST                4 (existing)
+                LOAD_ATTR               28 (flags)
+                JUMP_FORWARD             1 (to L7)
+        L6:     LOAD_CONST               5 (0)
+        L7:     STORE_FAST               5 (flags)
+
+ 206            LOAD_FAST                4 (existing)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       12 (to L8)
+                LOAD_FAST                4 (existing)
+                LOAD_ATTR               30 (tile_type)
+                JUMP_FORWARD             1 (to L9)
+        L8:     LOAD_CONST               6 ('Normal')
+        L9:     STORE_FAST               6 (tile_type)
+
+ 207            LOAD_GLOBAL              4 (pb)
+                LOAD_ATTR               33 (TileInfo + NULL|self)
+
+ 208            LOAD_FAST                3 (tu)
+                LOAD_ATTR               24 (x)
+
+ 209            LOAD_FAST                3 (tu)
+                LOAD_ATTR               26 (y)
+
+ 210            LOAD_FAST                3 (tu)
+                LOAD_ATTR               34 (fg)
+
+ 211            LOAD_FAST                3 (tu)
+                LOAD_ATTR               36 (bg)
+
+ 212            LOAD_FAST                5 (flags)
+
+ 213            LOAD_FAST                6 (tile_type)
+
+ 207            LOAD_CONST               7 (('x', 'y', 'fg_item_id', 'bg_item_id', 'flags', 'tile_type'))
+                CALL_KW                  6
+                LOAD_DEREF               8 (self)
+                LOAD_ATTR               20 (tiles)
+                LOAD_FAST                3 (tu)
+                LOAD_ATTR               24 (x)
+                LOAD_FAST                3 (tu)
+                LOAD_ATTR               26 (y)
+                BUILD_TUPLE              2
+                STORE_SUBSCR
+
+ 203   L10:     LOAD_CONST               0 (None)
+                LOAD_CONST               0 (None)
+                LOAD_CONST               0 (None)
+                CALL                     2
+                POP_TOP
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          272 (to L2)
+
+ 215   L11:     LOAD_FAST                2 (event_type)
+                LOAD_CONST               8 ('bot_move')
+                COMPARE_OP              88 (bool(==))
+       L12:     POP_JUMP_IF_TRUE         3 (to L13)
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          281 (to L2)
+
+ 216   L13:     LOAD_FAST                1 (ev)
+                LOAD_ATTR               38 (bot_move)
+                STORE_FAST               7 (bm)
+
+ 217            LOAD_GLOBAL             41 (int + NULL)
+                LOAD_GLOBAL             43 (round + NULL)
+                LOAD_FAST                7 (bm)
+                LOAD_ATTR               24 (x)
+                CALL                     1
+                CALL                     1
+                LOAD_DEREF               8 (self)
+                STORE_ATTR              22 (cur_x)
+
+ 218            LOAD_GLOBAL             41 (int + NULL)
+                LOAD_GLOBAL             43 (round + NULL)
+                LOAD_FAST                7 (bm)
+                LOAD_ATTR               26 (y)
+                CALL                     1
+                CALL                     1
+                LOAD_DEREF               8 (self)
+                STORE_ATTR              23 (cur_y)
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          366 (to L2)
+
+ 197   L14:     END_FOR
+                POP_TOP
+       L15:     RETURN_CONST             0 (None)
+
+ 203   L16:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L17)
+                RERAISE                  2
+       L17:     POP_TOP
+       L18:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          385 (to L2)
+
+  --   L19:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L20:     PUSH_EXC_INFO
+
+ 219            LOAD_GLOBAL             48 (Exception)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L22)
+                POP_TOP
+
+ 220   L21:     POP_EXCEPT
+                RETURN_CONST             0 (None)
+
+ 219   L22:     RERAISE                  0
+
+  --   L23:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L3 -> L20 [0]
+  L4 to L5 -> L20 [0]
+  L5 to L10 -> L16 [2] lasti
+  L10 to L12 -> L20 [0]
+  L13 to L15 -> L20 [0]
+  L16 to L18 -> L19 [4] lasti
+  L18 to L20 -> L20 [0]
+  L20 to L21 -> L23 [1] lasti
+  L22 to L23 -> L23 [1] lasti
+
+Disassembly of <code object get_tile at 0x00000211A63F71A0, file "botting/clear_world.py", line 225>:
+ 225            RESUME                   0
+
+ 227            LOAD_FAST                1 (x)
+                LOAD_CONST               1 (0)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_TRUE        36 (to L1)
+                LOAD_FAST_LOAD_FAST     16 (x, self)
+                LOAD_ATTR                0 (world_width)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_TRUE        21 (to L1)
+                LOAD_FAST                2 (y)
+                LOAD_CONST               1 (0)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_TRUE        15 (to L1)
+                LOAD_FAST_LOAD_FAST     32 (y, self)
+                LOAD_ATTR                2 (world_height)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_FALSE        1 (to L2)
+
+ 228    L1:     RETURN_CONST             2 (None)
+
+ 229    L2:     LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (tiles_lock)
+                BEFORE_WITH
+        L3:     POP_TOP
+
+ 230            LOAD_FAST                0 (self)
+                LOAD_ATTR                6 (tiles)
+                LOAD_ATTR                9 (get + NULL|self)
+                LOAD_FAST_LOAD_FAST     18 (x, y)
+                BUILD_TUPLE              2
+                CALL                     1
+                STORE_FAST               3 (cached)
+
+ 231            LOAD_FAST                3 (cached)
+                POP_JUMP_IF_NONE        11 (to L5)
+
+ 232            LOAD_FAST                3 (cached)
+
+ 229    L4:     SWAP                     2
+                LOAD_CONST               2 (None)
+                LOAD_CONST               2 (None)
+                LOAD_CONST               2 (None)
+                CALL                     2
+                POP_TOP
+                RETURN_VALUE
+
+ 231    L5:     NOP
+
+ 229            LOAD_CONST               2 (None)
+                LOAD_CONST               2 (None)
+                LOAD_CONST               2 (None)
+                CALL                     2
+                POP_TOP
+
+ 234    L6:     NOP
+
+ 235    L7:     LOAD_FAST                0 (self)
+                LOAD_ATTR               10 (stub)
+                LOAD_ATTR               13 (GetTile + NULL|self)
+                LOAD_GLOBAL             14 (pb)
+                LOAD_ATTR               17 (GetTileRequest + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               18 (bot_ref)
+                LOAD_FAST_LOAD_FAST     18 (x, y)
+                LOAD_CONST               3 (('bot', 'x', 'y'))
+                CALL_KW                  3
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               20 (metadata)
+                LOAD_CONST               4 (2)
+                LOAD_CONST               5 (('metadata', 'timeout'))
+                CALL_KW                  3
+                STORE_FAST               4 (t)
+
+ 236            LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (tiles_lock)
+                BEFORE_WITH
+        L8:     POP_TOP
+
+ 237            LOAD_FAST_LOAD_FAST     64 (t, self)
+                LOAD_ATTR                6 (tiles)
+                LOAD_FAST_LOAD_FAST     18 (x, y)
+                BUILD_TUPLE              2
+                STORE_SUBSCR
+
+ 236    L9:     LOAD_CONST               2 (None)
+                LOAD_CONST               2 (None)
+                LOAD_CONST               2 (None)
+                CALL                     2
+                POP_TOP
+
+ 238            LOAD_FAST                4 (t)
+       L10:     RETURN_VALUE
+
+ 229   L11:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L12)
+                RERAISE                  2
+       L12:     POP_TOP
+       L13:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+                JUMP_BACKWARD_NO_INTERRUPT 118 (to L6)
+
+  --   L14:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+
+ 236   L15:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L16)
+                RERAISE                  2
+       L16:     POP_TOP
+       L17:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+
+ 238            LOAD_FAST                4 (t)
+       L18:     RETURN_VALUE
+
+  --   L19:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L20:     PUSH_EXC_INFO
+
+ 239            LOAD_GLOBAL             22 (grpc)
+                LOAD_ATTR               24 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L22)
+                POP_TOP
+
+ 240   L21:     POP_EXCEPT
+                RETURN_CONST             2 (None)
+
+ 239   L22:     RERAISE                  0
+
+  --   L23:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L3 to L4 -> L11 [1] lasti
+  L7 to L8 -> L20 [0]
+  L8 to L9 -> L15 [1] lasti
+  L9 to L10 -> L20 [0]
+  L11 to L13 -> L14 [3] lasti
+  L15 to L17 -> L19 [3] lasti
+  L17 to L18 -> L20 [0]
+  L19 to L20 -> L20 [0]
+  L20 to L21 -> L23 [1] lasti
+  L22 to L23 -> L23 [1] lasti
+
+Disassembly of <code object set_facing at 0x00000211A63DCB20, file "botting/clear_world.py", line 242>:
+ 242           RESUME                   0
+
+ 244           NOP
+
+ 245   L1:     LOAD_FAST                0 (self)
+               LOAD_ATTR                0 (stub)
+               LOAD_ATTR                3 (SetDirection + NULL|self)
+
+ 246           LOAD_GLOBAL              4 (pb)
+               LOAD_ATTR                7 (SetDirectionRequest + NULL|self)
+               LOAD_FAST                0 (self)
+               LOAD_ATTR                8 (bot_ref)
+               LOAD_FAST                1 (facing_left)
+               LOAD_CONST               1 (('bot', 'facing_left'))
+               CALL_KW                  2
+
+ 247           LOAD_FAST                0 (self)
+               LOAD_ATTR               10 (metadata)
+
+ 245           LOAD_CONST               2 (('metadata',))
+               CALL_KW                  2
+               POP_TOP
+       L2:     RETURN_CONST             3 (None)
+
+  --   L3:     PUSH_EXC_INFO
+
+ 249           LOAD_GLOBAL             12 (grpc)
+               LOAD_ATTR               14 (RpcError)
+               CHECK_EXC_MATCH
+               POP_JUMP_IF_FALSE        3 (to L5)
+               POP_TOP
+
+ 250   L4:     POP_EXCEPT
+               RETURN_CONST             3 (None)
+
+ 249   L5:     RERAISE                  0
+
+  --   L6:     COPY                     3
+               POP_EXCEPT
+               RERAISE                  1
+ExceptionTable:
+  L1 to L2 -> L3 [0]
+  L3 to L4 -> L6 [1] lasti
+  L5 to L6 -> L6 [1] lasti
+
+Disassembly of <code object hold_punch at 0x00000211A6420860, file "botting/clear_world.py", line 252>:
+ 252            RESUME                   0
+
+ 257            LOAD_GLOBAL              1 (relative_offset + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (cur_x)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (cur_y)
+                LOAD_FAST_LOAD_FAST     18 (target_x, target_y)
+                CALL                     4
+                UNPACK_SEQUENCE          2
+                STORE_FAST_STORE_FAST   52 (dx, dy)
+
+ 258            LOAD_GLOBAL              7 (is_within_punch_range + NULL)
+                LOAD_FAST_LOAD_FAST     52 (dx, dy)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L1)
+
+ 259            RETURN_CONST             1 (False)
+
+ 262    L1:     LOAD_FAST                3 (dx)
+                LOAD_CONST               2 (0)
+                COMPARE_OP             119 (bool(!=))
+                POP_JUMP_IF_FALSE       18 (to L2)
+
+ 263            LOAD_FAST                0 (self)
+                LOAD_ATTR                9 (set_facing + NULL|self)
+                LOAD_FAST                3 (dx)
+                LOAD_CONST               2 (0)
+                COMPARE_OP               2 (<)
+                LOAD_CONST               3 (('facing_left',))
+                CALL_KW                  1
+                POP_TOP
+
+ 265    L2:     LOAD_CONST               2 (0)
+                STORE_FAST               5 (hits)
+
+ 266            LOAD_FAST                0 (self)
+                LOAD_ATTR               10 (running)
+                TO_BOOL
+                EXTENDED_ARG             1
+                POP_JUMP_IF_FALSE      408 (to L14)
+                LOAD_FAST_LOAD_FAST     80 (hits, self)
+                LOAD_ATTR               12 (config)
+                LOAD_ATTR               14 (max_hits_per_block)
+                COMPARE_OP              18 (bool(<))
+                EXTENDED_ARG             1
+                POP_JUMP_IF_FALSE      382 (to L14)
+
+ 267    L3:     LOAD_FAST                0 (self)
+                LOAD_ATTR               17 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     18 (target_x, target_y)
+                CALL                     2
+                STORE_FAST               6 (tile)
+
+ 269            LOAD_GLOBAL             19 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST     96 (tile, self)
+                LOAD_ATTR               12 (config)
+                LOAD_ATTR               20 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_TRUE        22 (to L4)
+
+ 270            LOAD_FAST                0 (self)
+                COPY                     1
+                LOAD_ATTR               22 (total_broken)
+                LOAD_CONST               4 (1)
+                BINARY_OP               13 (+=)
+                SWAP                     2
+                STORE_ATTR              11 (total_broken)
+
+ 271            RETURN_CONST             5 (True)
+
+ 273    L4:     NOP
+
+ 275    L5:     LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (stub)
+                LOAD_ATTR               27 (Hit + NULL|self)
+
+ 276            LOAD_GLOBAL             28 (pb)
+                LOAD_ATTR               31 (TileActionRequest + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               32 (bot_ref)
+                LOAD_FAST_LOAD_FAST     52 (dx, dy)
+                LOAD_CONST               6 (('bot', 'x', 'y'))
+                CALL_KW                  3
+
+ 277            LOAD_FAST                0 (self)
+                LOAD_ATTR               34 (metadata)
+
+ 275            LOAD_CONST               7 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 279            LOAD_FAST                5 (hits)
+                LOAD_CONST               4 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST               5 (hits)
+
+ 285    L6:     LOAD_GLOBAL             44 (time)
+                LOAD_ATTR               46 (sleep)
+                PUSH_NULL
+                LOAD_CONST              11 (0.01)
+                CALL                     1
+                POP_TOP
+
+ 288            LOAD_FAST                5 (hits)
+                LOAD_CONST              12 (4)
+                BINARY_OP                6 (%)
+                LOAD_CONST               2 (0)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE      161 (to L13)
+
+ 289            NOP
+
+ 290    L7:     LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (stub)
+                LOAD_ATTR               49 (GetTile + NULL|self)
+
+ 291            LOAD_GLOBAL             28 (pb)
+                LOAD_ATTR               51 (GetTileRequest + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               32 (bot_ref)
+                LOAD_FAST_LOAD_FAST     18 (target_x, target_y)
+                LOAD_CONST               6 (('bot', 'x', 'y'))
+                CALL_KW                  3
+
+ 292            LOAD_FAST                0 (self)
+                LOAD_ATTR               34 (metadata)
+
+ 293            LOAD_CONST               4 (1)
+
+ 290            LOAD_CONST              13 (('metadata', 'timeout'))
+                CALL_KW                  3
+                STORE_FAST               8 (fresh)
+
+ 295            LOAD_FAST                0 (self)
+                LOAD_ATTR               52 (tiles_lock)
+                BEFORE_WITH
+        L8:     POP_TOP
+
+ 296            LOAD_FAST_LOAD_FAST    128 (fresh, self)
+                LOAD_ATTR               54 (tiles)
+                LOAD_FAST_LOAD_FAST     18 (target_x, target_y)
+                BUILD_TUPLE              2
+                STORE_SUBSCR
+
+ 295    L9:     LOAD_CONST              10 (None)
+                LOAD_CONST              10 (None)
+                LOAD_CONST              10 (None)
+                CALL                     2
+                POP_TOP
+
+ 297   L10:     LOAD_GLOBAL             19 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST    128 (fresh, self)
+                LOAD_ATTR               12 (config)
+                LOAD_ATTR               20 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_TRUE        22 (to L12)
+
+ 298            LOAD_FAST                0 (self)
+                COPY                     1
+                LOAD_ATTR               22 (total_broken)
+                LOAD_CONST               4 (1)
+                BINARY_OP               13 (+=)
+                SWAP                     2
+                STORE_ATTR              11 (total_broken)
+
+ 299   L11:     RETURN_CONST             5 (True)
+
+ 297   L12:     NOP
+
+ 266   L13:     LOAD_FAST                0 (self)
+                LOAD_ATTR               10 (running)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       28 (to L14)
+                LOAD_FAST_LOAD_FAST     80 (hits, self)
+                LOAD_ATTR               12 (config)
+                LOAD_ATTR               14 (max_hits_per_block)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE        3 (to L14)
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          382 (to L3)
+
+ 304   L14:     LOAD_FAST                0 (self)
+                LOAD_ATTR               17 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     18 (target_x, target_y)
+                CALL                     2
+                STORE_FAST               6 (tile)
+
+ 305            LOAD_GLOBAL             19 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST     96 (tile, self)
+                LOAD_ATTR               12 (config)
+                LOAD_ATTR               20 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                UNARY_NOT
+                STORE_FAST               9 (broken)
+
+ 306            LOAD_FAST                9 (broken)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       21 (to L15)
+
+ 307            LOAD_FAST                0 (self)
+                COPY                     1
+                LOAD_ATTR               22 (total_broken)
+                LOAD_CONST               4 (1)
+                BINARY_OP               13 (+=)
+                SWAP                     2
+                STORE_ATTR              11 (total_broken)
+
+ 308   L15:     LOAD_FAST                9 (broken)
+                RETURN_VALUE
+
+  --   L16:     PUSH_EXC_INFO
+
+ 280            LOAD_GLOBAL             36 (grpc)
+                LOAD_ATTR               38 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       61 (to L20)
+                STORE_FAST               7 (e)
+
+ 281   L17:     LOAD_GLOBAL             41 (print + NULL)
+                LOAD_CONST               8 ('[ClearWorld] Hit error: ')
+                LOAD_FAST                7 (e)
+                LOAD_ATTR               43 (details + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                CALL                     1
+                POP_TOP
+
+ 282            LOAD_GLOBAL             44 (time)
+                LOAD_ATTR               46 (sleep)
+                PUSH_NULL
+                LOAD_CONST               9 (0.1)
+                CALL                     1
+                POP_TOP
+       L18:     POP_EXCEPT
+                LOAD_CONST              10 (None)
+                STORE_FAST               7 (e)
+                DELETE_FAST              7 (e)
+                EXTENDED_ARG             1
+                JUMP_BACKWARD_NO_INTERRUPT 396 (to L6)
+
+  --   L19:     LOAD_CONST              10 (None)
+                STORE_FAST               7 (e)
+                DELETE_FAST              7 (e)
+                RERAISE                  1
+
+ 280   L20:     RERAISE                  0
+
+  --   L21:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+
+ 295   L22:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L23)
+                RERAISE                  2
+       L23:     POP_TOP
+       L24:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+                EXTENDED_ARG             1
+                JUMP_BACKWARD_NO_INTERRUPT 286 (to L10)
+
+  --   L25:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L26:     PUSH_EXC_INFO
+
+ 300            LOAD_GLOBAL             36 (grpc)
+                LOAD_ATTR               38 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L28)
+                POP_TOP
+
+ 301   L27:     POP_EXCEPT
+                JUMP_BACKWARD_NO_INTERRUPT 252 (to L13)
+
+ 300   L28:     RERAISE                  0
+
+  --   L29:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L5 to L6 -> L16 [0]
+  L7 to L8 -> L26 [0]
+  L8 to L9 -> L22 [1] lasti
+  L9 to L11 -> L26 [0]
+  L16 to L17 -> L21 [1] lasti
+  L17 to L18 -> L19 [1] lasti
+  L19 to L21 -> L21 [1] lasti
+  L22 to L24 -> L25 [3] lasti
+  L24 to L26 -> L26 [0]
+  L26 to L27 -> L29 [1] lasti
+  L28 to L29 -> L29 [1] lasti
+
+Disassembly of <code object walk_step at 0x00000211A63FBCD0, file "botting/clear_world.py", line 310>:
+ 310            RESUME                   0
+
+ 318            LOAD_GLOBAL              1 (abs + NULL)
+                LOAD_FAST_LOAD_FAST     16 (next_x, self)
+                LOAD_ATTR                2 (cur_x)
+                BINARY_OP               10 (-)
+                CALL                     1
+                LOAD_CONST               1 (1)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_TRUE        27 (to L1)
+                LOAD_GLOBAL              1 (abs + NULL)
+                LOAD_FAST_LOAD_FAST     32 (next_y, self)
+                LOAD_ATTR                4 (cur_y)
+                BINARY_OP               10 (-)
+                CALL                     1
+                LOAD_CONST               1 (1)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE       45 (to L2)
+
+ 319    L1:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST               2 ('[ClearWorld] Warning: attempted jump (')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (cur_x)
+                FORMAT_SIMPLE
+                LOAD_CONST               3 (',')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (cur_y)
+                FORMAT_SIMPLE
+                LOAD_CONST               4 (') -> (')
+                LOAD_FAST                1 (next_x)
+                FORMAT_SIMPLE
+                LOAD_CONST               3 (',')
+                LOAD_FAST                2 (next_y)
+                FORMAT_SIMPLE
+                LOAD_CONST               5 (') blocked.')
+                BUILD_STRING             9
+                CALL                     1
+                POP_TOP
+
+ 320            RETURN_CONST             6 (False)
+
+ 322    L2:     LOAD_FAST                1 (next_x)
+                LOAD_CONST               7 (0)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_TRUE        36 (to L3)
+                LOAD_FAST_LOAD_FAST     16 (next_x, self)
+                LOAD_ATTR                8 (world_width)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_TRUE        21 (to L3)
+                LOAD_FAST                2 (next_y)
+                LOAD_CONST               7 (0)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_TRUE        15 (to L3)
+                LOAD_FAST_LOAD_FAST     32 (next_y, self)
+                LOAD_ATTR               10 (world_height)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_FALSE        1 (to L4)
+
+ 323    L3:     RETURN_CONST             6 (False)
+
+ 326    L4:     LOAD_FAST                0 (self)
+                LOAD_ATTR               13 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     18 (next_x, next_y)
+                LOAD_CONST               1 (1)
+                BINARY_OP                0 (+)
+                CALL                     2
+                STORE_FAST               3 (ground)
+
+ 327            LOAD_FAST                3 (ground)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       26 (to L5)
+                LOAD_GLOBAL             15 (is_solid_support + NULL)
+                LOAD_FAST                3 (ground)
+                LOAD_ATTR               16 (fg_item_id)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_TRUE        22 (to L6)
+
+ 328    L5:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST               8 ('[ClearWorld] Blocked: (')
+                LOAD_FAST                1 (next_x)
+                FORMAT_SIMPLE
+                LOAD_CONST               9 (', ')
+                LOAD_FAST                2 (next_y)
+                LOAD_CONST               1 (1)
+                BINARY_OP                0 (+)
+                FORMAT_SIMPLE
+                LOAD_CONST              10 (') is not solid ground - refusing step to prevent floating.')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 329            RETURN_CONST             6 (False)
+
+ 331    L6:     NOP
+
+ 332    L7:     LOAD_FAST                0 (self)
+                LOAD_ATTR               18 (stub)
+                LOAD_ATTR               21 (MoveTo + NULL|self)
+
+ 333            LOAD_GLOBAL             22 (pb)
+                LOAD_ATTR               25 (MoveToRequest + NULL|self)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               26 (bot_ref)
+                LOAD_FAST_LOAD_FAST     18 (next_x, next_y)
+                LOAD_CONST              11 (('bot', 'x', 'y'))
+                CALL_KW                  3
+
+ 334            LOAD_FAST                0 (self)
+                LOAD_ATTR               28 (metadata)
+
+ 332            LOAD_CONST              12 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 336            LOAD_FAST_LOAD_FAST     16 (next_x, self)
+                STORE_ATTR               1 (cur_x)
+
+ 337            LOAD_FAST_LOAD_FAST     32 (next_y, self)
+                STORE_ATTR               2 (cur_y)
+
+ 338    L8:     RETURN_CONST            13 (True)
+
+  --    L9:     PUSH_EXC_INFO
+
+ 339            LOAD_GLOBAL             30 (grpc)
+                LOAD_ATTR               32 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       38 (to L13)
+                STORE_FAST               4 (e)
+
+ 340   L10:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              14 ('[ClearWorld] Walk step error: ')
+                LOAD_FAST                4 (e)
+                LOAD_ATTR               35 (details + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                CALL                     1
+                POP_TOP
+
+ 341   L11:     POP_EXCEPT
+                LOAD_CONST              15 (None)
+                STORE_FAST               4 (e)
+                DELETE_FAST              4 (e)
+                RETURN_CONST             6 (False)
+
+  --   L12:     LOAD_CONST              15 (None)
+                STORE_FAST               4 (e)
+                DELETE_FAST              4 (e)
+                RERAISE                  1
+
+ 339   L13:     RERAISE                  0
+
+  --   L14:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L7 to L8 -> L9 [0]
+  L9 to L10 -> L14 [1] lasti
+  L10 to L11 -> L12 [1] lasti
+  L12 to L14 -> L14 [1] lasti
+
+Disassembly of <code object respawn_and_sync at 0x00000211A62EB5F0, file "botting/clear_world.py", line 343>:
+ 343           RESUME                   0
+
+ 345           LOAD_GLOBAL              1 (print + NULL)
+               LOAD_CONST               1 ('[ClearWorld] Sending Respawn() request...')
+               CALL                     1
+               POP_TOP
+
+ 346           NOP
+
+ 347   L1:     LOAD_FAST                0 (self)
+               LOAD_ATTR                2 (stub)
+               LOAD_ATTR                5 (Respawn + NULL|self)
+               LOAD_FAST                0 (self)
+               LOAD_ATTR                6 (bot_ref)
+               LOAD_FAST                0 (self)
+               LOAD_ATTR                8 (metadata)
+               LOAD_CONST               2 (('metadata',))
+               CALL_KW                  2
+               POP_TOP
+
+ 348           LOAD_GLOBAL             10 (time)
+               LOAD_ATTR               12 (sleep)
+               PUSH_NULL
+               LOAD_CONST               3 (2.0)
+               CALL                     1
+               POP_TOP
+
+ 349           LOAD_FAST                0 (self)
+               LOAD_ATTR               15 (sync_world + NULL|self)
+               CALL                     0
+               POP_TOP
+       L2:     RETURN_CONST             5 (None)
+
+  --   L3:     PUSH_EXC_INFO
+
+ 350           LOAD_GLOBAL             16 (grpc)
+               LOAD_ATTR               18 (RpcError)
+               CHECK_EXC_MATCH
+               POP_JUMP_IF_FALSE       38 (to L7)
+               STORE_FAST               1 (e)
+
+ 351   L4:     LOAD_GLOBAL              1 (print + NULL)
+               LOAD_CONST               4 ('[ClearWorld] Respawn error: ')
+               LOAD_FAST                1 (e)
+               LOAD_ATTR               21 (details + NULL|self)
+               CALL                     0
+               FORMAT_SIMPLE
+               BUILD_STRING             2
+               CALL                     1
+               POP_TOP
+       L5:     POP_EXCEPT
+               LOAD_CONST               5 (None)
+               STORE_FAST               1 (e)
+               DELETE_FAST              1 (e)
+               RETURN_CONST             5 (None)
+
+  --   L6:     LOAD_CONST               5 (None)
+               STORE_FAST               1 (e)
+               DELETE_FAST              1 (e)
+               RERAISE                  1
+
+ 350   L7:     RERAISE                  0
+
+  --   L8:     COPY                     3
+               POP_EXCEPT
+               RERAISE                  1
+ExceptionTable:
+  L1 to L2 -> L3 [0]
+  L3 to L4 -> L8 [1] lasti
+  L4 to L5 -> L6 [1] lasti
+  L6 to L8 -> L8 [1] lasti
+
+Disassembly of <code object find_topmost_target_layer at 0x00000211A6257B30, file "botting/clear_world.py", line 353>:
+ 353            RESUME                   0
+
+ 355            LOAD_FAST                0 (self)
+                LOAD_ATTR                0 (tiles_lock)
+                BEFORE_WITH
+        L1:     POP_TOP
+
+ 356            LOAD_GLOBAL              3 (range + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (world_height)
+                CALL                     1
+                GET_ITER
+        L2:     FOR_ITER               119 (to L10)
+                STORE_FAST               1 (y)
+
+ 357            LOAD_GLOBAL              3 (range + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                6 (world_width)
+                CALL                     1
+                GET_ITER
+        L3:     FOR_ITER                91 (to L9)
+                STORE_FAST               2 (x)
+
+ 358            LOAD_FAST                0 (self)
+                LOAD_ATTR                8 (tiles)
+                LOAD_ATTR               11 (get + NULL|self)
+                LOAD_FAST_LOAD_FAST     33 (x, y)
+                BUILD_TUPLE              2
+                CALL                     1
+                STORE_FAST               3 (tile)
+
+ 359            LOAD_FAST                3 (tile)
+                TO_BOOL
+        L4:     POP_JUMP_IF_TRUE         2 (to L5)
+                JUMP_BACKWARD           40 (to L3)
+        L5:     LOAD_GLOBAL             13 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST     48 (tile, self)
+                LOAD_ATTR               14 (config)
+                LOAD_ATTR               16 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+        L6:     POP_JUMP_IF_TRUE         2 (to L7)
+                JUMP_BACKWARD           78 (to L3)
+
+ 360    L7:     LOAD_FAST                1 (y)
+                SWAP                     2
+                POP_TOP
+                SWAP                     2
+                POP_TOP
+
+ 355    L8:     SWAP                     2
+                LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                CALL                     2
+                POP_TOP
+                RETURN_VALUE
+
+ 357    L9:     END_FOR
+                POP_TOP
+                JUMP_BACKWARD          121 (to L2)
+
+ 356   L10:     END_FOR
+                POP_TOP
+
+ 355   L11:     LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                CALL                     2
+                POP_TOP
+
+ 361            RETURN_CONST             1 (None)
+
+ 355   L12:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L13)
+                RERAISE                  2
+       L13:     POP_TOP
+       L14:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+
+ 361            RETURN_CONST             1 (None)
+
+  --   L15:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L4 -> L12 [1] lasti
+  L5 to L6 -> L12 [1] lasti
+  L7 to L8 -> L12 [1] lasti
+  L9 to L11 -> L12 [1] lasti
+  L12 to L14 -> L15 [3] lasti
+
+Disassembly of <code object has_target_blocks_on_layer at 0x00000211A6359430, file "botting/clear_world.py", line 363>:
+ 363            RESUME                   0
+
+ 365            LOAD_FAST                0 (self)
+                LOAD_ATTR                0 (tiles_lock)
+                BEFORE_WITH
+        L1:     POP_TOP
+
+ 366            LOAD_GLOBAL              3 (range + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (world_width)
+                CALL                     1
+                GET_ITER
+        L2:     FOR_ITER                86 (to L8)
+                STORE_FAST               2 (x)
+
+ 367            LOAD_FAST                0 (self)
+                LOAD_ATTR                6 (tiles)
+                LOAD_ATTR                9 (get + NULL|self)
+                LOAD_FAST_LOAD_FAST     33 (x, y)
+                BUILD_TUPLE              2
+                CALL                     1
+                STORE_FAST               3 (tile)
+
+ 368            LOAD_FAST                3 (tile)
+                TO_BOOL
+        L3:     POP_JUMP_IF_TRUE         2 (to L4)
+                JUMP_BACKWARD           40 (to L2)
+        L4:     LOAD_GLOBAL             11 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST     48 (tile, self)
+                LOAD_ATTR               12 (config)
+                LOAD_ATTR               14 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+        L5:     POP_JUMP_IF_TRUE         2 (to L6)
+                JUMP_BACKWARD           78 (to L2)
+
+ 369    L6:     POP_TOP
+
+ 365    L7:     LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                CALL                     2
+                POP_TOP
+                RETURN_CONST             2 (True)
+
+ 366    L8:     END_FOR
+                POP_TOP
+
+ 365    L9:     LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                LOAD_CONST               1 (None)
+                CALL                     2
+                POP_TOP
+
+ 370            RETURN_CONST             3 (False)
+
+ 365   L10:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L11)
+                RERAISE                  2
+       L11:     POP_TOP
+       L12:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+
+ 370            RETURN_CONST             3 (False)
+
+  --   L13:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L3 -> L10 [1] lasti
+  L4 to L5 -> L10 [1] lasti
+  L6 to L7 -> L10 [1] lasti
+  L8 to L9 -> L10 [1] lasti
+  L10 to L12 -> L13 [3] lasti
+
+Disassembly of <code object count_target_blocks_on_layer at 0x00000211A6359E30, file "botting/clear_world.py", line 372>:
+ 372            RESUME                   0
+
+ 374            LOAD_CONST               1 (0)
+                STORE_FAST               2 (count)
+
+ 375            LOAD_FAST                0 (self)
+                LOAD_ATTR                0 (tiles_lock)
+                BEFORE_WITH
+        L1:     POP_TOP
+
+ 376            LOAD_GLOBAL              3 (range + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (world_width)
+                CALL                     1
+                GET_ITER
+        L2:     FOR_ITER                83 (to L7)
+                STORE_FAST               3 (x)
+
+ 377            LOAD_FAST                0 (self)
+                LOAD_ATTR                6 (tiles)
+                LOAD_ATTR                9 (get + NULL|self)
+                LOAD_FAST_LOAD_FAST     49 (x, y)
+                BUILD_TUPLE              2
+                CALL                     1
+                STORE_FAST               4 (tile)
+
+ 378            LOAD_FAST                4 (tile)
+                TO_BOOL
+        L3:     POP_JUMP_IF_TRUE         2 (to L4)
+                JUMP_BACKWARD           40 (to L2)
+        L4:     LOAD_GLOBAL             11 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST     64 (tile, self)
+                LOAD_ATTR               12 (config)
+                LOAD_ATTR               14 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+        L5:     POP_JUMP_IF_TRUE         2 (to L6)
+                JUMP_BACKWARD           78 (to L2)
+
+ 379    L6:     LOAD_FAST                2 (count)
+                LOAD_CONST               2 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST               2 (count)
+                JUMP_BACKWARD           85 (to L2)
+
+ 376    L7:     END_FOR
+                POP_TOP
+
+ 375    L8:     LOAD_CONST               3 (None)
+                LOAD_CONST               3 (None)
+                LOAD_CONST               3 (None)
+                CALL                     2
+                POP_TOP
+
+ 380            LOAD_FAST                2 (count)
+                RETURN_VALUE
+
+ 375    L9:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L10)
+                RERAISE                  2
+       L10:     POP_TOP
+       L11:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+
+ 380            LOAD_FAST                2 (count)
+                RETURN_VALUE
+
+  --   L12:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L3 -> L9 [1] lasti
+  L4 to L5 -> L9 [1] lasti
+  L6 to L8 -> L9 [1] lasti
+  L9 to L11 -> L12 [3] lasti
+
+Disassembly of <code object count_remaining_target_blocks at 0x00000211A5F1F830, file "botting/clear_world.py", line 382>:
+ 382            RESUME                   0
+
+ 384            LOAD_CONST               1 (0)
+                STORE_FAST               1 (count)
+
+ 385            LOAD_FAST                0 (self)
+                LOAD_ATTR                0 (tiles_lock)
+                BEFORE_WITH
+        L1:     POP_TOP
+
+ 386            LOAD_FAST                0 (self)
+                LOAD_ATTR                2 (tiles)
+                LOAD_ATTR                5 (values + NULL|self)
+                CALL                     0
+                GET_ITER
+        L2:     FOR_ITER                46 (to L5)
+                STORE_FAST               2 (tile)
+
+ 387            LOAD_GLOBAL              7 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST     32 (tile, self)
+                LOAD_ATTR                8 (config)
+                LOAD_ATTR               10 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+        L3:     POP_JUMP_IF_TRUE         2 (to L4)
+                JUMP_BACKWARD           41 (to L2)
+
+ 388    L4:     LOAD_FAST                1 (count)
+                LOAD_CONST               2 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST               1 (count)
+                JUMP_BACKWARD           48 (to L2)
+
+ 386    L5:     END_FOR
+                POP_TOP
+
+ 385    L6:     LOAD_CONST               3 (None)
+                LOAD_CONST               3 (None)
+                LOAD_CONST               3 (None)
+                CALL                     2
+                POP_TOP
+
+ 389            LOAD_FAST                1 (count)
+                RETURN_VALUE
+
+ 385    L7:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L8)
+                RERAISE                  2
+        L8:     POP_TOP
+        L9:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+
+ 389            LOAD_FAST                1 (count)
+                RETURN_VALUE
+
+  --   L10:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L3 -> L7 [1] lasti
+  L4 to L6 -> L7 [1] lasti
+  L7 to L9 -> L10 [3] lasti
+
+Disassembly of <code object align_to_layer at 0x00000211A64111C0, file "botting/clear_world.py", line 391>:
+391           RESUME                   0
+
+400           LOAD_FAST                0 (self)
+              LOAD_ATTR                0 (cur_y)
+              LOAD_FAST                1 (top_y)
+              COMPARE_OP             148 (bool(>))
+              POP_JUMP_IF_FALSE       44 (to L1)
+
+401           LOAD_GLOBAL              3 (print + NULL)
+              LOAD_CONST               1 ('[ClearWorld] Bot at Y=')
+              LOAD_FAST                0 (self)
+              LOAD_ATTR                0 (cur_y)
+              FORMAT_SIMPLE
+              LOAD_CONST               2 (' is below topmost target layer Y=')
+              LOAD_FAST                1 (top_y)
+              FORMAT_SIMPLE
+              LOAD_CONST               3 ('. Respawning to surface...')
+              BUILD_STRING             5
+              CALL                     1
+              POP_TOP
+
+402           LOAD_FAST                0 (self)
+              LOAD_ATTR                5 (respawn_and_sync + NULL|self)
+              CALL                     0
+              POP_TOP
+
+405   L1:     LOAD_FAST                0 (self)
+              LOAD_ATTR                0 (cur_y)
+              LOAD_FAST                1 (top_y)
+              LOAD_CONST               4 (1)
+              BINARY_OP               10 (-)
+              COMPARE_OP              88 (bool(==))
+              EXTENDED_ARG             1
+              POP_JUMP_IF_FALSE      291 (to L6)
+
+406           LOAD_GLOBAL              3 (print + NULL)
+              LOAD_CONST               5 ('[ClearWorld] Walking along surface (Y=')
+              LOAD_FAST                0 (self)
+              LOAD_ATTR                0 (cur_y)
+              FORMAT_SIMPLE
+              LOAD_CONST               6 (') to far left (X=0)...')
+              BUILD_STRING             3
+              CALL                     1
+              POP_TOP
+
+407           LOAD_FAST                0 (self)
+              LOAD_ATTR                6 (running)
+              TO_BOOL
+              POP_JUMP_IF_FALSE      145 (to L5)
+              LOAD_FAST                0 (self)
+              LOAD_ATTR                8 (cur_x)
+              LOAD_CONST               7 (0)
+              COMPARE_OP             148 (bool(>))
+              POP_JUMP_IF_FALSE      129 (to L5)
+
+408   L2:     LOAD_FAST                0 (self)
+              LOAD_ATTR                8 (cur_x)
+              LOAD_CONST               4 (1)
+              BINARY_OP               10 (-)
+              STORE_FAST               2 (next_x)
+
+410           LOAD_FAST                0 (self)
+              LOAD_ATTR               11 (get_tile + NULL|self)
+              LOAD_FAST_LOAD_FAST     33 (next_x, top_y)
+              CALL                     2
+              STORE_FAST               3 (ground)
+
+411           LOAD_FAST                3 (ground)
+              TO_BOOL
+              POP_JUMP_IF_FALSE       54 (to L3)
+              LOAD_GLOBAL             13 (is_solid_support + NULL)
+              LOAD_FAST                3 (ground)
+              LOAD_ATTR               14 (fg_item_id)
+              CALL                     1
+              TO_BOOL
+              POP_JUMP_IF_FALSE       28 (to L3)
+
+412           LOAD_FAST                0 (self)
+              LOAD_ATTR               17 (walk_step + NULL|self)
+              LOAD_FAST_LOAD_FAST     32 (next_x, self)
+              LOAD_ATTR                0 (cur_y)
+              CALL                     2
+              POP_TOP
+              JUMP_FORWARD             1 (to L4)
+
+414   L3:     JUMP_FORWARD            35 (to L5)
+
+407   L4:     LOAD_FAST                0 (self)
+              LOAD_ATTR                6 (running)
+              TO_BOOL
+              POP_JUMP_IF_FALSE       18 (to L5)
+              LOAD_FAST                0 (self)
+              LOAD_ATTR                8 (cur_x)
+              LOAD_CONST               7 (0)
+              COMPARE_OP             148 (bool(>))
+              POP_JUMP_IF_FALSE        2 (to L5)
+              JUMP_BACKWARD          129 (to L2)
+
+417   L5:     LOAD_FAST                0 (self)
+              LOAD_ATTR                8 (cur_x)
+              LOAD_CONST               7 (0)
+              COMPARE_OP              88 (bool(==))
+              POP_JUMP_IF_FALSE       88 (to L6)
+
+418           LOAD_GLOBAL              3 (print + NULL)
+              LOAD_CONST               8 ('[ClearWorld] At (0, ')
+              LOAD_FAST                0 (self)
+              LOAD_ATTR                0 (cur_y)
+              FORMAT_SIMPLE
+              LOAD_CONST               9 ('). Breaking block directly below at (0, ')
+              LOAD_FAST                1 (top_y)
+              FORMAT_SIMPLE
+              LOAD_CONST              10 (') to enter layer...')
+              BUILD_STRING             5
+              CALL                     1
+              POP_TOP
+
+419           LOAD_FAST                0 (self)
+              LOAD_ATTR               19 (hold_punch + NULL|self)
+              LOAD_CONST               7 (0)
+              LOAD_FAST                1 (top_y)
+              CALL                     2
+              TO_BOOL
+              POP_JUMP_IF_FALSE       37 (to L6)
+
+420           LOAD_FAST                0 (self)
+              LOAD_ATTR               17 (walk_step + NULL|self)
+              LOAD_CONST               7 (0)
+              LOAD_FAST                1 (top_y)
+              CALL                     2
+              POP_TOP
+
+421           LOAD_GLOBAL              3 (print + NULL)
+              LOAD_CONST              11 ('[ClearWorld] Successfully entered layer ')
+              LOAD_FAST                1 (top_y)
+              FORMAT_SIMPLE
+              LOAD_CONST              12 (' at (0, ')
+              LOAD_FAST                1 (top_y)
+              FORMAT_SIMPLE
+              LOAD_CONST              13 (')!')
+              BUILD_STRING             5
+              CALL                     1
+              POP_TOP
+
+422           RETURN_CONST            14 (True)
+
+425   L6:     LOAD_FAST                0 (self)
+              LOAD_ATTR                0 (cur_y)
+              LOAD_FAST                1 (top_y)
+              COMPARE_OP              88 (bool(==))
+              POP_JUMP_IF_FALSE        1 (to L7)
+
+426           RETURN_CONST            14 (True)
+
+428   L7:     RETURN_CONST            14 (True)
+
+Disassembly of <code object run_clear_world at 0x00000211A64230D0, file "botting/clear_world.py", line 430>:
+ 430            RESUME                   0
+
+ 442            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               1 ('\n=================================================================')
+                CALL                     1
+                POP_TOP
+
+ 443            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               2 ('[ClearWorld] Starting Clear World automation!')
+                CALL                     1
+                POP_TOP
+
+ 444            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               3 ('[ClearWorld] Target Block IDs: ')
+                LOAD_GLOBAL              3 (sorted + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR                4 (config)
+                LOAD_ATTR                6 (target_block_ids)
+                CALL                     1
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                CALL                     1
+                POP_TOP
+
+ 445            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               4 ('[ClearWorld] Boundaries: Left is X=0 | Right is X=99')
+                CALL                     1
+                POP_TOP
+
+ 446            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               5 ('[ClearWorld] Invariant: Layer must be 100% cleared before moving down')
+                CALL                     1
+                POP_TOP
+
+ 447            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               6 ('=================================================================\n')
+                CALL                     1
+                POP_TOP
+
+ 450            LOAD_FAST                0 (self)
+                LOAD_ATTR                9 (sync_world + NULL|self)
+                CALL                     0
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L1)
+
+ 451            RETURN_CONST             7 (None)
+
+ 452    L1:     LOAD_FAST                0 (self)
+                LOAD_ATTR               11 (start_event_listener + NULL|self)
+                CALL                     0
+                POP_TOP
+
+ 454            LOAD_CONST               8 (1)
+                STORE_FAST               1 (direction)
+
+ 456            LOAD_FAST                0 (self)
+                LOAD_ATTR               12 (running)
+                TO_BOOL
+                EXTENDED_ARG             6
+                POP_JUMP_IF_FALSE     1588 (to L32)
+
+ 457    L2:     LOAD_FAST                0 (self)
+                LOAD_ATTR               15 (find_topmost_target_layer + NULL|self)
+                CALL                     0
+                STORE_FAST               2 (top_y)
+
+ 458            LOAD_FAST                2 (top_y)
+                POP_JUMP_IF_NOT_NONE    12 (to L3)
+
+ 459            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST               9 ('\n[ClearWorld] SUCCESS! All target blocks in the world have been completely cleared!')
+                CALL                     1
+                POP_TOP
+
+ 460            RETURN_CONST             7 (None)
+
+ 462    L3:     LOAD_FAST                0 (self)
+                LOAD_ATTR               17 (count_remaining_target_blocks + NULL|self)
+                CALL                     0
+                STORE_FAST               3 (remaining_world)
+
+ 463            LOAD_FAST                0 (self)
+                LOAD_ATTR               19 (count_target_blocks_on_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                STORE_FAST               4 (remaining_layer)
+
+ 464            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              10 ('\n[ClearWorld] >>> Topmost Layer: Y=')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              11 (' | Remaining on this layer: ')
+                LOAD_FAST                4 (remaining_layer)
+                FORMAT_SIMPLE
+                LOAD_CONST              12 (' | Total remaining: ')
+                LOAD_FAST                3 (remaining_world)
+                FORMAT_SIMPLE
+                LOAD_CONST              13 (' | Total broken: ')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               20 (total_broken)
+                FORMAT_SIMPLE
+                BUILD_STRING             8
+                CALL                     1
+                POP_TOP
+
+ 467            LOAD_FAST                0 (self)
+                LOAD_ATTR               23 (align_to_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                POP_TOP
+
+ 470            LOAD_FAST                1 (direction)
+                LOAD_CONST               8 (1)
+                COMPARE_OP              88 (bool(==))
+                EXTENDED_ARG             2
+                POP_JUMP_IF_FALSE      731 (to L17)
+
+ 471            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              14 ('[ClearWorld] Sweeping Layer Y=')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              15 (' from Left -> Right (starting at X=')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              16 (')...')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 472            LOAD_GLOBAL             27 (range + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               28 (world_width)
+                LOAD_CONST               8 (1)
+                BINARY_OP               10 (-)
+                CALL                     2
+                GET_ITER
+        L4:     EXTENDED_ARG             1
+                FOR_ITER               339 (to L10)
+                STORE_FAST               5 (target_x)
+
+ 473            LOAD_FAST                0 (self)
+                LOAD_ATTR               12 (running)
+                TO_BOOL
+                POP_JUMP_IF_TRUE         3 (to L5)
+
+ 474            POP_TOP
+                EXTENDED_ARG             1
+                JUMP_FORWARD           320 (to L11)
+
+ 476    L5:     LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                STORE_FAST               6 (next_x)
+
+ 477            LOAD_FAST_LOAD_FAST     96 (next_x, self)
+                LOAD_ATTR               28 (world_width)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_FALSE        3 (to L6)
+
+ 478            POP_TOP
+                EXTENDED_ARG             1
+                JUMP_FORWARD           287 (to L11)
+
+ 481    L6:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                STORE_FAST               7 (tile_ahead)
+
+ 482            LOAD_GLOBAL             33 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST    112 (tile_ahead, self)
+                LOAD_ATTR                4 (config)
+                LOAD_ATTR                6 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_FALSE       17 (to L7)
+
+ 483            LOAD_FAST                0 (self)
+                LOAD_ATTR               35 (hold_punch + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                POP_TOP
+
+ 486    L7:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                STORE_FAST               8 (tile_after)
+
+ 487            LOAD_FAST                8 (tile_after)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       95 (to L8)
+                LOAD_GLOBAL             37 (is_tile_passable + NULL)
+                LOAD_FAST                8 (tile_after)
+                LOAD_ATTR               38 (fg_item_id)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_TRUE        69 (to L8)
+
+ 488            LOAD_GLOBAL             33 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST    128 (tile_after, self)
+                LOAD_ATTR                4 (config)
+                LOAD_ATTR                6 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_TRUE        33 (to L8)
+
+ 489            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              17 ('[ClearWorld] Non-target block (ID ')
+                LOAD_FAST                8 (tile_after)
+                LOAD_ATTR               38 (fg_item_id)
+                FORMAT_SIMPLE
+                LOAD_CONST              18 (') at (')
+                LOAD_FAST                6 (next_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              19 (', ')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              20 (') preserved. Stopping right sweep.')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 490            POP_TOP
+                JUMP_FORWARD            98 (to L11)
+
+ 493    L8:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                CALL                     2
+                STORE_FAST               9 (ground_below)
+
+ 494            LOAD_FAST                9 (ground_below)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       46 (to L9)
+                LOAD_GLOBAL             41 (is_solid_support + NULL)
+                LOAD_FAST                9 (ground_below)
+                LOAD_ATTR               38 (fg_item_id)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE       20 (to L9)
+
+ 495            LOAD_FAST                0 (self)
+                LOAD_ATTR               43 (walk_step + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                POP_TOP
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          319 (to L4)
+
+ 497    L9:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              21 ('[ClearWorld] Gap below at (')
+                LOAD_FAST                6 (next_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              19 (', ')
+                LOAD_FAST                2 (top_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                FORMAT_SIMPLE
+                LOAD_CONST              22 (') - stopping to prevent falling/floating.')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 498            POP_TOP
+                JUMP_FORWARD             2 (to L11)
+
+ 472   L10:     END_FOR
+                POP_TOP
+
+ 501   L11:     LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               28 (world_width)
+                LOAD_CONST               8 (1)
+                BINARY_OP               10 (-)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE      244 (to L15)
+
+ 503            LOAD_FAST                0 (self)
+                LOAD_ATTR               45 (has_target_blocks_on_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE       39 (to L12)
+
+ 504            LOAD_FAST                0 (self)
+                LOAD_ATTR               19 (count_target_blocks_on_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                STORE_FAST              10 (rem)
+
+ 505            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              23 ('[ClearWorld] At right edge (X=99), but layer Y=')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              24 (' still has ')
+                LOAD_FAST               10 (rem)
+                FORMAT_SIMPLE
+                LOAD_CONST              25 (' blocks remaining! NOT breaking downward.')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 507            LOAD_CONST              26 (-1)
+                STORE_FAST               1 (direction)
+                EXTENDED_ARG             3
+                JUMP_FORWARD           927 (to L30)
+
+ 509   L12:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              27 ('[ClearWorld] Layer Y=')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              28 (' fully cleared across row! At right edge (X=99): breaking 1 block below...')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 510            LOAD_FAST                2 (top_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                STORE_FAST              11 (down_y)
+
+ 511            LOAD_FAST_LOAD_FAST    176 (down_y, self)
+                LOAD_ATTR               46 (world_height)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE      144 (to L14)
+
+ 512            LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_CONST              29 (99)
+                LOAD_FAST               11 (down_y)
+                CALL                     2
+                STORE_FAST              12 (down_tile)
+
+ 513            LOAD_GLOBAL             33 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST    192 (down_tile, self)
+                LOAD_ATTR                4 (config)
+                LOAD_ATTR                6 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_FALSE       18 (to L13)
+
+ 514            LOAD_FAST                0 (self)
+                LOAD_ATTR               35 (hold_punch + NULL|self)
+                LOAD_CONST              29 (99)
+                LOAD_FAST               11 (down_y)
+                CALL                     2
+                POP_TOP
+
+ 516   L13:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_CONST              29 (99)
+                LOAD_FAST               11 (down_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                CALL                     2
+                STORE_FAST              13 (support_tile)
+
+ 517            LOAD_FAST               13 (support_tile)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       44 (to L14)
+                LOAD_GLOBAL             41 (is_solid_support + NULL)
+                LOAD_FAST               13 (support_tile)
+                LOAD_ATTR               38 (fg_item_id)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE       18 (to L14)
+
+ 518            LOAD_FAST                0 (self)
+                LOAD_ATTR               43 (walk_step + NULL|self)
+                LOAD_CONST              29 (99)
+                LOAD_FAST               11 (down_y)
+                CALL                     2
+                POP_TOP
+
+ 519   L14:     LOAD_CONST              26 (-1)
+                STORE_FAST               1 (direction)
+                EXTENDED_ARG             2
+                JUMP_FORWARD           744 (to L30)
+
+ 521   L15:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              30 ('[ClearWorld] Row sweep paused at X=')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              31 (' (did not reach X=99). NOT breaking downward.')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 523            LOAD_FAST                0 (self)
+                LOAD_ATTR               45 (has_target_blocks_on_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_TRUE         2 (to L16)
+
+ 524            LOAD_CONST              26 (-1)
+                STORE_FAST               1 (direction)
+
+  --   L16:     EXTENDED_ARG             2
+                JUMP_FORWARD           693 (to L30)
+
+ 528   L17:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              14 ('[ClearWorld] Sweeping Layer Y=')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              32 (' from Right -> Left (starting at X=')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              16 (')...')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 529            LOAD_GLOBAL             27 (range + NULL)
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                LOAD_CONST              33 (0)
+                LOAD_CONST              26 (-1)
+                CALL                     3
+                GET_ITER
+       L18:     EXTENDED_ARG             1
+                FOR_ITER               330 (to L24)
+                STORE_FAST               5 (target_x)
+
+ 530            LOAD_FAST                0 (self)
+                LOAD_ATTR               12 (running)
+                TO_BOOL
+                POP_JUMP_IF_TRUE         3 (to L19)
+
+ 531            POP_TOP
+                EXTENDED_ARG             1
+                JUMP_FORWARD           311 (to L25)
+
+ 533   L19:     LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                LOAD_CONST               8 (1)
+                BINARY_OP               10 (-)
+                STORE_FAST               6 (next_x)
+
+ 534            LOAD_FAST                6 (next_x)
+                LOAD_CONST              33 (0)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE        3 (to L20)
+
+ 535            POP_TOP
+                EXTENDED_ARG             1
+                JUMP_FORWARD           287 (to L25)
+
+ 538   L20:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                STORE_FAST               7 (tile_ahead)
+
+ 539            LOAD_GLOBAL             33 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST    112 (tile_ahead, self)
+                LOAD_ATTR                4 (config)
+                LOAD_ATTR                6 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_FALSE       17 (to L21)
+
+ 540            LOAD_FAST                0 (self)
+                LOAD_ATTR               35 (hold_punch + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                POP_TOP
+
+ 543   L21:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                STORE_FAST               8 (tile_after)
+
+ 544            LOAD_FAST                8 (tile_after)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       95 (to L22)
+                LOAD_GLOBAL             37 (is_tile_passable + NULL)
+                LOAD_FAST                8 (tile_after)
+                LOAD_ATTR               38 (fg_item_id)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_TRUE        69 (to L22)
+
+ 545            LOAD_GLOBAL             33 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST    128 (tile_after, self)
+                LOAD_ATTR                4 (config)
+                LOAD_ATTR                6 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_TRUE        33 (to L22)
+
+ 546            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              17 ('[ClearWorld] Non-target block (ID ')
+                LOAD_FAST                8 (tile_after)
+                LOAD_ATTR               38 (fg_item_id)
+                FORMAT_SIMPLE
+                LOAD_CONST              18 (') at (')
+                LOAD_FAST                6 (next_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              19 (', ')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              34 (') preserved. Stopping left sweep.')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 547            POP_TOP
+                JUMP_FORWARD            98 (to L25)
+
+ 550   L22:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                CALL                     2
+                STORE_FAST               9 (ground_below)
+
+ 551            LOAD_FAST                9 (ground_below)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       46 (to L23)
+                LOAD_GLOBAL             41 (is_solid_support + NULL)
+                LOAD_FAST                9 (ground_below)
+                LOAD_ATTR               38 (fg_item_id)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE       20 (to L23)
+
+ 552            LOAD_FAST                0 (self)
+                LOAD_ATTR               43 (walk_step + NULL|self)
+                LOAD_FAST_LOAD_FAST     98 (next_x, top_y)
+                CALL                     2
+                POP_TOP
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          310 (to L18)
+
+ 554   L23:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              21 ('[ClearWorld] Gap below at (')
+                LOAD_FAST                6 (next_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              19 (', ')
+                LOAD_FAST                2 (top_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                FORMAT_SIMPLE
+                LOAD_CONST              22 (') - stopping to prevent falling/floating.')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 555            POP_TOP
+                JUMP_FORWARD             2 (to L25)
+
+ 529   L24:     END_FOR
+                POP_TOP
+
+ 558   L25:     LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                LOAD_CONST              33 (0)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE      242 (to L29)
+
+ 560            LOAD_FAST                0 (self)
+                LOAD_ATTR               45 (has_target_blocks_on_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE       38 (to L26)
+
+ 561            LOAD_FAST                0 (self)
+                LOAD_ATTR               19 (count_target_blocks_on_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                STORE_FAST              10 (rem)
+
+ 562            LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              35 ('[ClearWorld] At left edge (X=0), but layer Y=')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              24 (' still has ')
+                LOAD_FAST               10 (rem)
+                FORMAT_SIMPLE
+                LOAD_CONST              25 (' blocks remaining! NOT breaking downward.')
+                BUILD_STRING             5
+                CALL                     1
+                POP_TOP
+
+ 563            LOAD_CONST               8 (1)
+                STORE_FAST               1 (direction)
+                JUMP_FORWARD           231 (to L30)
+
+ 565   L26:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              27 ('[ClearWorld] Layer Y=')
+                LOAD_FAST                2 (top_y)
+                FORMAT_SIMPLE
+                LOAD_CONST              36 (' fully cleared across row! At left edge (X=0): breaking 1 block below...')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 566            LOAD_FAST                2 (top_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                STORE_FAST              11 (down_y)
+
+ 567            LOAD_FAST_LOAD_FAST    176 (down_y, self)
+                LOAD_ATTR               46 (world_height)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE      144 (to L28)
+
+ 568            LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_CONST              33 (0)
+                LOAD_FAST               11 (down_y)
+                CALL                     2
+                STORE_FAST              12 (down_tile)
+
+ 569            LOAD_GLOBAL             33 (is_target_block + NULL)
+                LOAD_FAST_LOAD_FAST    192 (down_tile, self)
+                LOAD_ATTR                4 (config)
+                LOAD_ATTR                6 (target_block_ids)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_FALSE       18 (to L27)
+
+ 570            LOAD_FAST                0 (self)
+                LOAD_ATTR               35 (hold_punch + NULL|self)
+                LOAD_CONST              33 (0)
+                LOAD_FAST               11 (down_y)
+                CALL                     2
+                POP_TOP
+
+ 572   L27:     LOAD_FAST                0 (self)
+                LOAD_ATTR               31 (get_tile + NULL|self)
+                LOAD_CONST              33 (0)
+                LOAD_FAST               11 (down_y)
+                LOAD_CONST               8 (1)
+                BINARY_OP                0 (+)
+                CALL                     2
+                STORE_FAST              13 (support_tile)
+
+ 573            LOAD_FAST               13 (support_tile)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       44 (to L28)
+                LOAD_GLOBAL             41 (is_solid_support + NULL)
+                LOAD_FAST               13 (support_tile)
+                LOAD_ATTR               38 (fg_item_id)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE       18 (to L28)
+
+ 574            LOAD_FAST                0 (self)
+                LOAD_ATTR               43 (walk_step + NULL|self)
+                LOAD_CONST              33 (0)
+                LOAD_FAST               11 (down_y)
+                CALL                     2
+                POP_TOP
+
+ 575   L28:     LOAD_CONST               8 (1)
+                STORE_FAST               1 (direction)
+                JUMP_FORWARD            49 (to L30)
+
+ 577   L29:     LOAD_GLOBAL              1 (print + NULL)
+                LOAD_CONST              30 ('[ClearWorld] Row sweep paused at X=')
+                LOAD_FAST                0 (self)
+                LOAD_ATTR               24 (cur_x)
+                FORMAT_SIMPLE
+                LOAD_CONST              37 (' (did not reach X=0). NOT breaking downward.')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 578            LOAD_FAST                0 (self)
+                LOAD_ATTR               45 (has_target_blocks_on_layer + NULL|self)
+                LOAD_FAST                2 (top_y)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_TRUE         2 (to L30)
+
+ 579            LOAD_CONST               8 (1)
+                STORE_FAST               1 (direction)
+
+ 581   L30:     LOAD_GLOBAL             48 (time)
+                LOAD_ATTR               50 (sleep)
+                PUSH_NULL
+                LOAD_CONST              38 (0.05)
+                CALL                     1
+                POP_TOP
+
+ 456            LOAD_FAST                0 (self)
+                LOAD_ATTR               12 (running)
+                TO_BOOL
+                POP_JUMP_IF_FALSE        3 (to L31)
+                EXTENDED_ARG             6
+                JUMP_BACKWARD         1587 (to L2)
+       L31:     RETURN_CONST             7 (None)
+       L32:     RETURN_CONST             7 (None)
+=== CLASS/FUNC: main ===
+  --           MAKE_CELL                4 (bot)
+
+ 584           RESUME                   0
+
+ 585           LOAD_GLOBAL              0 (argparse)
+               LOAD_ATTR                2 (ArgumentParser)
+               PUSH_NULL
+               LOAD_CONST               1 ('Growtopia Clear World Botting Script for Mori')
+               LOAD_CONST               2 (('description',))
+               CALL_KW                  1
+               STORE_FAST               0 (parser)
+
+ 586           LOAD_FAST                0 (parser)
+               LOAD_ATTR                5 (add_argument + NULL|self)
+               LOAD_CONST               3 ('--host')
+               LOAD_CONST               0 (None)
+               LOAD_CONST               4 ('Mori host IP (default from .env: 192.168.193.66)')
+               LOAD_CONST               5 (('default', 'help'))
+               CALL_KW                  3
+               POP_TOP
+
+ 587           LOAD_FAST                0 (parser)
+               LOAD_ATTR                5 (add_argument + NULL|self)
+               LOAD_CONST               6 ('--port')
+               LOAD_GLOBAL              6 (int)
+               LOAD_CONST               0 (None)
+               LOAD_CONST               7 ('Mori gRPC port (default from .env: 50051)')
+               LOAD_CONST               8 (('type', 'default', 'help'))
+               CALL_KW                  4
+               POP_TOP
+
+ 588           LOAD_FAST                0 (parser)
+               LOAD_ATTR                5 (add_argument + NULL|self)
+               LOAD_CONST               9 ('--token')
+               LOAD_CONST               0 (None)
+               LOAD_CONST              10 ('Mori gRPC authentication token')
+               LOAD_CONST               5 (('default', 'help'))
+               CALL_KW                  3
+               POP_TOP
+
+ 589           LOAD_FAST                0 (parser)
+               LOAD_ATTR                5 (add_argument + NULL|self)
+               LOAD_CONST              11 ('--bot-id')
+               LOAD_GLOBAL              6 (int)
+               LOAD_CONST               0 (None)
+               LOAD_CONST              12 ('Bot ID to control (defaults to first active bot)')
+               LOAD_CONST               8 (('type', 'default', 'help'))
+               CALL_KW                  4
+               POP_TOP
+
+ 590           LOAD_FAST                0 (parser)
+               LOAD_ATTR                5 (add_argument + NULL|self)
+               LOAD_CONST              13 ('--blocks')
+               LOAD_CONST               0 (None)
+               LOAD_CONST              14 ("Comma-separated block IDs to break (e.g. '2,4,10,14')")
+               LOAD_CONST               5 (('default', 'help'))
+               CALL_KW                  3
+               POP_TOP
+
+ 591           LOAD_FAST                0 (parser)
+               LOAD_ATTR                5 (add_argument + NULL|self)
+               LOAD_CONST              15 ('--place-delay')
+               LOAD_GLOBAL              6 (int)
+               LOAD_CONST               0 (None)
+               LOAD_CONST              16 ('Delay between punches in ms (default: 180)')
+               LOAD_CONST               8 (('type', 'default', 'help'))
+               CALL_KW                  4
+               POP_TOP
+
+ 592           LOAD_FAST                0 (parser)
+               LOAD_ATTR                5 (add_argument + NULL|self)
+               LOAD_CONST              17 ('--walk-delay')
+               LOAD_GLOBAL              6 (int)
+               LOAD_CONST               0 (None)
+               LOAD_CONST              18 ('Delay between walking steps in ms (default: 200)')
+               LOAD_CONST               8 (('type', 'default', 'help'))
+               CALL_KW                  4
+               POP_TOP
+
+ 594           LOAD_FAST                0 (parser)
+               LOAD_ATTR                9 (parse_args + NULL|self)
+               CALL                     0
+               STORE_FAST               1 (args)
+
+ 595           LOAD_GLOBAL             10 (BotConfig)
+               LOAD_ATTR               12 (from_env_and_args)
+               PUSH_NULL
+               LOAD_FAST                1 (args)
+               CALL                     1
+               STORE_FAST               2 (config)
+
+ 597           LOAD_GLOBAL             15 (ClearWorldBot + NULL)
+               LOAD_FAST                2 (config)
+               CALL                     1
+               STORE_DEREF              4 (bot)
+
+ 599           LOAD_FAST                4 (bot)
+               BUILD_TUPLE              1
+               LOAD_CONST              19 (<code object handle_sigint at 0x00000211A634EF30, file "botting/clear_world.py", line 599>)
+               MAKE_FUNCTION
+               SET_FUNCTION_ATTRIBUTE   8 (closure)
+               STORE_FAST               3 (handle_sigint)
+
+ 603           NOP
+
+ 604   L1:     LOAD_DEREF               4 (bot)
+               LOAD_ATTR               17 (connect + NULL|self)
+               CALL                     0
+               TO_BOOL
+               POP_JUMP_IF_TRUE        22 (to L2)
+
+ 605           LOAD_GLOBAL             18 (sys)
+               LOAD_ATTR               20 (exit)
+               PUSH_NULL
+               LOAD_CONST              20 (1)
+               CALL                     1
+               POP_TOP
+
+ 606   L2:     LOAD_DEREF               4 (bot)
+               LOAD_ATTR               23 (run_clear_world + NULL|self)
+               CALL                     0
+               POP_TOP
+
+ 610   L3:     LOAD_GLOBAL             27 (print + NULL)
+               LOAD_CONST              21 ('\n[ClearWorld] Session ended. Total blocks broken: ')
+               LOAD_DEREF               4 (bot)
+               LOAD_ATTR               28 (total_broken)
+               FORMAT_SIMPLE
+               BUILD_STRING             2
+               CALL                     1
+               POP_TOP
+               RETURN_CONST             0 (None)
+
+  --   L4:     PUSH_EXC_INFO
+
+ 607           LOAD_GLOBAL             24 (KeyboardInterrupt)
+               CHECK_EXC_MATCH
+               POP_JUMP_IF_FALSE       10 (to L6)
+               POP_TOP
+
+ 608           LOAD_FAST                3 (handle_sigint)
+               PUSH_NULL
+               CALL                     0
+               POP_TOP
+       L5:     POP_EXCEPT
+               JUMP_BACKWARD_NO_INTERRUPT 44 (to L3)
+
+ 607   L6:     RERAISE                  0
+
+  --   L7:     COPY                     3
+               POP_EXCEPT
+               RERAISE                  1
+       L8:     PUSH_EXC_INFO
+
+ 610           LOAD_GLOBAL             27 (print + NULL)
+               LOAD_CONST              21 ('\n[ClearWorld] Session ended. Total blocks broken: ')
+               LOAD_DEREF               4 (bot)
+               LOAD_ATTR               28 (total_broken)
+               FORMAT_SIMPLE
+               BUILD_STRING             2
+               CALL                     1
+               POP_TOP
+               RERAISE                  0
+
+  --   L9:     COPY                     3
+               POP_EXCEPT
+               RERAISE                  1
+ExceptionTable:
+  L1 to L3 -> L4 [0]
+  L4 to L5 -> L7 [1] lasti
+  L5 to L6 -> L8 [0]
+  L6 to L7 -> L7 [1] lasti
+  L7 to L8 -> L8 [0]
+  L8 to L9 -> L9 [1] lasti
+
+Disassembly of <code object handle_sigint at 0x00000211A634EF30, file "botting/clear_world.py", line 599>:
+  --           COPY_FREE_VARS           1
+
+ 599           RESUME                   0
+
+ 600           LOAD_GLOBAL              1 (print + NULL)
+               LOAD_CONST               1 ('\n[ClearWorld] Stopping bot gracefully...')
+               CALL                     1
+               POP_TOP
+
+ 601           LOAD_CONST               2 (False)
+               LOAD_DEREF               0 (bot)
+               STORE_ATTR               1 (running)
+               RETURN_CONST             0 (None)

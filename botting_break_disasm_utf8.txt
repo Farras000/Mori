@@ -1,0 +1,4277 @@
+﻿=== FUNCTION: load_dotenv_minimal ===
+ 101            RESUME                   0
+
+ 107            LOAD_FAST                0 (paths)
+                GET_ITER
+        L1:     EXTENDED_ARG             1
+                FOR_ITER               323 (to L20)
+                STORE_FAST               1 (path)
+
+ 108            NOP
+
+ 109    L2:     LOAD_CONST               1 (False)
+                STORE_FAST               2 (loaded)
+
+ 110            LOAD_GLOBAL              1 (open + NULL)
+                LOAD_FAST                1 (path)
+                LOAD_CONST               2 ('r')
+                LOAD_CONST               3 ('utf-8')
+                LOAD_CONST               4 (('encoding',))
+                CALL_KW                  3
+                BEFORE_WITH
+        L3:     STORE_FAST               3 (f)
+
+ 111            LOAD_FAST                3 (f)
+                GET_ITER
+        L4:     FOR_ITER               242 (to L13)
+                STORE_FAST               4 (line)
+
+ 112            LOAD_FAST                4 (line)
+                LOAD_ATTR                3 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST               4 (line)
+
+ 113            LOAD_FAST                4 (line)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       22 (to L5)
+                LOAD_FAST                4 (line)
+                LOAD_ATTR                5 (startswith + NULL|self)
+                LOAD_CONST               5 ('#')
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE        2 (to L6)
+
+ 114    L5:     JUMP_BACKWARD           50 (to L4)
+
+ 115    L6:     LOAD_FAST                4 (line)
+                LOAD_ATTR                5 (startswith + NULL|self)
+                LOAD_CONST               6 ('export ')
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE       28 (to L7)
+
+ 116            LOAD_FAST                4 (line)
+                LOAD_GLOBAL              7 (len + NULL)
+                LOAD_CONST               6 ('export ')
+                CALL                     1
+                LOAD_CONST               7 (None)
+                BINARY_SLICE
+                LOAD_ATTR                3 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST               4 (line)
+
+ 117    L7:     LOAD_CONST               8 ('=')
+                LOAD_FAST                4 (line)
+                CONTAINS_OP              1
+                POP_JUMP_IF_FALSE        2 (to L8)
+
+ 118            JUMP_BACKWARD          108 (to L4)
+
+ 119    L8:     LOAD_FAST                4 (line)
+                LOAD_ATTR                9 (split + NULL|self)
+                LOAD_CONST               8 ('=')
+                LOAD_CONST               9 (1)
+                CALL                     2
+                UNPACK_SEQUENCE          2
+                STORE_FAST_STORE_FAST   86 (k, v)
+
+ 120            LOAD_FAST                5 (k)
+                LOAD_ATTR                3 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST               5 (k)
+
+ 121            LOAD_FAST                6 (v)
+                LOAD_ATTR                3 (strip + NULL|self)
+                CALL                     0
+                LOAD_ATTR                3 (strip + NULL|self)
+                LOAD_CONST              10 ('"')
+                CALL                     1
+                LOAD_ATTR                3 (strip + NULL|self)
+                LOAD_CONST              11 ("'")
+                CALL                     1
+                STORE_FAST               6 (v)
+
+ 122            LOAD_FAST                5 (k)
+                TO_BOOL
+        L9:     POP_JUMP_IF_TRUE         2 (to L10)
+                JUMP_BACKWARD          199 (to L4)
+       L10:     LOAD_FAST                5 (k)
+                LOAD_GLOBAL             10 (os)
+                LOAD_ATTR               12 (environ)
+                CONTAINS_OP              1
+       L11:     POP_JUMP_IF_TRUE         2 (to L12)
+                JUMP_BACKWARD          221 (to L4)
+
+ 123   L12:     LOAD_FAST                6 (v)
+                LOAD_GLOBAL             10 (os)
+                LOAD_ATTR               12 (environ)
+                LOAD_FAST                5 (k)
+                STORE_SUBSCR
+
+ 124            LOAD_CONST              12 (True)
+                STORE_FAST               2 (loaded)
+                JUMP_BACKWARD          244 (to L4)
+
+ 111   L13:     END_FOR
+                POP_TOP
+
+ 110   L14:     LOAD_CONST               7 (None)
+                LOAD_CONST               7 (None)
+                LOAD_CONST               7 (None)
+                CALL                     2
+                POP_TOP
+
+ 125   L15:     LOAD_FAST                2 (loaded)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        36 (to L16)
+                LOAD_GLOBAL             10 (os)
+                LOAD_ATTR               14 (path)
+                LOAD_ATTR               17 (exists + NULL|self)
+                LOAD_FAST                1 (path)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_FALSE        4 (to L18)
+       L16:     LOAD_FAST                1 (path)
+       L17:     SWAP                     2
+                POP_TOP
+                RETURN_VALUE
+       L18:     LOAD_CONST               7 (None)
+       L19:     SWAP                     2
+                POP_TOP
+                RETURN_VALUE
+
+ 107   L20:     END_FOR
+                POP_TOP
+
+ 128            RETURN_CONST             7 (None)
+
+ 110   L21:     PUSH_EXC_INFO
+                WITH_EXCEPT_START
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L22)
+                RERAISE                  2
+       L22:     POP_TOP
+       L23:     POP_EXCEPT
+                POP_TOP
+                POP_TOP
+                JUMP_BACKWARD_NO_INTERRUPT 68 (to L15)
+
+  --   L24:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L25:     PUSH_EXC_INFO
+
+ 126            LOAD_GLOBAL             18 (OSError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        5 (to L27)
+                POP_TOP
+
+ 127   L26:     POP_EXCEPT
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          360 (to L1)
+
+ 126   L27:     RERAISE                  0
+
+  --   L28:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L2 to L3 -> L25 [1]
+  L3 to L9 -> L21 [2] lasti
+  L10 to L11 -> L21 [2] lasti
+  L12 to L14 -> L21 [2] lasti
+  L14 to L17 -> L25 [1]
+  L18 to L19 -> L25 [1]
+  L21 to L23 -> L24 [4] lasti
+  L23 to L25 -> L25 [1]
+  L25 to L26 -> L28 [2] lasti
+  L27 to L28 -> L28 [2] lasti
+=== FUNCTION: channel ===
+138            RESUME                   0
+
+139            LOAD_GLOBAL              0 (os)
+               LOAD_ATTR                2 (environ)
+               LOAD_ATTR                5 (get + NULL|self)
+               LOAD_CONST               1 ('MORI_GRPC_ADDR')
+               LOAD_GLOBAL              6 (DEFAULT_GRPC_ADDR)
+               CALL                     2
+               STORE_FAST               0 (addr)
+
+140            LOAD_GLOBAL              0 (os)
+               LOAD_ATTR                2 (environ)
+               LOAD_ATTR                5 (get + NULL|self)
+               LOAD_CONST               2 ('MORI_GRPC_TOKEN')
+               LOAD_CONST               3 ('')
+               CALL                     2
+               STORE_FAST               1 (token)
+
+141            LOAD_GLOBAL              8 (DOTENV_PATH)
+               TO_BOOL
+               POP_JUMP_IF_FALSE        2 (to L1)
+               LOAD_CONST               4 ('.env')
+               JUMP_FORWARD             1 (to L2)
+       L1:     LOAD_CONST               5 ('environment')
+       L2:     STORE_FAST               2 (src)
+
+142            LOAD_GLOBAL             11 (len + NULL)
+               LOAD_FAST                1 (token)
+               CALL                     1
+               LOAD_CONST               6 (5)
+               COMPARE_OP             148 (bool(>))
+               POP_JUMP_IF_FALSE       13 (to L3)
+               LOAD_FAST                1 (token)
+               LOAD_CONST               0 (None)
+               LOAD_CONST               7 (3)
+               BINARY_SLICE
+               FORMAT_SIMPLE
+               LOAD_CONST               8 ('...')
+               LOAD_FAST                1 (token)
+               LOAD_CONST               9 (-2)
+               LOAD_CONST               0 (None)
+               BINARY_SLICE
+               FORMAT_SIMPLE
+               BUILD_STRING             3
+               JUMP_FORWARD            10 (to L5)
+       L3:     LOAD_FAST                1 (token)
+               TO_BOOL
+               POP_JUMP_IF_TRUE         2 (to L4)
+               LOAD_CONST              10 ('<empty>')
+               JUMP_FORWARD             1 (to L5)
+       L4:     LOAD_CONST              11 ('***')
+       L5:     STORE_FAST               3 (masked)
+
+143            LOAD_GLOBAL             13 (print + NULL)
+               LOAD_CONST              12 ('config: addr=')
+               LOAD_FAST                0 (addr)
+               FORMAT_SIMPLE
+               LOAD_CONST              13 (' token=')
+               LOAD_FAST                3 (masked)
+               FORMAT_SIMPLE
+               LOAD_CONST              14 (' (from ')
+               LOAD_FAST                2 (src)
+               FORMAT_SIMPLE
+               BUILD_STRING             6
+
+144            LOAD_GLOBAL              8 (DOTENV_PATH)
+               TO_BOOL
+               POP_JUMP_IF_FALSE        9 (to L6)
+               LOAD_CONST              15 (': ')
+               LOAD_GLOBAL              8 (DOTENV_PATH)
+               FORMAT_SIMPLE
+               BUILD_STRING             2
+               JUMP_FORWARD             1 (to L7)
+       L6:     LOAD_CONST               3 ('')
+
+143    L7:     BINARY_OP                0 (+)
+
+144            LOAD_CONST              16 (')')
+
+143            BINARY_OP                0 (+)
+               CALL                     1
+               POP_TOP
+
+145            LOAD_FAST                1 (token)
+               TO_BOOL
+               POP_JUMP_IF_TRUE        11 (to L8)
+
+146            LOAD_GLOBAL             13 (print + NULL)
+               LOAD_CONST              17 ('WARNING: MORI_GRPC_TOKEN is empty ù set it in .env or env vars.')
+               CALL                     1
+               POP_TOP
+
+147    L8:     LOAD_FAST                1 (token)
+               TO_BOOL
+               POP_JUMP_IF_FALSE        8 (to L9)
+               LOAD_CONST              18 ('authorization')
+               LOAD_CONST              19 ('Bearer ')
+               LOAD_FAST                1 (token)
+               FORMAT_SIMPLE
+               BUILD_STRING             2
+               BUILD_TUPLE              2
+               BUILD_LIST               1
+               JUMP_FORWARD             1 (to L10)
+       L9:     BUILD_LIST               0
+      L10:     STORE_FAST               4 (md)
+
+148            LOAD_GLOBAL             14 (grpc)
+               LOAD_ATTR               16 (insecure_channel)
+               PUSH_NULL
+               LOAD_FAST                0 (addr)
+               CALL                     1
+               LOAD_FAST_LOAD_FAST     64 (md, addr)
+               BUILD_TUPLE              3
+               RETURN_VALUE
+=== FUNCTION: bot_pos_tiles ===
+153           RESUME                   0
+
+154           LOAD_FAST                0 (stub)
+              LOAD_ATTR                1 (GetBotState + NULL|self)
+              LOAD_GLOBAL              2 (pb)
+              LOAD_ATTR                5 (BotRef + NULL|self)
+              LOAD_FAST                1 (bot)
+              LOAD_ATTR                6 (bot_id)
+              LOAD_CONST               1 (('bot_id',))
+              CALL_KW                  1
+              LOAD_FAST                2 (md)
+              LOAD_CONST               2 (('metadata',))
+              CALL_KW                  2
+              STORE_FAST               3 (s)
+
+155           LOAD_FAST                3 (s)
+              LOAD_GLOBAL              9 (int + NULL)
+              LOAD_GLOBAL             11 (round + NULL)
+              LOAD_FAST                3 (s)
+              LOAD_ATTR               12 (pos_x)
+              CALL                     1
+              CALL                     1
+              LOAD_GLOBAL              9 (int + NULL)
+              LOAD_GLOBAL             11 (round + NULL)
+              LOAD_FAST                3 (s)
+              LOAD_ATTR               14 (pos_y)
+              CALL                     1
+              CALL                     1
+              BUILD_TUPLE              3
+              RETURN_VALUE
+=== FUNCTION: server_pos_tiles ===
+ 158            RESUME                   0
+
+ 165            LOAD_GLOBAL              0 (time)
+                LOAD_ATTR                0 (time)
+                PUSH_NULL
+                CALL                     0
+                LOAD_FAST                3 (timeout_s)
+                BINARY_OP                0 (+)
+                STORE_FAST               4 (deadline)
+
+ 166            NOP
+
+ 167    L1:     NOP
+
+ 168    L2:     LOAD_FAST                0 (stub)
+                LOAD_ATTR                3 (GetLocal + NULL|self)
+                LOAD_GLOBAL              4 (pb)
+                LOAD_ATTR                7 (BotRef + NULL|self)
+                LOAD_FAST                1 (bot)
+                LOAD_ATTR                8 (bot_id)
+                LOAD_CONST               1 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST                2 (md)
+                LOAD_CONST               2 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST               5 (loc)
+
+ 169            LOAD_FAST                5 (loc)
+                LOAD_ATTR               10 (pos_x)
+                LOAD_CONST               3 (0)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_TRUE        16 (to L3)
+                LOAD_FAST                5 (loc)
+                LOAD_ATTR               12 (pos_y)
+                LOAD_CONST               3 (0)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE       61 (to L5)
+
+ 170    L3:     LOAD_FAST                5 (loc)
+                LOAD_GLOBAL             15 (int + NULL)
+                LOAD_GLOBAL             17 (round + NULL)
+                LOAD_FAST                5 (loc)
+                LOAD_ATTR               10 (pos_x)
+                CALL                     1
+                CALL                     1
+                LOAD_GLOBAL             15 (int + NULL)
+                LOAD_GLOBAL             17 (round + NULL)
+                LOAD_FAST                5 (loc)
+                LOAD_ATTR               12 (pos_y)
+                CALL                     1
+                CALL                     1
+                BUILD_TUPLE              3
+        L4:     RETURN_VALUE
+
+ 169    L5:     NOP
+
+ 173    L6:     LOAD_GLOBAL              0 (time)
+                LOAD_ATTR                0 (time)
+                PUSH_NULL
+                CALL                     0
+                LOAD_FAST                4 (deadline)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_FALSE       12 (to L7)
+
+ 174            LOAD_GLOBAL             23 (bot_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST                2 (md)
+                CALL                     3
+                RETURN_VALUE
+
+ 175    L7:     LOAD_GLOBAL              0 (time)
+                LOAD_ATTR               24 (sleep)
+                PUSH_NULL
+                LOAD_CONST               4 (0.05)
+                CALL                     1
+                POP_TOP
+
+ 166            JUMP_BACKWARD          199 (to L1)
+
+  --    L8:     PUSH_EXC_INFO
+
+ 171            LOAD_GLOBAL             18 (grpc)
+                LOAD_ATTR               20 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L10)
+                POP_TOP
+
+ 172    L9:     POP_EXCEPT
+                JUMP_BACKWARD_NO_INTERRUPT 83 (to L6)
+
+ 171   L10:     RERAISE                  0
+
+  --   L11:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L2 to L4 -> L8 [0]
+  L8 to L9 -> L11 [1] lasti
+  L10 to L11 -> L11 [1] lasti
+=== FUNCTION: get_tile_safe ===
+ 178           RESUME                   0
+
+ 179           LOAD_FAST                3 (x)
+               LOAD_CONST               1 (0)
+               COMPARE_OP              18 (bool(<))
+               POP_JUMP_IF_TRUE         6 (to L1)
+               LOAD_FAST                4 (y)
+               LOAD_CONST               1 (0)
+               COMPARE_OP              18 (bool(<))
+               POP_JUMP_IF_FALSE        1 (to L2)
+
+ 180   L1:     RETURN_CONST             0 (None)
+
+ 181   L2:     NOP
+
+ 182   L3:     LOAD_FAST                0 (stub)
+               LOAD_ATTR                1 (GetTile + NULL|self)
+
+ 183           LOAD_GLOBAL              2 (pb)
+               LOAD_ATTR                5 (GetTileRequest + NULL|self)
+               LOAD_GLOBAL              2 (pb)
+               LOAD_ATTR                7 (BotRef + NULL|self)
+               LOAD_FAST                1 (bot)
+               LOAD_ATTR                8 (bot_id)
+               LOAD_CONST               2 (('bot_id',))
+               CALL_KW                  1
+               LOAD_FAST_LOAD_FAST     52 (x, y)
+               LOAD_CONST               3 (('bot', 'x', 'y'))
+               CALL_KW                  3
+               LOAD_FAST                2 (md)
+
+ 182           LOAD_CONST               4 (('metadata',))
+               CALL_KW                  2
+       L4:     RETURN_VALUE
+
+  --   L5:     PUSH_EXC_INFO
+
+ 185           LOAD_GLOBAL             10 (grpc)
+               LOAD_ATTR               12 (RpcError)
+               CHECK_EXC_MATCH
+               POP_JUMP_IF_FALSE        3 (to L7)
+               POP_TOP
+
+ 186   L6:     POP_EXCEPT
+               RETURN_CONST             0 (None)
+
+ 185   L7:     RERAISE                  0
+
+  --   L8:     COPY                     3
+               POP_EXCEPT
+               RERAISE                  1
+ExceptionTable:
+  L3 to L4 -> L5 [0]
+  L5 to L6 -> L8 [1] lasti
+  L7 to L8 -> L8 [1] lasti
+=== FUNCTION: prefetch_collisions ===
+ 189            RESUME                   0
+
+ 191            LOAD_FAST                4 (cache)
+                POP_JUMP_IF_NONE         2 (to L1)
+                LOAD_FAST                4 (cache)
+                JUMP_FORWARD             1 (to L2)
+        L1:     BUILD_MAP                0
+        L2:     STORE_FAST               5 (out)
+
+ 192            LOAD_CONST               2 (0)
+                LOAD_FAST                5 (out)
+                LOAD_CONST               2 (0)
+                STORE_SUBSCR
+
+ 193            LOAD_FAST                3 (fg_ids)
+                GET_ITER
+                LOAD_FAST_AND_CLEAR      6 (f)
+                SWAP                     2
+        L3:     BUILD_LIST               0
+                SWAP                     2
+                GET_ITER
+        L4:     FOR_ITER                19 (to L9)
+                STORE_FAST_LOAD_FAST   102 (f, f)
+                LOAD_CONST               2 (0)
+                COMPARE_OP             119 (bool(!=))
+        L5:     POP_JUMP_IF_TRUE         2 (to L6)
+                JUMP_BACKWARD           10 (to L4)
+        L6:     LOAD_FAST_LOAD_FAST    101 (f, out)
+                CONTAINS_OP              1
+        L7:     POP_JUMP_IF_TRUE         2 (to L8)
+                JUMP_BACKWARD           17 (to L4)
+        L8:     LOAD_FAST                6 (f)
+                LIST_APPEND              2
+                JUMP_BACKWARD           21 (to L4)
+        L9:     END_FOR
+                POP_TOP
+       L10:     SWAP                     2
+                STORE_FAST               6 (f)
+                GET_ITER
+       L11:     FOR_ITER                49 (to L14)
+                STORE_FAST               7 (fid)
+
+ 194            NOP
+
+ 195   L12:     LOAD_FAST                0 (stub)
+                LOAD_ATTR                1 (GetItemInfo + NULL|self)
+                LOAD_GLOBAL              2 (pb)
+                LOAD_ATTR                5 (GetItemInfoRequest + NULL|self)
+                LOAD_FAST                7 (fid)
+                LOAD_CONST               3 (('id',))
+                CALL_KW                  1
+                LOAD_FAST                2 (md)
+                LOAD_CONST               4 (('metadata',))
+                CALL_KW                  2
+                LOAD_ATTR                6 (collision_type)
+                LOAD_FAST_LOAD_FAST     87 (out, fid)
+                STORE_SUBSCR
+       L13:     JUMP_BACKWARD           51 (to L11)
+
+ 193   L14:     END_FOR
+                POP_TOP
+                RETURN_CONST             1 (None)
+
+  --   L15:     SWAP                     2
+                POP_TOP
+
+ 193            SWAP                     2
+                STORE_FAST               6 (f)
+                RERAISE                  0
+
+  --   L16:     PUSH_EXC_INFO
+
+ 196            LOAD_GLOBAL              8 (grpc)
+                LOAD_ATTR               10 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        8 (to L18)
+                POP_TOP
+
+ 197            LOAD_CONST               2 (0)
+                LOAD_FAST_LOAD_FAST     87 (out, fid)
+                STORE_SUBSCR
+       L17:     POP_EXCEPT
+                JUMP_BACKWARD           86 (to L11)
+
+ 196   L18:     RERAISE                  0
+
+  --   L19:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L3 to L5 -> L15 [2]
+  L6 to L7 -> L15 [2]
+  L8 to L10 -> L15 [2]
+  L12 to L13 -> L16 [1]
+  L16 to L17 -> L19 [2] lasti
+  L18 to L19 -> L19 [2] lasti
+=== FUNCTION: make_grid ===
+ 202           RESUME                   0
+
+ 204           LOAD_FAST                0 (world)
+               LOAD_ATTR                0 (tiles)
+               GET_ITER
+               LOAD_FAST_AND_CLEAR      1 (t)
+               SWAP                     2
+       L1:     BUILD_MAP                0
+               SWAP                     2
+               GET_ITER
+       L2:     FOR_ITER                49 (to L3)
+               STORE_FAST_LOAD_FAST    17 (t, t)
+               LOAD_ATTR                2 (x)
+               LOAD_FAST                1 (t)
+               LOAD_ATTR                4 (y)
+               BUILD_TUPLE              2
+               LOAD_FAST                1 (t)
+               LOAD_ATTR                6 (fg_item_id)
+               LOAD_FAST                1 (t)
+               LOAD_ATTR                8 (bg_item_id)
+               BUILD_TUPLE              2
+               MAP_ADD                  2
+               JUMP_BACKWARD           51 (to L2)
+       L3:     END_FOR
+               POP_TOP
+       L4:     SWAP                     2
+               STORE_FAST               1 (t)
+               RETURN_VALUE
+
+  --   L5:     SWAP                     2
+               POP_TOP
+
+ 204           SWAP                     2
+               STORE_FAST               1 (t)
+               RERAISE                  0
+ExceptionTable:
+  L1 to L4 -> L5 [2]
+=== FUNCTION: is_ground ===
+207           RESUME                   0
+
+209           LOAD_FAST                2 (x)
+              LOAD_CONST               1 (0)
+              COMPARE_OP              18 (bool(<))
+              POP_JUMP_IF_TRUE        16 (to L1)
+              LOAD_FAST                3 (y)
+              LOAD_CONST               1 (0)
+              COMPARE_OP              18 (bool(<))
+              POP_JUMP_IF_TRUE        10 (to L1)
+              LOAD_FAST_LOAD_FAST     36 (x, world_w)
+              COMPARE_OP             188 (bool(>=))
+              POP_JUMP_IF_TRUE         5 (to L1)
+              LOAD_FAST_LOAD_FAST     53 (y, world_h)
+              COMPARE_OP             188 (bool(>=))
+              POP_JUMP_IF_FALSE        1 (to L2)
+
+210   L1:     RETURN_CONST             2 (False)
+
+211   L2:     LOAD_FAST                0 (grid)
+              LOAD_ATTR                1 (get + NULL|self)
+              LOAD_FAST_LOAD_FAST     35 (x, y)
+              BUILD_TUPLE              2
+              LOAD_CONST               3 ((0, 0))
+              CALL                     2
+              LOAD_CONST               1 (0)
+              BINARY_SUBSCR
+              STORE_FAST               6 (fg)
+
+212           LOAD_FAST                6 (fg)
+              LOAD_CONST               1 (0)
+              COMPARE_OP              88 (bool(==))
+              POP_JUMP_IF_FALSE        1 (to L3)
+
+213           RETURN_CONST             2 (False)
+
+214   L3:     LOAD_FAST                1 (coll)
+              LOAD_ATTR                1 (get + NULL|self)
+              LOAD_FAST                6 (fg)
+              LOAD_CONST               1 (0)
+              CALL                     2
+              LOAD_CONST               1 (0)
+              COMPARE_OP             103 (!=)
+              RETURN_VALUE
+=== FUNCTION: is_standable_grid ===
+217           RESUME                   0
+
+224           LOAD_FAST                2 (x)
+              LOAD_CONST               1 (0)
+              COMPARE_OP              18 (bool(<))
+              POP_JUMP_IF_TRUE        16 (to L1)
+              LOAD_FAST                3 (y)
+              LOAD_CONST               1 (0)
+              COMPARE_OP              18 (bool(<))
+              POP_JUMP_IF_TRUE        10 (to L1)
+              LOAD_FAST_LOAD_FAST     36 (x, world_w)
+              COMPARE_OP             188 (bool(>=))
+              POP_JUMP_IF_TRUE         5 (to L1)
+              LOAD_FAST_LOAD_FAST     53 (y, world_h)
+              COMPARE_OP             188 (bool(>=))
+              POP_JUMP_IF_FALSE        1 (to L2)
+
+225   L1:     RETURN_CONST             2 (False)
+
+226   L2:     LOAD_FAST                0 (grid)
+              LOAD_ATTR                1 (get + NULL|self)
+              LOAD_FAST_LOAD_FAST     35 (x, y)
+              BUILD_TUPLE              2
+              LOAD_CONST               3 ((0, 0))
+              CALL                     2
+              LOAD_CONST               1 (0)
+              BINARY_SUBSCR
+              STORE_FAST               6 (fg)
+
+227           LOAD_FAST                6 (fg)
+              LOAD_CONST               1 (0)
+              COMPARE_OP             119 (bool(!=))
+              POP_JUMP_IF_FALSE       23 (to L3)
+              LOAD_FAST                1 (coll)
+              LOAD_ATTR                1 (get + NULL|self)
+              LOAD_FAST                6 (fg)
+              LOAD_CONST               1 (0)
+              CALL                     2
+              LOAD_CONST               1 (0)
+              COMPARE_OP             119 (bool(!=))
+              POP_JUMP_IF_FALSE        1 (to L3)
+
+228           RETURN_CONST             2 (False)
+
+229   L3:     LOAD_FAST                3 (y)
+              LOAD_CONST               4 (1)
+              BINARY_OP                0 (+)
+              LOAD_FAST                5 (world_h)
+              COMPARE_OP             188 (bool(>=))
+              POP_JUMP_IF_FALSE        1 (to L4)
+
+230           RETURN_CONST             5 (True)
+
+231   L4:     LOAD_GLOBAL              3 (is_ground + NULL)
+              LOAD_FAST_LOAD_FAST      1 (grid, coll)
+              LOAD_FAST_LOAD_FAST     35 (x, y)
+              LOAD_CONST               4 (1)
+              BINARY_OP                0 (+)
+              LOAD_FAST_LOAD_FAST     69 (world_w, world_h)
+              CALL                     6
+              RETURN_VALUE
+=== FUNCTION: bfs_grounded_path ===
+234            RESUME                   0
+
+236            LOAD_FAST_LOAD_FAST     35 (start, goal)
+               COMPARE_OP              88 (bool(==))
+               POP_JUMP_IF_FALSE        3 (to L1)
+
+237            LOAD_FAST                2 (start)
+               BUILD_LIST               1
+               RETURN_VALUE
+
+238    L1:     LOAD_GLOBAL              1 (is_standable_grid + NULL)
+               LOAD_FAST_LOAD_FAST      1 (grid, coll)
+               BUILD_LIST               2
+               LOAD_FAST                3 (goal)
+               LIST_EXTEND              1
+               LOAD_FAST                4 (world_w)
+               LIST_APPEND              1
+               LOAD_FAST                5 (world_h)
+               LIST_APPEND              1
+               CALL_INTRINSIC_1         6 (INTRINSIC_LIST_TO_TUPLE)
+               CALL_FUNCTION_EX         0
+               TO_BOOL
+               POP_JUMP_IF_TRUE         1 (to L2)
+
+239            RETURN_CONST             1 (None)
+
+240    L2:     LOAD_GLOBAL              3 (deque + NULL)
+               LOAD_FAST                2 (start)
+               BUILD_LIST               1
+               CALL                     1
+               STORE_FAST               7 (q)
+
+241            LOAD_FAST                2 (start)
+               LOAD_CONST               1 (None)
+               BUILD_MAP                1
+               STORE_FAST               8 (prev)
+
+242            LOAD_FAST                2 (start)
+               BUILD_SET                1
+               STORE_FAST               9 (seen)
+
+243            LOAD_FAST                7 (q)
+               TO_BOOL
+               POP_JUMP_IF_FALSE      208 (to L11)
+               LOAD_GLOBAL              5 (len + NULL)
+               LOAD_FAST                9 (seen)
+               CALL                     1
+               LOAD_FAST                6 (limit)
+               COMPARE_OP              18 (bool(<))
+               POP_JUMP_IF_FALSE      193 (to L11)
+
+244    L3:     LOAD_FAST                7 (q)
+               LOAD_ATTR                7 (popleft + NULL|self)
+               CALL                     0
+               STORE_FAST              10 (cur)
+
+245            LOAD_CONST               2 (((-1, 0), (1, 0), (0, -1), (0, 1)))
+               GET_ITER
+       L4:     FOR_ITER               147 (to L10)
+               UNPACK_SEQUENCE          2
+               STORE_FAST_STORE_FAST  188 (dx, dy)
+
+246            LOAD_FAST               10 (cur)
+               LOAD_CONST               3 (0)
+               BINARY_SUBSCR
+               LOAD_FAST               11 (dx)
+               BINARY_OP                0 (+)
+               LOAD_FAST               10 (cur)
+               LOAD_CONST               4 (1)
+               BINARY_SUBSCR
+               LOAD_FAST               12 (dy)
+               BINARY_OP                0 (+)
+               BUILD_TUPLE              2
+               STORE_FAST              13 (nxt)
+
+247            LOAD_FAST_LOAD_FAST    217 (nxt, seen)
+               CONTAINS_OP              0
+               POP_JUMP_IF_FALSE        2 (to L5)
+
+248            JUMP_BACKWARD           28 (to L4)
+
+249    L5:     LOAD_GLOBAL              1 (is_standable_grid + NULL)
+               LOAD_FAST_LOAD_FAST      1 (grid, coll)
+               BUILD_LIST               2
+               LOAD_FAST               13 (nxt)
+               LIST_EXTEND              1
+               LOAD_FAST                4 (world_w)
+               LIST_APPEND              1
+               LOAD_FAST                5 (world_h)
+               LIST_APPEND              1
+               CALL_INTRINSIC_1         6 (INTRINSIC_LIST_TO_TUPLE)
+               CALL_FUNCTION_EX         0
+               TO_BOOL
+               POP_JUMP_IF_TRUE         2 (to L6)
+
+250            JUMP_BACKWARD           51 (to L4)
+
+251    L6:     LOAD_FAST                9 (seen)
+               LOAD_ATTR                9 (add + NULL|self)
+               LOAD_FAST               13 (nxt)
+               CALL                     1
+               POP_TOP
+
+252            LOAD_FAST_LOAD_FAST    168 (cur, prev)
+               LOAD_FAST               13 (nxt)
+               STORE_SUBSCR
+
+253            LOAD_FAST_LOAD_FAST    211 (nxt, goal)
+               COMPARE_OP              88 (bool(==))
+               POP_JUMP_IF_FALSE       53 (to L9)
+
+254            LOAD_FAST               13 (nxt)
+               BUILD_LIST               1
+               STORE_FAST              14 (path)
+
+255            LOAD_FAST_LOAD_FAST    142 (prev, path)
+               LOAD_CONST               5 (-1)
+               BINARY_SUBSCR
+               BINARY_SUBSCR
+               POP_JUMP_IF_NONE        32 (to L8)
+
+256    L7:     LOAD_FAST               14 (path)
+               LOAD_ATTR               11 (append + NULL|self)
+               LOAD_FAST_LOAD_FAST    142 (prev, path)
+               LOAD_CONST               5 (-1)
+               BINARY_SUBSCR
+               BINARY_SUBSCR
+               CALL                     1
+               POP_TOP
+
+255            LOAD_FAST_LOAD_FAST    142 (prev, path)
+               LOAD_CONST               5 (-1)
+               BINARY_SUBSCR
+               BINARY_SUBSCR
+               POP_JUMP_IF_NONE         2 (to L8)
+               JUMP_BACKWARD           32 (to L7)
+
+257    L8:     LOAD_FAST               14 (path)
+               LOAD_CONST               1 (None)
+               LOAD_CONST               1 (None)
+               LOAD_CONST               5 (-1)
+               BUILD_SLICE              3
+               BINARY_SUBSCR
+               SWAP                     2
+               POP_TOP
+               RETURN_VALUE
+
+258    L9:     LOAD_FAST                7 (q)
+               LOAD_ATTR               11 (append + NULL|self)
+               LOAD_FAST               13 (nxt)
+               CALL                     1
+               POP_TOP
+               JUMP_BACKWARD          149 (to L4)
+
+245   L10:     END_FOR
+               POP_TOP
+
+243            LOAD_FAST                7 (q)
+               TO_BOOL
+               POP_JUMP_IF_FALSE       17 (to L11)
+               LOAD_GLOBAL              5 (len + NULL)
+               LOAD_FAST                9 (seen)
+               CALL                     1
+               LOAD_FAST                6 (limit)
+               COMPARE_OP              18 (bool(<))
+               POP_JUMP_IF_FALSE        2 (to L11)
+               JUMP_BACKWARD          193 (to L3)
+
+259   L11:     RETURN_CONST             1 (None)
+=== FUNCTION: live_is_solid ===
+264           RESUME                   0
+
+266           LOAD_GLOBAL              1 (get_tile_safe + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     35 (md, x)
+              LOAD_FAST                4 (y)
+              CALL                     5
+              STORE_FAST               6 (t)
+
+267           LOAD_FAST                6 (t)
+              POP_JUMP_IF_NOT_NONE     1 (to L1)
+
+268           RETURN_CONST             1 (None)
+
+269   L1:     LOAD_FAST                6 (t)
+              LOAD_ATTR                2 (fg_item_id)
+              LOAD_CONST               2 (0)
+              COMPARE_OP              88 (bool(==))
+              POP_JUMP_IF_FALSE        1 (to L2)
+
+270           RETURN_CONST             3 (False)
+
+271   L2:     LOAD_FAST                5 (coll)
+              LOAD_ATTR                5 (get + NULL|self)
+              LOAD_FAST                6 (t)
+              LOAD_ATTR                2 (fg_item_id)
+              LOAD_CONST               2 (0)
+              CALL                     2
+              LOAD_CONST               2 (0)
+              COMPARE_OP             103 (!=)
+              RETURN_VALUE
+=== FUNCTION: step_one ===
+ 274            RESUME                   0
+
+ 286            LOAD_FAST                3 (frm)
+                UNPACK_SEQUENCE          2
+                STORE_FAST_STORE_FAST  171 (fx, fy)
+
+ 287            LOAD_FAST                4 (to)
+                UNPACK_SEQUENCE          2
+                STORE_FAST_STORE_FAST  205 (tx, ty)
+
+ 288            LOAD_GLOBAL              1 (abs + NULL)
+                LOAD_FAST_LOAD_FAST    202 (tx, fx)
+                BINARY_OP               10 (-)
+                CALL                     1
+                LOAD_GLOBAL              1 (abs + NULL)
+                LOAD_FAST_LOAD_FAST    219 (ty, fy)
+                BINARY_OP               10 (-)
+                CALL                     1
+                BINARY_OP                0 (+)
+                LOAD_CONST               1 (1)
+                COMPARE_OP             119 (bool(!=))
+                POP_JUMP_IF_FALSE        1 (to L1)
+
+ 289            RETURN_CONST             2 (False)
+
+ 290    L1:     LOAD_FAST               12 (tx)
+                LOAD_CONST               3 (0)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_TRUE         6 (to L2)
+                LOAD_FAST               13 (ty)
+                LOAD_CONST               3 (0)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE        1 (to L3)
+
+ 291    L2:     RETURN_CONST             2 (False)
+
+ 292    L3:     NOP
+
+ 293    L4:     LOAD_FAST                0 (stub)
+                LOAD_ATTR                3 (WalkTo + NULL|self)
+
+ 294            LOAD_GLOBAL              4 (pb)
+                LOAD_ATTR                7 (MoveToRequest + NULL|self)
+                LOAD_GLOBAL              4 (pb)
+                LOAD_ATTR                9 (BotRef + NULL|self)
+                LOAD_FAST                1 (bot)
+                LOAD_ATTR               10 (bot_id)
+                LOAD_CONST               4 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST_LOAD_FAST    205 (tx, ty)
+                LOAD_CONST               5 (('bot', 'x', 'y'))
+                CALL_KW                  3
+                LOAD_FAST                2 (md)
+
+ 293            LOAD_CONST               6 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 298    L5:     NOP
+
+ 299    L6:     LOAD_GLOBAL             17 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST                2 (md)
+                CALL                     3
+                UNPACK_SEQUENCE          3
+                STORE_FAST_STORE_FAST  239 (_, bx)
+                STORE_FAST              16 (by)
+
+ 300            LOAD_FAST               15 (bx)
+                LOAD_FAST               16 (by)
+                BUILD_TUPLE              2
+                LOAD_FAST_LOAD_FAST    205 (tx, ty)
+                BUILD_TUPLE              2
+                COMPARE_OP              72 (==)
+        L7:     RETURN_VALUE
+
+  --    L8:     PUSH_EXC_INFO
+
+ 296            LOAD_GLOBAL             12 (grpc)
+                LOAD_ATTR               14 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L10)
+                POP_TOP
+
+ 297    L9:     POP_EXCEPT
+                RETURN_CONST             2 (False)
+
+ 296   L10:     RERAISE                  0
+
+  --   L11:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L12:     PUSH_EXC_INFO
+
+ 301            LOAD_GLOBAL             12 (grpc)
+                LOAD_ATTR               14 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L14)
+                POP_TOP
+
+ 302   L13:     POP_EXCEPT
+                RETURN_CONST             2 (False)
+
+ 301   L14:     RERAISE                  0
+
+  --   L15:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L4 to L5 -> L8 [0]
+  L6 to L7 -> L12 [0]
+  L8 to L9 -> L11 [1] lasti
+  L10 to L11 -> L11 [1] lasti
+  L12 to L13 -> L15 [1] lasti
+  L14 to L15 -> L15 [1] lasti
+=== FUNCTION: escape_embedded ===
+305           RESUME                   0
+
+313           LOAD_GLOBAL              1 (range + NULL)
+              LOAD_FAST                8 (tries)
+              CALL                     1
+              GET_ITER
+      L1:     FOR_ITER               138 (to L9)
+              STORE_FAST               9 (_)
+
+314           LOAD_GLOBAL              3 (server_pos_tiles + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST                2 (md)
+              CALL                     3
+              UNPACK_SEQUENCE          3
+              STORE_FAST_STORE_FAST  154 (_, bx)
+              STORE_FAST              11 (by)
+
+315           LOAD_GLOBAL              5 (live_is_solid + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST_LOAD_FAST    179 (by, coll)
+              CALL                     6
+              TO_BOOL
+              POP_JUMP_IF_TRUE         2 (to L2)
+
+316           POP_TOP
+              RETURN_CONST             1 (True)
+
+317   L2:     LOAD_FAST_LOAD_FAST    171 (bx, by)
+              LOAD_CONST               2 (1)
+              BINARY_OP               10 (-)
+              BUILD_TUPLE              2
+              BUILD_LIST               1
+              STORE_FAST              12 (routes)
+
+318           LOAD_FAST_LOAD_FAST    202 (routes, bx)
+              LOAD_CONST               2 (1)
+              BINARY_OP               10 (-)
+              LOAD_FAST               11 (by)
+              BUILD_TUPLE              2
+              LOAD_FAST               10 (bx)
+              LOAD_CONST               2 (1)
+              BINARY_OP                0 (+)
+              LOAD_FAST               11 (by)
+              BUILD_TUPLE              2
+              LOAD_FAST_LOAD_FAST    171 (bx, by)
+              LOAD_CONST               2 (1)
+              BINARY_OP                0 (+)
+              BUILD_TUPLE              2
+              BUILD_LIST               3
+              BINARY_OP               13 (+=)
+              STORE_FAST              12 (routes)
+
+319           LOAD_FAST               12 (routes)
+              GET_ITER
+      L3:     FOR_ITER                66 (to L8)
+              UNPACK_SEQUENCE          2
+              STORE_FAST_STORE_FAST  222 (tx, ty)
+
+320           LOAD_FAST               13 (tx)
+              LOAD_CONST               3 (0)
+              COMPARE_OP              18 (bool(<))
+              POP_JUMP_IF_TRUE         6 (to L4)
+              LOAD_FAST               14 (ty)
+              LOAD_CONST               3 (0)
+              COMPARE_OP              18 (bool(<))
+              POP_JUMP_IF_FALSE        2 (to L5)
+
+321   L4:     JUMP_BACKWARD           19 (to L3)
+
+322   L5:     LOAD_GLOBAL              7 (step_one + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST               11 (by)
+              BUILD_TUPLE              2
+              LOAD_FAST_LOAD_FAST    222 (tx, ty)
+              BUILD_TUPLE              2
+              LOAD_FAST                7 (walk_ms)
+
+323           LOAD_FAST_LOAD_FAST     67 (grid, coll)
+              LOAD_FAST_LOAD_FAST     86 (world_w, world_h)
+
+322           CALL                    10
+              TO_BOOL
+              POP_JUMP_IF_TRUE         2 (to L6)
+              JUMP_BACKWARD           45 (to L3)
+
+324   L6:     LOAD_GLOBAL              5 (live_is_solid + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     45 (md, tx)
+              LOAD_FAST_LOAD_FAST    227 (ty, coll)
+              CALL                     6
+              TO_BOOL
+              POP_JUMP_IF_FALSE        2 (to L7)
+              JUMP_BACKWARD           65 (to L3)
+
+325   L7:     POP_TOP
+              POP_TOP
+              RETURN_CONST             1 (True)
+
+319   L8:     END_FOR
+              POP_TOP
+              JUMP_BACKWARD          140 (to L1)
+
+313   L9:     END_FOR
+              POP_TOP
+
+326           LOAD_GLOBAL              3 (server_pos_tiles + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST                2 (md)
+              CALL                     3
+              UNPACK_SEQUENCE          3
+              STORE_FAST_STORE_FAST  154 (_, bx)
+              STORE_FAST              11 (by)
+
+327           LOAD_GLOBAL              5 (live_is_solid + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST_LOAD_FAST    179 (by, coll)
+              CALL                     6
+              TO_BOOL
+              UNARY_NOT
+              RETURN_VALUE
+=== FUNCTION: settle ===
+330           RESUME                   0
+
+341           LOAD_GLOBAL              1 (range + NULL)
+              LOAD_FAST                8 (max_fall)
+              CALL                     1
+              GET_ITER
+      L1:     FOR_ITER               181 (to L8)
+              STORE_FAST               9 (_)
+
+342           LOAD_GLOBAL              3 (server_pos_tiles + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST                2 (md)
+              CALL                     3
+              UNPACK_SEQUENCE          3
+              STORE_FAST_STORE_FAST  154 (_, bx)
+              STORE_FAST              11 (by)
+
+343           LOAD_GLOBAL              5 (live_is_solid + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST_LOAD_FAST    179 (by, coll)
+              CALL                     6
+              TO_BOOL
+              POP_JUMP_IF_FALSE       87 (to L4)
+
+344           LOAD_GLOBAL              7 (get_tile_safe + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST               11 (by)
+              LOAD_CONST               1 (1)
+              BINARY_OP               10 (-)
+              CALL                     5
+              STORE_FAST              12 (up)
+
+345           LOAD_FAST               12 (up)
+              POP_JUMP_IF_NONE        45 (to L2)
+              LOAD_FAST               12 (up)
+              LOAD_ATTR                8 (fg_item_id)
+              LOAD_CONST               2 (0)
+              COMPARE_OP              88 (bool(==))
+              POP_JUMP_IF_FALSE       29 (to L2)
+
+346           LOAD_GLOBAL             11 (step_one + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST               11 (by)
+              BUILD_TUPLE              2
+              LOAD_FAST_LOAD_FAST    171 (bx, by)
+              LOAD_CONST               1 (1)
+              BINARY_OP               10 (-)
+              BUILD_TUPLE              2
+              LOAD_FAST                7 (walk_ms)
+
+347           LOAD_FAST_LOAD_FAST     67 (grid, coll)
+              LOAD_FAST_LOAD_FAST     86 (world_w, world_h)
+
+346           CALL                    10
+              TO_BOOL
+              POP_JUMP_IF_FALSE        2 (to L2)
+
+348           JUMP_BACKWARD          100 (to L1)
+
+349   L2:     LOAD_GLOBAL             13 (escape_embedded + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     35 (md, coll)
+              LOAD_FAST_LOAD_FAST     69 (grid, world_w)
+              LOAD_FAST_LOAD_FAST    103 (world_h, walk_ms)
+              CALL                     8
+              TO_BOOL
+              POP_JUMP_IF_FALSE        2 (to L3)
+
+350           JUMP_BACKWARD          121 (to L1)
+
+351   L3:     POP_TOP
+              RETURN_CONST             3 (False)
+
+352   L4:     LOAD_GLOBAL              5 (live_is_solid + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST               11 (by)
+              LOAD_CONST               1 (1)
+              BINARY_OP                0 (+)
+              LOAD_FAST                3 (coll)
+              CALL                     6
+              STORE_FAST              13 (below)
+
+353           LOAD_FAST               13 (below)
+              POP_JUMP_IF_NONE         7 (to L5)
+              LOAD_FAST               13 (below)
+              TO_BOOL
+              POP_JUMP_IF_FALSE        2 (to L6)
+
+354   L5:     POP_TOP
+              RETURN_CONST             4 (True)
+
+355   L6:     LOAD_GLOBAL             11 (step_one + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     42 (md, bx)
+              LOAD_FAST               11 (by)
+              BUILD_TUPLE              2
+              LOAD_FAST_LOAD_FAST    171 (bx, by)
+              LOAD_CONST               1 (1)
+              BINARY_OP                0 (+)
+              BUILD_TUPLE              2
+              LOAD_FAST                7 (walk_ms)
+
+356           LOAD_FAST_LOAD_FAST     67 (grid, coll)
+              LOAD_FAST_LOAD_FAST     86 (world_w, world_h)
+
+355           CALL                    10
+              TO_BOOL
+              POP_JUMP_IF_FALSE        2 (to L7)
+              JUMP_BACKWARD          181 (to L1)
+
+357   L7:     POP_TOP
+              RETURN_CONST             3 (False)
+
+341   L8:     END_FOR
+              POP_TOP
+
+358           RETURN_CONST             3 (False)
+=== FUNCTION: walk_grounded ===
+361            RESUME                   0
+
+363            LOAD_GLOBAL              1 (settle + NULL)
+               LOAD_FAST_LOAD_FAST      1 (stub, bot)
+               LOAD_FAST_LOAD_FAST     36 (md, coll)
+               LOAD_FAST_LOAD_FAST     54 (grid, world_w)
+               LOAD_FAST_LOAD_FAST    120 (world_h, walk_ms)
+               CALL                     8
+               POP_TOP
+
+364            LOAD_GLOBAL              3 (server_pos_tiles + NULL)
+               LOAD_FAST_LOAD_FAST      1 (stub, bot)
+               LOAD_FAST                2 (md)
+               CALL                     3
+               UNPACK_SEQUENCE          3
+               STORE_FAST_STORE_FAST  154 (_, bx)
+               STORE_FAST              11 (by)
+
+365            LOAD_GLOBAL              5 (is_standable_grid + NULL)
+               LOAD_FAST_LOAD_FAST     52 (grid, coll)
+               LOAD_FAST_LOAD_FAST    171 (bx, by)
+               LOAD_FAST_LOAD_FAST    103 (world_w, world_h)
+               CALL                     6
+               TO_BOOL
+               POP_JUMP_IF_TRUE        98 (to L5)
+
+367            LOAD_CONST               1 ((0, 1))
+               GET_ITER
+       L1:     FOR_ITER                53 (to L3)
+               STORE_FAST              12 (dy)
+
+368            LOAD_GLOBAL              7 (get_tile_safe + NULL)
+               LOAD_FAST_LOAD_FAST      1 (stub, bot)
+               LOAD_FAST_LOAD_FAST     42 (md, bx)
+               LOAD_FAST_LOAD_FAST    188 (by, dy)
+               BINARY_OP                0 (+)
+               CALL                     5
+               STORE_FAST              13 (t)
+
+369            LOAD_FAST               13 (t)
+               POP_JUMP_IF_NOT_NONE     2 (to L2)
+               JUMP_BACKWARD           23 (to L1)
+
+370    L2:     LOAD_FAST               13 (t)
+               LOAD_ATTR                8 (fg_item_id)
+               LOAD_FAST               13 (t)
+               LOAD_ATTR               10 (bg_item_id)
+               BUILD_TUPLE              2
+               LOAD_FAST_LOAD_FAST     58 (grid, bx)
+               LOAD_FAST_LOAD_FAST    188 (by, dy)
+               BINARY_OP                0 (+)
+               BUILD_TUPLE              2
+               STORE_SUBSCR
+               JUMP_BACKWARD           55 (to L1)
+
+367    L3:     END_FOR
+               POP_TOP
+
+371            LOAD_GLOBAL              5 (is_standable_grid + NULL)
+               LOAD_FAST_LOAD_FAST     52 (grid, coll)
+               LOAD_FAST_LOAD_FAST    171 (bx, by)
+               LOAD_FAST_LOAD_FAST    103 (world_w, world_h)
+               CALL                     6
+               TO_BOOL
+               POP_JUMP_IF_TRUE        21 (to L5)
+
+372            LOAD_GLOBAL             13 (escape_embedded + NULL)
+               LOAD_FAST_LOAD_FAST      1 (stub, bot)
+               LOAD_FAST_LOAD_FAST     36 (md, coll)
+               LOAD_FAST_LOAD_FAST     54 (grid, world_w)
+               LOAD_FAST_LOAD_FAST    120 (world_h, walk_ms)
+               CALL                     8
+               TO_BOOL
+               POP_JUMP_IF_TRUE         1 (to L4)
+
+373            RETURN_CONST             2 (False)
+
+374    L4:     RETURN_CONST             2 (False)
+
+375    L5:     LOAD_GLOBAL             15 (range + NULL)
+               LOAD_CONST               3 (256)
+               CALL                     1
+               GET_ITER
+       L6:     FOR_ITER               106 (to L11)
+               STORE_FAST               9 (_)
+
+376            LOAD_GLOBAL              3 (server_pos_tiles + NULL)
+               LOAD_FAST_LOAD_FAST      1 (stub, bot)
+               LOAD_FAST                2 (md)
+               CALL                     3
+               UNPACK_SEQUENCE          3
+               STORE_FAST_STORE_FAST  158 (_, cx)
+               STORE_FAST              15 (cy)
+
+377            LOAD_FAST_LOAD_FAST    239 (cx, cy)
+               BUILD_TUPLE              2
+               LOAD_FAST                5 (goal)
+               COMPARE_OP              88 (bool(==))
+               POP_JUMP_IF_FALSE        2 (to L7)
+
+378            POP_TOP
+               RETURN_CONST             4 (True)
+
+379    L7:     LOAD_GLOBAL             17 (bfs_grounded_path + NULL)
+               LOAD_FAST_LOAD_FAST     52 (grid, coll)
+               LOAD_FAST_LOAD_FAST    239 (cx, cy)
+               BUILD_TUPLE              2
+               LOAD_FAST_LOAD_FAST     86 (goal, world_w)
+               LOAD_FAST                7 (world_h)
+               CALL                     6
+               STORE_FAST              16 (path)
+
+380            LOAD_FAST               16 (path)
+               POP_JUMP_IF_NONE        15 (to L8)
+               LOAD_GLOBAL             19 (len + NULL)
+               LOAD_FAST               16 (path)
+               CALL                     1
+               LOAD_CONST               5 (2)
+               COMPARE_OP              18 (bool(<))
+               POP_JUMP_IF_FALSE        2 (to L9)
+
+381    L8:     POP_TOP
+               RETURN_CONST             2 (False)
+
+382    L9:     LOAD_FAST               16 (path)
+               LOAD_CONST               6 (1)
+               BINARY_SUBSCR
+               STORE_FAST              17 (nxt)
+
+383            LOAD_GLOBAL             21 (step_one + NULL)
+               LOAD_FAST_LOAD_FAST      1 (stub, bot)
+               LOAD_FAST_LOAD_FAST     46 (md, cx)
+               LOAD_FAST               15 (cy)
+               BUILD_TUPLE              2
+               LOAD_FAST               17 (nxt)
+               LOAD_FAST_LOAD_FAST    131 (walk_ms, grid)
+               LOAD_FAST_LOAD_FAST     70 (coll, world_w)
+               LOAD_FAST                7 (world_h)
+               CALL                    10
+               TO_BOOL
+               POP_JUMP_IF_TRUE         2 (to L10)
+
+384            POP_TOP
+               RETURN_CONST             2 (False)
+
+385   L10:     LOAD_GLOBAL              1 (settle + NULL)
+               LOAD_FAST_LOAD_FAST      1 (stub, bot)
+               LOAD_FAST_LOAD_FAST     36 (md, coll)
+               LOAD_FAST_LOAD_FAST     54 (grid, world_w)
+               LOAD_FAST_LOAD_FAST    120 (world_h, walk_ms)
+               CALL                     8
+               POP_TOP
+               JUMP_BACKWARD          108 (to L6)
+
+375   L11:     END_FOR
+               POP_TOP
+
+386            RETURN_CONST             2 (False)
+=== FUNCTION: tile_matches ===
+391           RESUME                   0
+
+393           LOAD_FAST_LOAD_FAST      2 (tile_fg, targets)
+              CONTAINS_OP              0
+              COPY                     1
+              TO_BOOL
+              POP_JUMP_IF_TRUE         4 (to L1)
+              POP_TOP
+              LOAD_FAST_LOAD_FAST     18 (tile_bg, targets)
+              CONTAINS_OP              0
+      L1:     RETURN_VALUE
+=== FUNCTION: tile_cleared ===
+396           RESUME                   0
+
+402           LOAD_FAST                0 (cur)
+              POP_JUMP_IF_NOT_NONE     1 (to L1)
+
+403           RETURN_CONST             1 (False)
+
+404   L1:     LOAD_GLOBAL              1 (tile_matches + NULL)
+              LOAD_FAST                0 (cur)
+              LOAD_ATTR                2 (fg_item_id)
+              LOAD_FAST                0 (cur)
+              LOAD_ATTR                4 (bg_item_id)
+              LOAD_FAST                1 (targets)
+              CALL                     3
+              TO_BOOL
+              UNARY_NOT
+              RETURN_VALUE
+=== FUNCTION: lua_available ===
+ 407           RESUME                   0
+
+ 415           LOAD_GLOBAL              0 (_LUA_OK)
+               POP_JUMP_IF_NONE         6 (to L1)
+
+ 416           LOAD_GLOBAL              0 (_LUA_OK)
+               RETURN_VALUE
+
+ 417   L1:     LOAD_CONST               2 (True)
+               STORE_FAST               3 (broken)
+
+ 418           NOP
+
+ 419   L2:     LOAD_FAST                0 (stub)
+               LOAD_ATTR                3 (RunScript + NULL|self)
+
+ 420           LOAD_GLOBAL              4 (pb)
+               LOAD_ATTR                7 (RunScriptRequest + NULL|self)
+               LOAD_GLOBAL              4 (pb)
+               LOAD_ATTR                9 (BotRef + NULL|self)
+               LOAD_FAST                1 (bot)
+               LOAD_ATTR               10 (bot_id)
+               LOAD_CONST               3 (('bot_id',))
+               CALL_KW                  1
+               LOAD_CONST               4 ('return 1')
+               LOAD_CONST               5 (('bot', 'content'))
+               CALL_KW                  2
+
+ 421           LOAD_FAST                2 (md)
+
+ 419           LOAD_CONST               6 (('metadata',))
+               CALL_KW                  2
+               POP_TOP
+
+ 423           LOAD_GLOBAL             12 (time)
+               LOAD_ATTR               14 (sleep)
+               PUSH_NULL
+               LOAD_CONST               7 (0.3)
+               CALL                     1
+               POP_TOP
+
+ 424           LOAD_FAST                0 (stub)
+               LOAD_ATTR               17 (GetBotState + NULL|self)
+               LOAD_GLOBAL              4 (pb)
+               LOAD_ATTR                9 (BotRef + NULL|self)
+               LOAD_FAST                1 (bot)
+               LOAD_ATTR               10 (bot_id)
+               LOAD_CONST               3 (('bot_id',))
+               CALL_KW                  1
+               LOAD_FAST                2 (md)
+               LOAD_CONST               6 (('metadata',))
+               CALL_KW                  2
+               STORE_FAST               4 (state)
+
+ 425           LOAD_GLOBAL             19 (any + NULL)
+               LOAD_CONST               8 (<code object <genexpr> at 0x000001D39C6A50D0, file "botting/break_by_id.py", line 425>)
+               MAKE_FUNCTION
+               LOAD_FAST                4 (state)
+               LOAD_ATTR               20 (console)
+               LOAD_CONST               9 (-12)
+               LOAD_CONST               1 (None)
+               BINARY_SLICE
+               GET_ITER
+               CALL                     0
+               CALL                     1
+               STORE_FAST               3 (broken)
+
+ 428   L3:     LOAD_FAST                3 (broken)
+               TO_BOOL
+               UNARY_NOT
+               STORE_GLOBAL             0 (_LUA_OK)
+
+ 429           LOAD_GLOBAL              0 (_LUA_OK)
+               TO_BOOL
+               POP_JUMP_IF_TRUE        22 (to L4)
+
+ 430           LOAD_GLOBAL             27 (print + NULL)
+               LOAD_CONST              10 ("  note: Mori's Lua runtime is broken on this server (see '[Lua setup error]' in its console);")
+               CALL                     1
+               POP_TOP
+
+ 432           LOAD_GLOBAL             27 (print + NULL)
+               LOAD_CONST              11 ('        using pipelined Hit RPCs instead (same hold-punch speed).')
+               CALL                     1
+               POP_TOP
+
+ 433   L4:     LOAD_GLOBAL              0 (_LUA_OK)
+               RETURN_VALUE
+
+  --   L5:     PUSH_EXC_INFO
+
+ 426           LOAD_GLOBAL             22 (grpc)
+               LOAD_ATTR               24 (RpcError)
+               CHECK_EXC_MATCH
+               POP_JUMP_IF_FALSE        3 (to L7)
+               POP_TOP
+
+ 427   L6:     POP_EXCEPT
+               JUMP_BACKWARD_NO_INTERRUPT 68 (to L3)
+
+ 426   L7:     RERAISE                  0
+
+  --   L8:     COPY                     3
+               POP_EXCEPT
+               RERAISE                  1
+ExceptionTable:
+  L2 to L3 -> L5 [0]
+  L5 to L6 -> L8 [1] lasti
+  L7 to L8 -> L8 [1] lasti
+
+Disassembly of <code object <genexpr> at 0x000001D39C6A50D0, file "botting/break_by_id.py", line 425>:
+ 425           RETURN_GENERATOR
+               POP_TOP
+       L1:     RESUME                   0
+               LOAD_FAST                0 (.0)
+               GET_ITER
+       L2:     FOR_ITER                36 (to L4)
+               STORE_FAST               1 (c)
+               LOAD_CONST               0 ('Lua')
+               LOAD_FAST                1 (c)
+               CONTAINS_OP              0
+               COPY                     1
+               TO_BOOL
+               POP_JUMP_IF_FALSE       19 (to L3)
+               POP_TOP
+               LOAD_CONST               1 ('error')
+               LOAD_FAST                1 (c)
+               LOAD_ATTR                1 (lower + NULL|self)
+               CALL                     0
+               CONTAINS_OP              0
+       L3:     YIELD_VALUE              0
+               RESUME                   5
+               POP_TOP
+               JUMP_BACKWARD           38 (to L2)
+       L4:     END_FOR
+               POP_TOP
+               RETURN_CONST             2 (None)
+
+  --   L5:     CALL_INTRINSIC_1         3 (INTRINSIC_STOPITERATION_ERROR)
+               RERAISE                  1
+ExceptionTable:
+  L1 to L5 -> L5 [0] lasti
+=== FUNCTION: break_hold_punch ===
+  --            MAKE_CELL                6 (strengths)
+
+ 436            RESUME                   0
+
+ 443            LOAD_GLOBAL              1 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST                2 (md)
+                CALL                     3
+                UNPACK_SEQUENCE          3
+                STORE_FAST_STORE_FAST  137 (_, bx)
+                STORE_FAST              10 (by)
+
+ 444            LOAD_FAST_LOAD_FAST     57 (tx, bx)
+                BINARY_OP               10 (-)
+                LOAD_FAST_LOAD_FAST     74 (ty, by)
+                BINARY_OP               10 (-)
+                STORE_FAST_STORE_FAST  203 (dy, dx)
+
+ 445            LOAD_GLOBAL              3 (abs + NULL)
+                LOAD_FAST               11 (dx)
+                CALL                     1
+                LOAD_GLOBAL              4 (MAX_PUNCH_RANGE)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_TRUE        50 (to L1)
+                LOAD_GLOBAL              3 (abs + NULL)
+                LOAD_FAST               12 (dy)
+                CALL                     1
+                LOAD_GLOBAL              4 (MAX_PUNCH_RANGE)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_TRUE        31 (to L1)
+
+ 446            LOAD_GLOBAL              3 (abs + NULL)
+                LOAD_FAST               11 (dx)
+                CALL                     1
+                LOAD_GLOBAL              3 (abs + NULL)
+                LOAD_FAST               12 (dy)
+                CALL                     1
+                BINARY_OP                0 (+)
+                LOAD_GLOBAL              6 (RANGE_DIAG_MAX)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE        1 (to L2)
+
+ 447    L1:     RETURN_CONST             1 (False)
+
+ 450    L2:     LOAD_GLOBAL              9 (max + NULL)
+                LOAD_FAST                6 (strengths)
+                BUILD_TUPLE              1
+                LOAD_CONST               2 (<code object <genexpr> at 0x000001D39C8F4250, file "botting/break_by_id.py", line 450>)
+                MAKE_FUNCTION
+                SET_FUNCTION_ATTRIBUTE   8 (closure)
+                LOAD_FAST                5 (targets)
+                GET_ITER
+                CALL                     0
+                LOAD_CONST               3 (4)
+                LOAD_CONST               4 (('default',))
+                CALL_KW                  2
+                STORE_FAST              13 (need)
+
+ 451            LOAD_GLOBAL             11 (min + NULL)
+                LOAD_FAST               13 (need)
+                LOAD_CONST               5 (2)
+                BINARY_OP                5 (*)
+                LOAD_CONST               6 (6)
+                BINARY_OP                0 (+)
+                LOAD_CONST               7 (60)
+                CALL                     2
+                STORE_FAST              14 (n)
+
+ 453            LOAD_GLOBAL             13 (lua_available + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST                2 (md)
+                CALL                     3
+                TO_BOOL
+                EXTENDED_ARG             1
+                POP_JUMP_IF_FALSE      335 (to L12)
+
+ 454            LOAD_CONST               8 ('local b=getBot() for i=1,')
+                LOAD_FAST               14 (n)
+                FORMAT_SIMPLE
+                LOAD_CONST               9 (' do b:hit(')
+                LOAD_FAST               11 (dx)
+                FORMAT_SIMPLE
+                LOAD_CONST              10 (',')
+                LOAD_FAST               12 (dy)
+                FORMAT_SIMPLE
+                LOAD_CONST              11 (') end')
+                BUILD_STRING             7
+                STORE_FAST              15 (script)
+
+ 455            NOP
+
+ 456    L3:     LOAD_FAST                0 (stub)
+                LOAD_ATTR               15 (RunScript + NULL|self)
+
+ 457            LOAD_GLOBAL             16 (pb)
+                LOAD_ATTR               19 (RunScriptRequest + NULL|self)
+                LOAD_GLOBAL             16 (pb)
+                LOAD_ATTR               21 (BotRef + NULL|self)
+                LOAD_FAST                1 (bot)
+                LOAD_ATTR               22 (bot_id)
+                LOAD_CONST              12 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST               15 (script)
+                LOAD_CONST              13 (('bot', 'content'))
+                CALL_KW                  2
+
+ 458            LOAD_FAST                2 (md)
+
+ 456            LOAD_CONST              14 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 462    L4:     LOAD_GLOBAL             30 (time)
+                LOAD_ATTR               30 (time)
+                PUSH_NULL
+                CALL                     0
+                LOAD_FAST_LOAD_FAST    231 (n, place_ms)
+                BINARY_OP                5 (*)
+                LOAD_CONST              15 (1000.0)
+                BINARY_OP               11 (/)
+                BINARY_OP                0 (+)
+                LOAD_CONST              16 (3.0)
+                BINARY_OP                0 (+)
+                STORE_FAST              16 (deadline)
+
+ 463            LOAD_GLOBAL              9 (max + NULL)
+                LOAD_FAST                7 (place_ms)
+                LOAD_CONST              15 (1000.0)
+                BINARY_OP               11 (/)
+                LOAD_CONST              17 (0.25)
+                CALL                     2
+                STORE_FAST              17 (poll)
+
+ 464            LOAD_GLOBAL             30 (time)
+                LOAD_ATTR               30 (time)
+                PUSH_NULL
+                CALL                     0
+                LOAD_FAST               16 (deadline)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE      122 (to L9)
+
+ 465    L5:     LOAD_GLOBAL             30 (time)
+                LOAD_ATTR               32 (sleep)
+                PUSH_NULL
+                LOAD_FAST               17 (poll)
+                CALL                     1
+                POP_TOP
+
+ 466            LOAD_GLOBAL             35 (tile_cleared + NULL)
+                LOAD_GLOBAL             37 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST                4 (ty)
+                CALL                     5
+                LOAD_FAST                5 (targets)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_FALSE       45 (to L8)
+
+ 467            NOP
+
+ 468    L6:     LOAD_FAST                0 (stub)
+                LOAD_ATTR               39 (StopScript + NULL|self)
+                LOAD_GLOBAL             16 (pb)
+                LOAD_ATTR               21 (BotRef + NULL|self)
+                LOAD_FAST                1 (bot)
+                LOAD_ATTR               22 (bot_id)
+                LOAD_CONST              12 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST                2 (md)
+                LOAD_CONST              14 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 471    L7:     RETURN_CONST            18 (True)
+
+ 464    L8:     LOAD_GLOBAL             30 (time)
+                LOAD_ATTR               30 (time)
+                PUSH_NULL
+                CALL                     0
+                LOAD_FAST               16 (deadline)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE        2 (to L9)
+                JUMP_BACKWARD          122 (to L5)
+
+ 472    L9:     NOP
+
+ 473   L10:     LOAD_FAST                0 (stub)
+                LOAD_ATTR               39 (StopScript + NULL|self)
+                LOAD_GLOBAL             16 (pb)
+                LOAD_ATTR               21 (BotRef + NULL|self)
+                LOAD_FAST                1 (bot)
+                LOAD_ATTR               22 (bot_id)
+                LOAD_CONST              12 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST                2 (md)
+                LOAD_CONST              14 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 476   L11:     LOAD_GLOBAL             35 (tile_cleared + NULL)
+                LOAD_GLOBAL             37 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST                4 (ty)
+                CALL                     5
+                LOAD_FAST                5 (targets)
+                CALL                     2
+                RETURN_VALUE
+
+ 478   L12:     LOAD_GLOBAL             16 (pb)
+                LOAD_ATTR               41 (TileActionRequest + NULL|self)
+                LOAD_GLOBAL             16 (pb)
+                LOAD_ATTR               21 (BotRef + NULL|self)
+                LOAD_FAST                1 (bot)
+                LOAD_ATTR               22 (bot_id)
+                LOAD_CONST              12 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST_LOAD_FAST    188 (dx, dy)
+                LOAD_CONST              19 (('bot', 'x', 'y'))
+                CALL_KW                  3
+                STORE_FAST              18 (req)
+
+ 479            LOAD_GLOBAL              9 (max + NULL)
+                LOAD_FAST                7 (place_ms)
+                LOAD_CONST              15 (1000.0)
+                BINARY_OP               11 (/)
+                LOAD_CONST              20 (0.1)
+                CALL                     2
+                STORE_FAST              19 (step)
+
+ 480            LOAD_CONST              21 (0)
+                STORE_FAST              20 (sent)
+
+ 481            LOAD_FAST               20 (sent)
+                LOAD_FAST               14 (n)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE      123 (to L21)
+
+ 482   L13:     LOAD_GLOBAL             43 (range + NULL)
+                LOAD_CONST              22 (3)
+                CALL                     1
+                GET_ITER
+       L14:     FOR_ITER                43 (to L18)
+                STORE_FAST               8 (_)
+
+ 483            LOAD_FAST               20 (sent)
+                LOAD_FAST               14 (n)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_FALSE        2 (to L15)
+
+ 484            POP_TOP
+                JUMP_FORWARD            36 (to L19)
+
+ 485   L15:     NOP
+
+ 486   L16:     LOAD_FAST                0 (stub)
+                LOAD_ATTR               44 (Hit)
+                LOAD_ATTR               47 (future + NULL|self)
+                LOAD_FAST               18 (req)
+                LOAD_FAST                2 (md)
+                LOAD_CONST              14 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 489   L17:     LOAD_FAST               20 (sent)
+                LOAD_CONST              23 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              20 (sent)
+                JUMP_BACKWARD           45 (to L14)
+
+ 482   L18:     END_FOR
+                POP_TOP
+
+ 490   L19:     LOAD_GLOBAL             30 (time)
+                LOAD_ATTR               32 (sleep)
+                PUSH_NULL
+                LOAD_FAST               19 (step)
+                LOAD_CONST              22 (3)
+                BINARY_OP                5 (*)
+                LOAD_CONST              24 (1.3)
+                BINARY_OP                5 (*)
+                CALL                     1
+                POP_TOP
+
+ 491            LOAD_GLOBAL             35 (tile_cleared + NULL)
+                LOAD_GLOBAL             37 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST                4 (ty)
+                CALL                     5
+                LOAD_FAST                5 (targets)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_FALSE        1 (to L20)
+
+ 492            RETURN_CONST            18 (True)
+
+ 481   L20:     LOAD_FAST               20 (sent)
+                LOAD_FAST               14 (n)
+                COMPARE_OP              18 (bool(<))
+                POP_JUMP_IF_FALSE        2 (to L21)
+                JUMP_BACKWARD          123 (to L13)
+
+ 493   L21:     LOAD_GLOBAL             35 (tile_cleared + NULL)
+                LOAD_GLOBAL             37 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST                4 (ty)
+                CALL                     5
+                LOAD_FAST                5 (targets)
+                CALL                     2
+                RETURN_VALUE
+
+  --   L22:     PUSH_EXC_INFO
+
+ 460            LOAD_GLOBAL             24 (grpc)
+                LOAD_ATTR               26 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       18 (to L24)
+                POP_TOP
+
+ 461            LOAD_GLOBAL             29 (break_tap_hits + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST_LOAD_FAST     69 (ty, targets)
+                LOAD_DEREF               6 (strengths)
+                LOAD_FAST                7 (place_ms)
+                CALL                     8
+                SWAP                     2
+       L23:     POP_EXCEPT
+                RETURN_VALUE
+
+ 460   L24:     RERAISE                  0
+
+  --   L25:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L26:     PUSH_EXC_INFO
+
+ 469            LOAD_GLOBAL             24 (grpc)
+                LOAD_ATTR               26 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L28)
+                POP_TOP
+
+ 470   L27:     POP_EXCEPT
+
+ 471            RETURN_CONST            18 (True)
+
+ 469   L28:     RERAISE                  0
+
+  --   L29:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L30:     PUSH_EXC_INFO
+
+ 474            LOAD_GLOBAL             24 (grpc)
+                LOAD_ATTR               26 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        4 (to L32)
+                POP_TOP
+
+ 475   L31:     POP_EXCEPT
+                EXTENDED_ARG             1
+                JUMP_BACKWARD_NO_INTERRUPT 329 (to L11)
+
+ 474   L32:     RERAISE                  0
+
+  --   L33:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L34:     PUSH_EXC_INFO
+
+ 487            LOAD_GLOBAL             24 (grpc)
+                LOAD_ATTR               26 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       28 (to L36)
+                POP_TOP
+
+ 488            LOAD_GLOBAL             35 (tile_cleared + NULL)
+                LOAD_GLOBAL             37 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST                4 (ty)
+                CALL                     5
+                LOAD_FAST                5 (targets)
+                CALL                     2
+                SWAP                     2
+       L35:     POP_EXCEPT
+                SWAP                     2
+                POP_TOP
+                RETURN_VALUE
+
+ 487   L36:     RERAISE                  0
+
+  --   L37:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L3 to L4 -> L22 [0]
+  L6 to L7 -> L26 [0]
+  L10 to L11 -> L30 [0]
+  L16 to L17 -> L34 [1]
+  L22 to L23 -> L25 [1] lasti
+  L24 to L25 -> L25 [1] lasti
+  L26 to L27 -> L29 [1] lasti
+  L28 to L29 -> L29 [1] lasti
+  L30 to L31 -> L33 [1] lasti
+  L32 to L33 -> L33 [1] lasti
+  L34 to L35 -> L37 [2] lasti
+  L36 to L37 -> L37 [2] lasti
+
+Disassembly of <code object <genexpr> at 0x000001D39C8F4250, file "botting/break_by_id.py", line 450>:
+  --           COPY_FREE_VARS           1
+
+ 450           RETURN_GENERATOR
+               POP_TOP
+       L1:     RESUME                   0
+               LOAD_FAST                0 (.0)
+               GET_ITER
+       L2:     FOR_ITER                23 (to L3)
+               STORE_FAST               1 (i)
+               LOAD_DEREF               2 (strengths)
+               LOAD_ATTR                1 (get + NULL|self)
+               LOAD_FAST                1 (i)
+               LOAD_CONST               0 (4)
+               CALL                     2
+               YIELD_VALUE              0
+               RESUME                   5
+               POP_TOP
+               JUMP_BACKWARD           25 (to L2)
+       L3:     END_FOR
+               POP_TOP
+               RETURN_CONST             1 (None)
+
+  --   L4:     CALL_INTRINSIC_1         3 (INTRINSIC_STOPITERATION_ERROR)
+               RERAISE                  1
+ExceptionTable:
+  L1 to L4 -> L4 [0] lasti
+=== FUNCTION: break_tap_hits ===
+  --            MAKE_CELL                6 (strengths)
+
+ 496            RESUME                   0
+
+ 498            LOAD_GLOBAL              1 (max + NULL)
+                LOAD_FAST                6 (strengths)
+                BUILD_TUPLE              1
+                LOAD_CONST               1 (<code object <genexpr> at 0x000001D39C8F4360, file "botting/break_by_id.py", line 498>)
+                MAKE_FUNCTION
+                SET_FUNCTION_ATTRIBUTE   8 (closure)
+                LOAD_FAST                5 (targets)
+                GET_ITER
+                CALL                     0
+                LOAD_CONST               2 (4)
+                LOAD_CONST               3 (('default',))
+                CALL_KW                  2
+                STORE_FAST               8 (key_strength)
+
+ 499            LOAD_GLOBAL              3 (min + NULL)
+                LOAD_FAST                8 (key_strength)
+                LOAD_CONST               4 (2)
+                BINARY_OP                5 (*)
+                LOAD_CONST               5 (10)
+                BINARY_OP                0 (+)
+                LOAD_CONST               6 (60)
+                CALL                     2
+                STORE_FAST               9 (max_hits)
+
+ 500            LOAD_GLOBAL              5 (range + NULL)
+                LOAD_FAST                9 (max_hits)
+                CALL                     1
+                GET_ITER
+        L1:     EXTENDED_ARG             1
+                FOR_ITER               259 (to L8)
+                STORE_FAST              10 (i)
+
+ 501            LOAD_GLOBAL              7 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST                2 (md)
+                CALL                     3
+                UNPACK_SEQUENCE          3
+                STORE_FAST_STORE_FAST  188 (_, bx)
+                STORE_FAST              13 (by)
+
+ 502            LOAD_FAST_LOAD_FAST     60 (tx, bx)
+                BINARY_OP               10 (-)
+                LOAD_FAST_LOAD_FAST     77 (ty, by)
+                BINARY_OP               10 (-)
+                STORE_FAST_STORE_FAST  254 (dy, dx)
+
+ 503            LOAD_GLOBAL              9 (abs + NULL)
+                LOAD_FAST               14 (dx)
+                CALL                     1
+                LOAD_GLOBAL             10 (MAX_PUNCH_RANGE)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_TRUE        50 (to L2)
+                LOAD_GLOBAL              9 (abs + NULL)
+                LOAD_FAST               15 (dy)
+                CALL                     1
+                LOAD_GLOBAL             10 (MAX_PUNCH_RANGE)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_TRUE        31 (to L2)
+
+ 504            LOAD_GLOBAL              9 (abs + NULL)
+                LOAD_FAST               14 (dx)
+                CALL                     1
+                LOAD_GLOBAL              9 (abs + NULL)
+                LOAD_FAST               15 (dy)
+                CALL                     1
+                BINARY_OP                0 (+)
+                LOAD_GLOBAL             12 (RANGE_DIAG_MAX)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE        2 (to L3)
+
+ 505    L2:     POP_TOP
+                RETURN_CONST             7 (False)
+
+ 506    L3:     NOP
+
+ 507    L4:     LOAD_FAST                0 (stub)
+                LOAD_ATTR               14 (Hit)
+                LOAD_ATTR               17 (future + NULL|self)
+
+ 508            LOAD_GLOBAL             18 (pb)
+                LOAD_ATTR               21 (TileActionRequest + NULL|self)
+                LOAD_GLOBAL             18 (pb)
+                LOAD_ATTR               23 (BotRef + NULL|self)
+                LOAD_FAST                1 (bot)
+                LOAD_ATTR               24 (bot_id)
+                LOAD_CONST               8 (('bot_id',))
+                CALL_KW                  1
+                LOAD_FAST_LOAD_FAST    239 (dx, dy)
+                LOAD_CONST               9 (('bot', 'x', 'y'))
+                CALL_KW                  3
+
+ 509            LOAD_FAST                2 (md)
+
+ 507            LOAD_CONST              10 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 513    L5:     LOAD_GLOBAL             30 (time)
+                LOAD_ATTR               32 (sleep)
+                PUSH_NULL
+                LOAD_GLOBAL              1 (max + NULL)
+                LOAD_FAST                7 (place_ms)
+                LOAD_CONST              11 (1000.0)
+                BINARY_OP               11 (/)
+                LOAD_CONST              12 (0.1)
+                CALL                     2
+                LOAD_CONST              13 (1.3)
+                BINARY_OP                5 (*)
+                CALL                     1
+                POP_TOP
+
+ 514            LOAD_FAST               10 (i)
+                LOAD_GLOBAL             34 (VERIFY_EVERY_HITS)
+                BINARY_OP                6 (%)
+                LOAD_GLOBAL             34 (VERIFY_EVERY_HITS)
+                LOAD_CONST              14 (1)
+                BINARY_OP               10 (-)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_TRUE         2 (to L6)
+                JUMP_BACKWARD          229 (to L1)
+
+ 515    L6:     LOAD_GLOBAL             37 (tile_cleared + NULL)
+                LOAD_GLOBAL             39 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST                4 (ty)
+                CALL                     5
+                LOAD_FAST                5 (targets)
+                CALL                     2
+                TO_BOOL
+                POP_JUMP_IF_TRUE         3 (to L7)
+                EXTENDED_ARG             1
+                JUMP_BACKWARD          260 (to L1)
+
+ 516    L7:     POP_TOP
+                RETURN_CONST            15 (True)
+
+ 500    L8:     END_FOR
+                POP_TOP
+
+ 517    L9:     LOAD_GLOBAL             37 (tile_cleared + NULL)
+                LOAD_GLOBAL             39 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST_LOAD_FAST     35 (md, tx)
+                LOAD_FAST                4 (ty)
+                CALL                     5
+                LOAD_FAST                5 (targets)
+                CALL                     2
+                RETURN_VALUE
+
+  --   L10:     PUSH_EXC_INFO
+
+ 511            LOAD_GLOBAL             26 (grpc)
+                LOAD_ATTR               28 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        5 (to L12)
+                POP_TOP
+
+ 512   L11:     POP_EXCEPT
+                POP_TOP
+                JUMP_BACKWARD           47 (to L9)
+
+ 511   L12:     RERAISE                  0
+
+  --   L13:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L4 to L5 -> L10 [1]
+  L10 to L11 -> L13 [2] lasti
+  L12 to L13 -> L13 [2] lasti
+
+Disassembly of <code object <genexpr> at 0x000001D39C8F4360, file "botting/break_by_id.py", line 498>:
+  --           COPY_FREE_VARS           1
+
+ 498           RETURN_GENERATOR
+               POP_TOP
+       L1:     RESUME                   0
+               LOAD_FAST                0 (.0)
+               GET_ITER
+       L2:     FOR_ITER                23 (to L3)
+               STORE_FAST               1 (i)
+               LOAD_DEREF               2 (strengths)
+               LOAD_ATTR                1 (get + NULL|self)
+               LOAD_FAST                1 (i)
+               LOAD_CONST               0 (4)
+               CALL                     2
+               YIELD_VALUE              0
+               RESUME                   5
+               POP_TOP
+               JUMP_BACKWARD           25 (to L2)
+       L3:     END_FOR
+               POP_TOP
+               RETURN_CONST             1 (None)
+
+  --   L4:     CALL_INTRINSIC_1         3 (INTRINSIC_STOPITERATION_ERROR)
+               RERAISE                  1
+ExceptionTable:
+  L1 to L4 -> L4 [0] lasti
+=== FUNCTION: break_one_tile ===
+520           RESUME                   0
+
+522           LOAD_GLOBAL              1 (break_hold_punch + NULL)
+              LOAD_FAST_LOAD_FAST      1 (stub, bot)
+              LOAD_FAST_LOAD_FAST     35 (md, tx)
+              LOAD_FAST_LOAD_FAST     69 (ty, targets)
+              LOAD_FAST_LOAD_FAST    103 (strengths, place_ms)
+              CALL                     8
+              RETURN_VALUE
+=== FUNCTION: diagnose_blocker ===
+ 527            RESUME                   0
+
+ 529            NOP
+
+ 530    L1:     LOAD_GLOBAL              1 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST      1 (stub, bot)
+                LOAD_FAST                2 (md)
+                CALL                     3
+                UNPACK_SEQUENCE          3
+                STORE_FAST_STORE_FAST  137 (_, bx)
+                STORE_FAST              10 (by)
+
+ 533    L2:     LOAD_CONST               2 ('+x')
+                LOAD_GLOBAL              7 (range + NULL)
+                LOAD_FAST                9 (bx)
+                LOAD_CONST               3 (1)
+                BINARY_OP                0 (+)
+                LOAD_GLOBAL              9 (min + NULL)
+                LOAD_FAST                9 (bx)
+                LOAD_CONST               4 (80)
+                BINARY_OP                0 (+)
+                LOAD_FAST                5 (world_w)
+                CALL                     2
+                CALL                     2
+                BUILD_TUPLE              2
+
+ 534            LOAD_CONST               5 ('-x')
+                LOAD_GLOBAL              7 (range + NULL)
+                LOAD_FAST                9 (bx)
+                LOAD_CONST               3 (1)
+                BINARY_OP               10 (-)
+                LOAD_GLOBAL             11 (max + NULL)
+                LOAD_FAST                9 (bx)
+                LOAD_CONST               4 (80)
+                BINARY_OP               10 (-)
+                LOAD_CONST               6 (-1)
+                CALL                     2
+                LOAD_CONST               6 (-1)
+                CALL                     3
+                BUILD_TUPLE              2
+
+ 533            BUILD_TUPLE              2
+                GET_ITER
+        L3:     FOR_ITER               199 (to L15)
+                UNPACK_SEQUENCE          2
+                STORE_FAST_STORE_FAST  188 (direction, rng)
+
+ 535            LOAD_FAST               12 (rng)
+                GET_ITER
+        L4:     FOR_ITER               188 (to L14)
+                STORE_FAST              13 (x)
+
+ 536            LOAD_FAST                3 (grid)
+                LOAD_ATTR               13 (get + NULL|self)
+                LOAD_FAST_LOAD_FAST    218 (x, by)
+                BUILD_TUPLE              2
+                LOAD_CONST               7 ((0, 0))
+                CALL                     2
+                LOAD_CONST               8 (0)
+                BINARY_SUBSCR
+                STORE_FAST              14 (fg)
+
+ 537            LOAD_FAST               14 (fg)
+                LOAD_CONST               8 (0)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_TRUE        22 (to L5)
+                LOAD_FAST                4 (coll)
+                LOAD_ATTR               13 (get + NULL|self)
+                LOAD_FAST               14 (fg)
+                LOAD_CONST               8 (0)
+                CALL                     2
+                LOAD_CONST               8 (0)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE        2 (to L6)
+
+ 538    L5:     JUMP_BACKWARD           55 (to L4)
+
+ 539    L6:     NOP
+
+ 540    L7:     LOAD_FAST                0 (stub)
+                LOAD_ATTR               15 (GetItemInfo + NULL|self)
+                LOAD_GLOBAL             16 (pb)
+                LOAD_ATTR               19 (GetItemInfoRequest + NULL|self)
+                LOAD_FAST               14 (fg)
+                LOAD_CONST               9 (('id',))
+                CALL_KW                  1
+                LOAD_FAST                2 (md)
+                LOAD_CONST              10 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST              15 (info)
+
+ 541            LOAD_FAST               15 (info)
+                LOAD_ATTR               20 (name)
+                STORE_FAST              16 (name)
+
+ 544    L8:     LOAD_FAST_LOAD_FAST    231 (fg, targets)
+                CONTAINS_OP              0
+                POP_JUMP_IF_FALSE        8 (to L9)
+
+ 547            LOAD_CONST              12 (' [this is one of your targets - should be breakable;')
+                STORE_FAST              17 (tag)
+
+ 548            LOAD_FAST               17 (tag)
+                LOAD_CONST              13 (' something else is blocking the path]')
+                BINARY_OP               13 (+=)
+                STORE_FAST              17 (tag)
+                JUMP_FORWARD            37 (to L13)
+
+ 549    L9:     LOAD_FAST               14 (fg)
+                LOAD_GLOBAL             22 (LOCK_IDS)
+                CONTAINS_OP              0
+                POP_JUMP_IF_FALSE        3 (to L10)
+
+ 550            LOAD_CONST              14 (' [WORLD LOCK - bot needs access to pass]')
+                STORE_FAST              17 (tag)
+                JUMP_FORWARD            24 (to L13)
+
+ 551   L10:     LOAD_FAST               14 (fg)
+                LOAD_CONST              15 (8)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE        3 (to L11)
+
+ 552            LOAD_CONST              16 (' [BEDROCK - unbreakable]')
+                STORE_FAST              17 (tag)
+                JUMP_FORWARD            15 (to L13)
+
+ 553   L11:     LOAD_FAST               16 (name)
+                LOAD_CONST              17 (('Main Door', 'Door', 'Hellgate'))
+                CONTAINS_OP              0
+                POP_JUMP_IF_FALSE        3 (to L12)
+
+ 554            LOAD_CONST              18 (' [door - bot must Enter it first]')
+                STORE_FAST              17 (tag)
+                JUMP_FORWARD             6 (to L13)
+
+ 556   L12:     LOAD_CONST              19 (' [solid - add id ')
+                LOAD_FAST               14 (fg)
+                FORMAT_SIMPLE
+                LOAD_CONST              20 (' to the target list to break through]')
+                BUILD_STRING             3
+                STORE_FAST              17 (tag)
+
+ 557   L13:     LOAD_GLOBAL             25 (print + NULL)
+                LOAD_CONST              21 ('  wall ')
+                LOAD_FAST               11 (direction)
+                FORMAT_SIMPLE
+                LOAD_CONST              22 (' at (')
+                LOAD_FAST               13 (x)
+                FORMAT_SIMPLE
+                LOAD_CONST              23 (',')
+                LOAD_FAST               10 (by)
+                FORMAT_SIMPLE
+                LOAD_CONST              24 ('): ')
+                LOAD_FAST               16 (name)
+                FORMAT_SIMPLE
+                LOAD_FAST               17 (tag)
+                FORMAT_SIMPLE
+                BUILD_STRING             9
+                CALL                     1
+                POP_TOP
+
+ 558            LOAD_GLOBAL             25 (print + NULL)
+                LOAD_CONST              25 ('  -> tiles past it are unreachable from here')
+                CALL                     1
+                POP_TOP
+
+ 559            POP_TOP
+                POP_TOP
+                RETURN_CONST             1 (None)
+
+ 535   L14:     END_FOR
+                POP_TOP
+                JUMP_BACKWARD          201 (to L3)
+
+ 533   L15:     END_FOR
+                POP_TOP
+
+ 560            LOAD_GLOBAL             25 (print + NULL)
+                LOAD_CONST              26 ("  no solid wall on the bot's row ù gap is probably an unbridgeable pit")
+                CALL                     1
+                POP_TOP
+                RETURN_CONST             1 (None)
+
+  --   L16:     PUSH_EXC_INFO
+
+ 531            LOAD_GLOBAL              2 (grpc)
+                LOAD_ATTR                4 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        3 (to L18)
+                POP_TOP
+
+ 532   L17:     POP_EXCEPT
+                RETURN_CONST             1 (None)
+
+ 531   L18:     RERAISE                  0
+
+  --   L19:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L20:     PUSH_EXC_INFO
+
+ 542            LOAD_GLOBAL              2 (grpc)
+                LOAD_ATTR                4 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        8 (to L22)
+                POP_TOP
+
+ 543            LOAD_CONST              11 ('id=')
+                LOAD_FAST               14 (fg)
+                FORMAT_SIMPLE
+                BUILD_STRING             2
+                STORE_FAST              16 (name)
+       L21:     POP_EXCEPT
+                JUMP_BACKWARD_NO_INTERRUPT 160 (to L8)
+
+ 542   L22:     RERAISE                  0
+
+  --   L23:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L2 -> L16 [0]
+  L7 to L8 -> L20 [2]
+  L16 to L17 -> L19 [1] lasti
+  L18 to L19 -> L19 [1] lasti
+  L20 to L21 -> L23 [3] lasti
+  L22 to L23 -> L23 [3] lasti
+=== FUNCTION: note_failure ===
+563           RESUME                   0
+
+565           LOAD_FAST                1 (attempts)
+              LOAD_ATTR                1 (get + NULL|self)
+              LOAD_FAST                0 (key)
+              LOAD_CONST               1 (0)
+              CALL                     2
+              LOAD_CONST               2 (1)
+              BINARY_OP                0 (+)
+              LOAD_FAST_LOAD_FAST     16 (attempts, key)
+              STORE_SUBSCR
+
+566           LOAD_FAST_LOAD_FAST     16 (attempts, key)
+              BINARY_SUBSCR
+              LOAD_GLOBAL              2 (MAX_ATTEMPTS)
+              COMPARE_OP             188 (bool(>=))
+              POP_JUMP_IF_FALSE       18 (to L1)
+
+567           LOAD_FAST                2 (skipped)
+              LOAD_ATTR                5 (add + NULL|self)
+              LOAD_FAST                0 (key)
+              CALL                     1
+              POP_TOP
+
+568           RETURN_CONST             3 (True)
+
+569   L1:     RETURN_CONST             4 (False)
+=== FUNCTION: in_punch_range ===
+572           RESUME                   0
+
+578           LOAD_FAST_LOAD_FAST     35 (bx, by)
+              BUILD_TUPLE              2
+              LOAD_FAST_LOAD_FAST      1 (tx, ty)
+              BUILD_TUPLE              2
+              COMPARE_OP              88 (bool(==))
+              POP_JUMP_IF_FALSE        1 (to L1)
+
+579           RETURN_CONST             1 (False)
+
+580   L1:     LOAD_FAST_LOAD_FAST      2 (tx, bx)
+              BINARY_OP               10 (-)
+              LOAD_FAST_LOAD_FAST     19 (ty, by)
+              BINARY_OP               10 (-)
+              STORE_FAST_STORE_FAST   84 (dy, dx)
+
+581           LOAD_GLOBAL              1 (abs + NULL)
+              LOAD_FAST                4 (dx)
+              CALL                     1
+              LOAD_GLOBAL              2 (MAX_PUNCH_RANGE)
+              COMPARE_OP             148 (bool(>))
+              POP_JUMP_IF_TRUE        19 (to L2)
+              LOAD_GLOBAL              1 (abs + NULL)
+              LOAD_FAST                5 (dy)
+              CALL                     1
+              LOAD_GLOBAL              2 (MAX_PUNCH_RANGE)
+              COMPARE_OP             148 (bool(>))
+              POP_JUMP_IF_FALSE        1 (to L3)
+
+582   L2:     RETURN_CONST             1 (False)
+
+583   L3:     LOAD_GLOBAL              1 (abs + NULL)
+              LOAD_FAST                4 (dx)
+              CALL                     1
+              LOAD_GLOBAL              1 (abs + NULL)
+              LOAD_FAST                5 (dy)
+              CALL                     1
+              BINARY_OP                0 (+)
+              LOAD_GLOBAL              4 (RANGE_DIAG_MAX)
+              COMPARE_OP              42 (<=)
+              RETURN_VALUE
+=== FUNCTION: pick_stand ===
+  --            MAKE_CELL                4 (bx)
+                MAKE_CELL                5 (by)
+
+ 586            RESUME                   0
+
+ 592            LOAD_FAST_LOAD_FAST     35 (tx, ty)
+                LOAD_CONST               1 (1)
+                BINARY_OP               10 (-)
+                BUILD_TUPLE              2
+                BUILD_LIST               1
+                STORE_FAST               8 (cands)
+
+ 593            LOAD_FAST                8 (cands)
+
+ 595            LOAD_CONST               2 (((-1, 0), (1, 0), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)))
+                GET_ITER
+
+ 593            LOAD_FAST_AND_CLEAR      9 (dx)
+                LOAD_FAST_AND_CLEAR     10 (dy)
+                SWAP                     3
+        L1:     BUILD_LIST               0
+                SWAP                     2
+
+ 595            GET_ITER
+        L2:     FOR_ITER                13 (to L3)
+                UNPACK_SEQUENCE          2
+                STORE_FAST_STORE_FAST  154 (dx, dy)
+
+ 594            LOAD_FAST_LOAD_FAST     41 (tx, dx)
+                BINARY_OP                0 (+)
+                LOAD_FAST_LOAD_FAST     58 (ty, dy)
+                BINARY_OP                0 (+)
+                BUILD_TUPLE              2
+                LIST_APPEND              2
+                JUMP_BACKWARD           15 (to L2)
+
+ 595    L3:     END_FOR
+                POP_TOP
+
+ 593    L4:     SWAP                     3
+                STORE_FAST              10 (dy)
+                STORE_FAST               9 (dx)
+                BINARY_OP               13 (+=)
+                STORE_FAST               8 (cands)
+
+ 597            LOAD_GLOBAL              1 (sorted + NULL)
+                LOAD_FAST                8 (cands)
+                LOAD_FAST                4 (bx)
+                LOAD_FAST                5 (by)
+                BUILD_TUPLE              2
+                LOAD_CONST               3 (<code object <lambda> at 0x000001D39C679D70, file "botting/break_by_id.py", line 597>)
+                MAKE_FUNCTION
+                SET_FUNCTION_ATTRIBUTE   8 (closure)
+                LOAD_CONST               4 (('key',))
+                CALL_KW                  2
+                GET_ITER
+        L5:     FOR_ITER               109 (to L10)
+                UNPACK_SEQUENCE          2
+                STORE_FAST_STORE_FAST  188 (sx, sy)
+
+ 598            LOAD_GLOBAL              3 (is_standable_grid + NULL)
+                LOAD_FAST_LOAD_FAST      1 (grid, coll)
+                LOAD_FAST_LOAD_FAST    188 (sx, sy)
+                LOAD_FAST_LOAD_FAST    103 (world_w, world_h)
+                CALL                     6
+                TO_BOOL
+                POP_JUMP_IF_TRUE         2 (to L6)
+
+ 599            JUMP_BACKWARD           25 (to L5)
+
+ 600    L6:     LOAD_GLOBAL              5 (abs + NULL)
+                LOAD_FAST_LOAD_FAST     43 (tx, sx)
+                BINARY_OP               10 (-)
+                CALL                     1
+                LOAD_GLOBAL              6 (MAX_PUNCH_RANGE)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_TRUE        21 (to L7)
+                LOAD_GLOBAL              5 (abs + NULL)
+                LOAD_FAST_LOAD_FAST     60 (ty, sy)
+                BINARY_OP               10 (-)
+                CALL                     1
+                LOAD_GLOBAL              6 (MAX_PUNCH_RANGE)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE        2 (to L8)
+
+ 601    L7:     JUMP_BACKWARD           69 (to L5)
+
+ 602    L8:     LOAD_GLOBAL              5 (abs + NULL)
+                LOAD_FAST_LOAD_FAST     43 (tx, sx)
+                BINARY_OP               10 (-)
+                CALL                     1
+                LOAD_GLOBAL              5 (abs + NULL)
+                LOAD_FAST_LOAD_FAST     60 (ty, sy)
+                BINARY_OP               10 (-)
+                CALL                     1
+                BINARY_OP                0 (+)
+                LOAD_GLOBAL              8 (RANGE_DIAG_MAX)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE        2 (to L9)
+
+ 603            JUMP_BACKWARD          106 (to L5)
+
+ 604    L9:     LOAD_FAST_LOAD_FAST    188 (sx, sy)
+                BUILD_TUPLE              2
+                SWAP                     2
+                POP_TOP
+                RETURN_VALUE
+
+ 597   L10:     END_FOR
+                POP_TOP
+
+ 605            RETURN_CONST             5 (None)
+
+  --   L11:     SWAP                     2
+                POP_TOP
+
+ 593            SWAP                     3
+                STORE_FAST              10 (dy)
+                STORE_FAST               9 (dx)
+                RERAISE                  0
+ExceptionTable:
+  L1 to L4 -> L11 [4]
+
+Disassembly of <code object <lambda> at 0x000001D39C679D70, file "botting/break_by_id.py", line 597>:
+  --           COPY_FREE_VARS           2
+
+ 597           RESUME                   0
+               LOAD_GLOBAL              1 (abs + NULL)
+               LOAD_FAST                0 (p)
+               LOAD_CONST               1 (0)
+               BINARY_SUBSCR
+               LOAD_DEREF               1 (bx)
+               BINARY_OP               10 (-)
+               CALL                     1
+               LOAD_GLOBAL              1 (abs + NULL)
+               LOAD_FAST                0 (p)
+               LOAD_CONST               2 (1)
+               BINARY_SUBSCR
+               LOAD_DEREF               2 (by)
+               BINARY_OP               10 (-)
+               CALL                     1
+               BINARY_OP                0 (+)
+               RETURN_VALUE
+=== FUNCTION: parse_target_ids ===
+608           RESUME                   0
+
+609           LOAD_GLOBAL              1 (set + NULL)
+              CALL                     0
+              STORE_FAST               1 (ids)
+
+610           LOAD_FAST                0 (raw)
+              LOAD_ATTR                3 (replace + NULL|self)
+              LOAD_CONST               1 (';')
+              LOAD_CONST               2 (',')
+              CALL                     2
+              LOAD_ATTR                5 (split + NULL|self)
+              LOAD_CONST               2 (',')
+              CALL                     1
+              GET_ITER
+      L1:     FOR_ITER                68 (to L3)
+              STORE_FAST               2 (part)
+
+611           LOAD_FAST                2 (part)
+              LOAD_ATTR                7 (strip + NULL|self)
+              CALL                     0
+              STORE_FAST               2 (part)
+
+612           LOAD_FAST                2 (part)
+              LOAD_ATTR                9 (isdigit + NULL|self)
+              CALL                     0
+              TO_BOOL
+              POP_JUMP_IF_TRUE         2 (to L2)
+              JUMP_BACKWARD           42 (to L1)
+
+613   L2:     LOAD_FAST                1 (ids)
+              LOAD_ATTR               11 (add + NULL|self)
+              LOAD_GLOBAL             13 (int + NULL)
+              LOAD_FAST                2 (part)
+              CALL                     1
+              CALL                     1
+              POP_TOP
+              JUMP_BACKWARD           70 (to L1)
+
+610   L3:     END_FOR
+              POP_TOP
+
+614           LOAD_FAST                1 (ids)
+              RETURN_VALUE
+=== FUNCTION: main ===
+ 619            RESUME                   0
+
+ 620            LOAD_GLOBAL              1 (channel + NULL)
+                CALL                     0
+                UNPACK_SEQUENCE          3
+                STORE_FAST_STORE_FAST    1 (ch, md)
+                STORE_FAST               2 (addr)
+
+ 621            LOAD_GLOBAL              2 (rpc)
+                LOAD_ATTR                5 (MoriStub + NULL|self)
+                LOAD_FAST                0 (ch)
+                CALL                     1
+                STORE_FAST               3 (stub)
+
+ 622            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST               1 ('gRPC: ')
+                LOAD_FAST                2 (addr)
+                FORMAT_SIMPLE
+                LOAD_CONST               2 (' (web UI: http://192.168.193.66:3000)')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 624            NOP
+
+ 625    L1:     LOAD_FAST                3 (stub)
+                LOAD_ATTR                9 (ListBots + NULL|self)
+                LOAD_GLOBAL             10 (pb)
+                LOAD_ATTR               13 (Empty + NULL|self)
+                CALL                     0
+                LOAD_FAST                1 (md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST               4 (bots)
+
+ 630    L2:     LOAD_FAST                4 (bots)
+                LOAD_ATTR               22 (bots)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        12 (to L3)
+
+ 631            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST               7 ('no bots running ù spawn one via http://192.168.193.66:3000 first')
+                CALL                     1
+                POP_TOP
+
+ 632            RETURN_CONST             0 (None)
+
+ 633    L3:     LOAD_FAST                4 (bots)
+                LOAD_ATTR               22 (bots)
+                GET_ITER
+        L4:     FOR_ITER                66 (to L5)
+                STORE_FAST               6 (b)
+
+ 634            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST               8 ('  id=')
+                LOAD_FAST                6 (b)
+                LOAD_ATTR               24 (bot_id)
+                FORMAT_SIMPLE
+                LOAD_CONST               9 (' user=')
+                LOAD_FAST                6 (b)
+                LOAD_ATTR               26 (username)
+                FORMAT_SIMPLE
+                LOAD_CONST              10 (' status=')
+                LOAD_FAST                6 (b)
+                LOAD_ATTR               28 (status)
+                FORMAT_SIMPLE
+                LOAD_CONST              11 (' world=')
+                LOAD_FAST                6 (b)
+                LOAD_ATTR               30 (world)
+                FORMAT_SIMPLE
+                BUILD_STRING             8
+                CALL                     1
+                POP_TOP
+                JUMP_BACKWARD           68 (to L4)
+
+ 633    L5:     END_FOR
+                POP_TOP
+
+ 636            LOAD_GLOBAL             33 (input + NULL)
+                LOAD_CONST              12 ('bot id [')
+                LOAD_FAST                4 (bots)
+                LOAD_ATTR               22 (bots)
+                LOAD_CONST              13 (0)
+                BINARY_SUBSCR
+                LOAD_ATTR               24 (bot_id)
+                FORMAT_SIMPLE
+                LOAD_CONST              14 (']: ')
+                BUILD_STRING             3
+                CALL                     1
+                LOAD_ATTR               35 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST               7 (raw)
+
+ 637            LOAD_GLOBAL             10 (pb)
+                LOAD_ATTR               37 (BotRef + NULL|self)
+                LOAD_FAST                7 (raw)
+                LOAD_ATTR               39 (isdigit + NULL|self)
+                CALL                     0
+                TO_BOOL
+                POP_JUMP_IF_FALSE       11 (to L6)
+                LOAD_GLOBAL             41 (int + NULL)
+                LOAD_FAST                7 (raw)
+                CALL                     1
+                JUMP_FORWARD            24 (to L7)
+        L6:     LOAD_FAST                4 (bots)
+                LOAD_ATTR               22 (bots)
+                LOAD_CONST              13 (0)
+                BINARY_SUBSCR
+                LOAD_ATTR               24 (bot_id)
+        L7:     LOAD_CONST              15 (('bot_id',))
+                CALL_KW                  1
+                STORE_FAST               8 (bot)
+
+ 639            LOAD_GLOBAL             33 (input + NULL)
+                LOAD_CONST              16 ('block ids to break, comma-separated (e.g. 2,14): ')
+                CALL                     1
+                LOAD_ATTR               35 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST               9 (block_raw)
+
+ 640            LOAD_GLOBAL             43 (parse_target_ids + NULL)
+                LOAD_FAST                9 (block_raw)
+                CALL                     1
+                STORE_FAST              10 (targets)
+
+ 641            LOAD_FAST               10 (targets)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        12 (to L8)
+
+ 642            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              17 ('give at least one numeric block id')
+                CALL                     1
+                POP_TOP
+
+ 643            RETURN_CONST             0 (None)
+
+ 645    L8:     BUILD_MAP                0
+                STORE_FAST              11 (strengths)
+
+ 646            LOAD_GLOBAL             45 (sorted + NULL)
+                LOAD_FAST               10 (targets)
+                CALL                     1
+                GET_ITER
+        L9:     FOR_ITER               103 (to L12)
+                STORE_FAST              12 (tid)
+
+ 647            NOP
+
+ 648   L10:     LOAD_FAST                3 (stub)
+                LOAD_ATTR               47 (GetItemInfo + NULL|self)
+                LOAD_GLOBAL             10 (pb)
+                LOAD_ATTR               49 (GetItemInfoRequest + NULL|self)
+                LOAD_FAST               12 (tid)
+                LOAD_CONST              18 (('id',))
+                CALL_KW                  1
+                LOAD_FAST                1 (md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST              13 (info)
+
+ 649            LOAD_GLOBAL             51 (max + NULL)
+                LOAD_GLOBAL             41 (int + NULL)
+                LOAD_FAST               13 (info)
+                LOAD_ATTR               52 (strength)
+                CALL                     1
+                LOAD_CONST              19 (1)
+                CALL                     2
+                LOAD_FAST_LOAD_FAST    188 (strengths, tid)
+                STORE_SUBSCR
+
+ 650            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              20 ('target: ')
+                LOAD_FAST               13 (info)
+                LOAD_ATTR               54 (name)
+                FORMAT_SIMPLE
+                LOAD_CONST              21 (' (id=')
+                LOAD_FAST               12 (tid)
+                FORMAT_SIMPLE
+                LOAD_CONST              22 (') strength~= ')
+                LOAD_FAST_LOAD_FAST    188 (strengths, tid)
+                BINARY_SUBSCR
+                FORMAT_SIMPLE
+                LOAD_CONST              23 (' hits')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+       L11:     JUMP_BACKWARD          105 (to L9)
+
+ 646   L12:     END_FOR
+                POP_TOP
+
+ 655            LOAD_GLOBAL             33 (input + NULL)
+                LOAD_CONST              27 ('walk_ms [')
+                LOAD_GLOBAL             56 (DEFAULT_WALK_MS)
+                FORMAT_SIMPLE
+                LOAD_CONST              28 (', min ')
+                LOAD_GLOBAL             58 (MIN_WALK_MS)
+                FORMAT_SIMPLE
+                LOAD_CONST              14 (']: ')
+                BUILD_STRING             5
+                CALL                     1
+                LOAD_ATTR               35 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST              14 (walk_ms)
+
+ 656            LOAD_GLOBAL             51 (max + NULL)
+                LOAD_FAST               14 (walk_ms)
+                LOAD_ATTR               39 (isdigit + NULL|self)
+                CALL                     0
+                TO_BOOL
+                POP_JUMP_IF_FALSE       11 (to L13)
+                LOAD_GLOBAL             41 (int + NULL)
+                LOAD_FAST               14 (walk_ms)
+                CALL                     1
+                JUMP_FORWARD             5 (to L14)
+       L13:     LOAD_GLOBAL             56 (DEFAULT_WALK_MS)
+       L14:     LOAD_GLOBAL             58 (MIN_WALK_MS)
+                CALL                     2
+                STORE_FAST              14 (walk_ms)
+
+ 657            LOAD_GLOBAL             33 (input + NULL)
+                LOAD_CONST              29 ('place_ms [')
+                LOAD_GLOBAL             60 (DEFAULT_PLACE_MS)
+                FORMAT_SIMPLE
+                LOAD_CONST              28 (', min ')
+                LOAD_GLOBAL             62 (MIN_PLACE_MS)
+                FORMAT_SIMPLE
+                LOAD_CONST              14 (']: ')
+                BUILD_STRING             5
+                CALL                     1
+                LOAD_ATTR               35 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST              15 (place_ms)
+
+ 658            LOAD_GLOBAL             51 (max + NULL)
+                LOAD_FAST               15 (place_ms)
+                LOAD_ATTR               39 (isdigit + NULL|self)
+                CALL                     0
+                TO_BOOL
+                POP_JUMP_IF_FALSE       11 (to L15)
+                LOAD_GLOBAL             41 (int + NULL)
+                LOAD_FAST               15 (place_ms)
+                CALL                     1
+                JUMP_FORWARD             5 (to L16)
+       L15:     LOAD_GLOBAL             60 (DEFAULT_PLACE_MS)
+       L16:     LOAD_GLOBAL             62 (MIN_PLACE_MS)
+                CALL                     2
+                STORE_FAST              15 (place_ms)
+
+ 659            LOAD_FAST                3 (stub)
+                LOAD_ATTR               65 (SetWalkDelay + NULL|self)
+                LOAD_GLOBAL             10 (pb)
+                LOAD_ATTR               67 (SetUintRequest + NULL|self)
+                LOAD_FAST_LOAD_FAST    142 (bot, walk_ms)
+                LOAD_CONST              30 (('bot', 'value'))
+                CALL_KW                  2
+                LOAD_FAST                1 (md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 660            LOAD_FAST                3 (stub)
+                LOAD_ATTR               69 (SetPlaceDelay + NULL|self)
+                LOAD_GLOBAL             10 (pb)
+                LOAD_ATTR               67 (SetUintRequest + NULL|self)
+                LOAD_FAST_LOAD_FAST    143 (bot, place_ms)
+                LOAD_CONST              30 (('bot', 'value'))
+                CALL_KW                  2
+                LOAD_FAST                1 (md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 661            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              31 ('delays: walk=')
+                LOAD_FAST               14 (walk_ms)
+                FORMAT_SIMPLE
+                LOAD_CONST              32 ('ms place=')
+                LOAD_FAST               15 (place_ms)
+                FORMAT_SIMPLE
+                LOAD_CONST              33 ('ms (1 tile/step, ~')
+                LOAD_CONST              34 (1000)
+                LOAD_FAST               15 (place_ms)
+                BINARY_OP                2 (//)
+                FORMAT_SIMPLE
+                LOAD_CONST              35 (' punches/s)')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 663            LOAD_GLOBAL             33 (input + NULL)
+                LOAD_CONST              36 ('max blocks to break [0=unlimited]: ')
+                CALL                     1
+                LOAD_ATTR               35 (strip + NULL|self)
+                CALL                     0
+                STORE_FAST              16 (max_blocks_raw)
+
+ 664            LOAD_FAST               16 (max_blocks_raw)
+                LOAD_ATTR               39 (isdigit + NULL|self)
+                CALL                     0
+                TO_BOOL
+                POP_JUMP_IF_FALSE       11 (to L17)
+                LOAD_GLOBAL             41 (int + NULL)
+                LOAD_FAST               16 (max_blocks_raw)
+                CALL                     1
+                JUMP_FORWARD             1 (to L18)
+       L17:     LOAD_CONST              13 (0)
+       L18:     STORE_FAST              17 (max_blocks)
+
+ 665            LOAD_GLOBAL             33 (input + NULL)
+                LOAD_CONST              37 ('auto-collect drops after each pass? [Y/n]: ')
+                CALL                     1
+                LOAD_ATTR               35 (strip + NULL|self)
+                CALL                     0
+                LOAD_ATTR               71 (lower + NULL|self)
+                CALL                     0
+                STORE_FAST              18 (collect_raw)
+
+ 666            LOAD_FAST               18 (collect_raw)
+                LOAD_CONST              38 ('n')
+                COMPARE_OP             103 (!=)
+                STORE_FAST              19 (do_collect)
+
+ 668            LOAD_FAST                3 (stub)
+                LOAD_ATTR               73 (GetBotState + NULL|self)
+                LOAD_FAST_LOAD_FAST    129 (bot, md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST              20 (state)
+
+ 669            LOAD_FAST               20 (state)
+                LOAD_ATTR               74 (world_name)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        12 (to L19)
+
+ 670            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              39 ('bot is not in a world ù enter a world via the web UI first')
+                CALL                     1
+                POP_TOP
+
+ 671            RETURN_CONST             0 (None)
+
+ 672   L19:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              40 ('bot ')
+                LOAD_FAST               20 (state)
+                LOAD_ATTR               26 (username)
+                FORMAT_SIMPLE
+                LOAD_CONST              41 (" in '")
+                LOAD_FAST               20 (state)
+                LOAD_ATTR               74 (world_name)
+                FORMAT_SIMPLE
+                LOAD_CONST              42 ("' @ (")
+                LOAD_FAST               20 (state)
+                LOAD_ATTR               76 (pos_x)
+                LOAD_CONST              43 ('.1f')
+                FORMAT_WITH_SPEC
+                LOAD_CONST              44 (',')
+                LOAD_FAST               20 (state)
+                LOAD_ATTR               78 (pos_y)
+                LOAD_CONST              43 ('.1f')
+                FORMAT_WITH_SPEC
+                LOAD_CONST              45 (')')
+                BUILD_STRING             9
+                CALL                     1
+                POP_TOP
+
+ 673            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              46 ('order: TOP layer first, strictly LEFT -> RIGHT within a layer')
+                CALL                     1
+                POP_TOP
+
+ 675            LOAD_CONST              13 (0)
+                STORE_FAST              21 (broken)
+
+ 676            LOAD_CONST              13 (0)
+                STORE_FAST              22 (skipped_total)
+
+ 677            BUILD_MAP                0
+                STORE_FAST              23 (coll)
+
+ 678            BUILD_MAP                0
+                STORE_FAST              24 (attempts)
+
+ 679            LOAD_GLOBAL             81 (set + NULL)
+                CALL                     0
+                STORE_FAST              25 (skipped)
+
+ 680            LOAD_CONST               0 (None)
+                STORE_FAST              26 (last_pos)
+
+ 685            LOAD_FAST                3 (stub)
+                LOAD_ATTR               83 (GetWorld + NULL|self)
+                LOAD_FAST_LOAD_FAST    129 (bot, md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST              27 (_w0)
+
+ 686            LOAD_GLOBAL             85 (make_grid + NULL)
+                LOAD_FAST               27 (_w0)
+                CALL                     1
+                STORE_FAST              28 (_g0)
+
+ 687            LOAD_GLOBAL             87 (prefetch_collisions + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               28 (_g0)
+                LOAD_ATTR               89 (values + NULL|self)
+                CALL                     0
+                GET_ITER
+                LOAD_FAST_AND_CLEAR     29 (fg)
+                LOAD_FAST_AND_CLEAR     30 (_b)
+                SWAP                     3
+       L20:     BUILD_SET                0
+                SWAP                     2
+                GET_ITER
+       L21:     FOR_ITER                16 (to L24)
+                UNPACK_SEQUENCE          2
+                STORE_FAST              29 (fg)
+                STORE_FAST              30 (_b)
+                LOAD_FAST               29 (fg)
+                LOAD_CONST              13 (0)
+                COMPARE_OP             119 (bool(!=))
+       L22:     POP_JUMP_IF_TRUE         2 (to L23)
+                JUMP_BACKWARD           14 (to L21)
+       L23:     LOAD_FAST               29 (fg)
+                SET_ADD                  2
+                JUMP_BACKWARD           18 (to L21)
+       L24:     END_FOR
+                POP_TOP
+       L25:     SWAP                     3
+                STORE_FAST              30 (_b)
+                STORE_FAST              29 (fg)
+                LOAD_FAST               23 (coll)
+                CALL                     5
+                POP_TOP
+
+ 688            LOAD_GLOBAL             91 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                CALL                     3
+                LOAD_CONST              19 (1)
+                LOAD_CONST               0 (None)
+                BINARY_SLICE
+                UNPACK_SEQUENCE          2
+                STORE_FAST              31 (_bx0)
+                STORE_FAST              32 (_by0)
+
+ 689            LOAD_GLOBAL             93 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               31 (_bx0)
+                LOAD_FAST               32 (_by0)
+                CALL                     5
+                STORE_FAST              33 (_here)
+
+ 690            LOAD_FAST               33 (_here)
+                POP_JUMP_IF_NONE       126 (to L26)
+                LOAD_GLOBAL             95 (live_is_solid + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               31 (_bx0)
+                LOAD_FAST               32 (_by0)
+                LOAD_FAST               23 (coll)
+                CALL                     6
+                TO_BOOL
+                POP_JUMP_IF_FALSE      106 (to L26)
+
+ 691            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              47 ('warning: bot is inside solid block fg=')
+                LOAD_FAST               33 (_here)
+                LOAD_ATTR               96 (fg_item_id)
+                FORMAT_SIMPLE
+                LOAD_CONST              48 (' at (')
+
+ 692            LOAD_FAST               31 (_bx0)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               32 (_by0)
+                FORMAT_SIMPLE
+                LOAD_CONST              49 (').')
+
+ 691            BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 693            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              50 ('         Punching still works; walking will not. Moving it to open')
+                CALL                     1
+                POP_TOP
+
+ 694            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              51 ('         air (web UI) will make movement work again.')
+                CALL                     1
+                POP_TOP
+
+ 695            LOAD_GLOBAL             99 (settle + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               23 (coll)
+                LOAD_FAST               28 (_g0)
+                LOAD_FAST               27 (_w0)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               27 (_w0)
+                LOAD_ATTR              102 (height)
+                LOAD_FAST               14 (walk_ms)
+                CALL                     8
+                TO_BOOL
+                POP_JUMP_IF_TRUE        11 (to L26)
+
+ 696            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              52 ('         could not escape on its own ù continuing in punch-only mode.')
+                CALL                     1
+                POP_TOP
+
+ 698   L26:     NOP
+
+ 699   L27:     LOAD_FAST               17 (max_blocks)
+                TO_BOOL
+                POP_JUMP_IF_FALSE        8 (to L28)
+                LOAD_FAST               21 (broken)
+                LOAD_FAST               17 (max_blocks)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_FALSE        2 (to L28)
+
+ 700            EXTENDED_ARG             5
+                JUMP_FORWARD          1512 (to L67)
+
+ 701   L28:     NOP
+
+ 702   L29:     LOAD_FAST                3 (stub)
+                LOAD_ATTR               83 (GetWorld + NULL|self)
+                LOAD_FAST_LOAD_FAST    129 (bot, md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                STORE_FAST              34 (world)
+
+ 706   L30:     LOAD_GLOBAL             85 (make_grid + NULL)
+                LOAD_FAST               34 (world)
+                CALL                     1
+                STORE_FAST              35 (grid)
+
+ 709            BUILD_MAP                0
+                STORE_FAST              36 (pending_by_row)
+
+ 710            LOAD_FAST               35 (grid)
+                LOAD_ATTR              105 (items + NULL|self)
+                CALL                     0
+                GET_ITER
+       L31:     FOR_ITER                75 (to L34)
+                UNPACK_SEQUENCE          2
+                UNPACK_SEQUENCE          2
+                STORE_FAST              37 (x)
+                STORE_FAST              38 (y)
+                UNPACK_SEQUENCE          2
+                STORE_FAST              29 (fg)
+                STORE_FAST              39 (bg)
+
+ 711            LOAD_FAST               37 (x)
+                LOAD_FAST               38 (y)
+                BUILD_TUPLE              2
+                LOAD_FAST               25 (skipped)
+                CONTAINS_OP              0
+                POP_JUMP_IF_FALSE        2 (to L32)
+
+ 712            JUMP_BACKWARD           22 (to L31)
+
+ 713   L32:     LOAD_GLOBAL            107 (tile_matches + NULL)
+                LOAD_FAST               29 (fg)
+                LOAD_FAST               39 (bg)
+                LOAD_FAST               10 (targets)
+                CALL                     3
+                TO_BOOL
+                POP_JUMP_IF_TRUE         2 (to L33)
+                JUMP_BACKWARD           42 (to L31)
+
+ 714   L33:     LOAD_FAST               36 (pending_by_row)
+                LOAD_ATTR              109 (setdefault + NULL|self)
+                LOAD_FAST               38 (y)
+                BUILD_LIST               0
+                CALL                     2
+                LOAD_ATTR              111 (append + NULL|self)
+                LOAD_FAST               37 (x)
+                CALL                     1
+                POP_TOP
+                JUMP_BACKWARD           77 (to L31)
+
+ 710   L34:     END_FOR
+                POP_TOP
+
+ 715            LOAD_FAST               36 (pending_by_row)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        57 (to L36)
+
+ 716            LOAD_FAST               25 (skipped)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       24 (to L35)
+
+ 717            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              55 ('done: ')
+                LOAD_GLOBAL            113 (len + NULL)
+                LOAD_FAST               25 (skipped)
+                CALL                     1
+                FORMAT_SIMPLE
+                LOAD_CONST              56 (' tile(s) skipped as unbreakable/unreachable')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 718   L35:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              57 ('no more target tiles ')
+                LOAD_GLOBAL             45 (sorted + NULL)
+                LOAD_FAST               10 (targets)
+                CALL                     1
+                FORMAT_SIMPLE
+                LOAD_CONST              58 (' ù sweep complete')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+
+ 719            EXTENDED_ARG             5
+                JUMP_FORWARD          1324 (to L67)
+
+ 720   L36:     LOAD_GLOBAL            115 (min + NULL)
+                LOAD_FAST               36 (pending_by_row)
+                CALL                     1
+                STORE_FAST              40 (ty_row)
+
+ 721            LOAD_GLOBAL             45 (sorted + NULL)
+                LOAD_FAST               36 (pending_by_row)
+                LOAD_FAST               40 (ty_row)
+                BINARY_SUBSCR
+                CALL                     1
+                STORE_FAST              41 (row_targets)
+
+ 723            LOAD_FAST               35 (grid)
+                LOAD_ATTR               89 (values + NULL|self)
+                CALL                     0
+                GET_ITER
+                LOAD_FAST_AND_CLEAR     29 (fg)
+                LOAD_FAST_AND_CLEAR     42 (_bg)
+                SWAP                     3
+       L37:     BUILD_SET                0
+                SWAP                     2
+                GET_ITER
+       L38:     FOR_ITER                16 (to L41)
+                UNPACK_SEQUENCE          2
+                STORE_FAST              29 (fg)
+                STORE_FAST              42 (_bg)
+                LOAD_FAST               29 (fg)
+                LOAD_CONST              13 (0)
+                COMPARE_OP             119 (bool(!=))
+       L39:     POP_JUMP_IF_TRUE         2 (to L40)
+                JUMP_BACKWARD           14 (to L38)
+       L40:     LOAD_FAST               29 (fg)
+                SET_ADD                  2
+                JUMP_BACKWARD           18 (to L38)
+       L41:     END_FOR
+                POP_TOP
+       L42:     STORE_FAST              43 (fg_ids)
+                STORE_FAST              29 (fg)
+                STORE_FAST              42 (_bg)
+
+ 724            LOAD_GLOBAL             87 (prefetch_collisions + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               43 (fg_ids)
+                LOAD_FAST               23 (coll)
+                CALL                     5
+                POP_TOP
+
+ 726            LOAD_GLOBAL             91 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                CALL                     3
+                UNPACK_SEQUENCE          3
+                STORE_FAST              44 (_)
+                STORE_FAST              45 (bx0)
+                STORE_FAST              46 (by0)
+
+ 727            LOAD_FAST               26 (last_pos)
+                TO_BOOL
+                POP_JUMP_IF_FALSE      119 (to L45)
+                LOAD_GLOBAL            117 (abs + NULL)
+                LOAD_FAST               45 (bx0)
+                LOAD_FAST               26 (last_pos)
+                LOAD_CONST              13 (0)
+                BINARY_SUBSCR
+                BINARY_OP               10 (-)
+                CALL                     1
+                LOAD_GLOBAL            117 (abs + NULL)
+                LOAD_FAST               46 (by0)
+                LOAD_FAST               26 (last_pos)
+                LOAD_CONST              19 (1)
+                BINARY_SUBSCR
+                BINARY_OP               10 (-)
+                CALL                     1
+                BINARY_OP                0 (+)
+                LOAD_GLOBAL            118 (RELOCATE_TILES)
+                COMPARE_OP             148 (bool(>))
+                POP_JUMP_IF_FALSE       76 (to L45)
+
+ 728            LOAD_FAST               25 (skipped)
+                TO_BOOL
+                POP_JUMP_IF_TRUE         7 (to L43)
+                LOAD_FAST               24 (attempts)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       30 (to L44)
+
+ 729   L43:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              59 ('bot relocated (')
+                LOAD_FAST               26 (last_pos)
+                LOAD_CONST              13 (0)
+                BINARY_SUBSCR
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               26 (last_pos)
+                LOAD_CONST              19 (1)
+                BINARY_SUBSCR
+                FORMAT_SIMPLE
+                LOAD_CONST              60 (') -> (')
+                LOAD_FAST               45 (bx0)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               46 (by0)
+                FORMAT_SIMPLE
+                LOAD_CONST              61 ('); re-checking previously skipped tiles')
+                BUILD_STRING             9
+                CALL                     1
+                POP_TOP
+
+ 731   L44:     LOAD_FAST               25 (skipped)
+                LOAD_ATTR              121 (clear + NULL|self)
+                CALL                     0
+                POP_TOP
+
+ 732            LOAD_FAST               24 (attempts)
+                LOAD_ATTR              121 (clear + NULL|self)
+                CALL                     0
+                POP_TOP
+
+ 733   L45:     LOAD_FAST               45 (bx0)
+                LOAD_FAST               46 (by0)
+                BUILD_TUPLE              2
+                STORE_FAST              26 (last_pos)
+
+ 735            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              62 ('layer y=')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              63 (': ')
+                LOAD_GLOBAL            113 (len + NULL)
+                LOAD_FAST               41 (row_targets)
+                CALL                     1
+                FORMAT_SIMPLE
+                LOAD_CONST              64 (' tile(s) | bot @ (')
+                LOAD_FAST               45 (bx0)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               46 (by0)
+                FORMAT_SIMPLE
+                LOAD_CONST              45 (')')
+                BUILD_STRING             9
+                CALL                     1
+                POP_TOP
+
+ 736            LOAD_CONST              13 (0)
+                STORE_FAST              47 (row_broken)
+
+ 737            LOAD_CONST              65 (False)
+                STORE_FAST              48 (diagnosed)
+
+ 739            LOAD_FAST               41 (row_targets)
+                GET_ITER
+       L46:     EXTENDED_ARG             3
+                FOR_ITER               968 (to L62)
+                STORE_FAST              49 (tx)
+
+ 740            LOAD_FAST               17 (max_blocks)
+                TO_BOOL
+                POP_JUMP_IF_FALSE        9 (to L47)
+                LOAD_FAST               21 (broken)
+                LOAD_FAST               17 (max_blocks)
+                COMPARE_OP             188 (bool(>=))
+                POP_JUMP_IF_FALSE        3 (to L47)
+
+ 741            POP_TOP
+                EXTENDED_ARG             3
+                JUMP_FORWARD           953 (to L63)
+
+ 742   L47:     LOAD_GLOBAL             93 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                CALL                     5
+                STORE_FAST              50 (cur)
+
+ 743            LOAD_FAST               50 (cur)
+                POP_JUMP_IF_NONE        38 (to L48)
+                LOAD_GLOBAL            107 (tile_matches + NULL)
+                LOAD_FAST               50 (cur)
+                LOAD_ATTR               96 (fg_item_id)
+                LOAD_FAST               50 (cur)
+                LOAD_ATTR              122 (bg_item_id)
+                LOAD_FAST               10 (targets)
+                CALL                     3
+                TO_BOOL
+                POP_JUMP_IF_TRUE        22 (to L49)
+
+ 744   L48:     LOAD_FAST               24 (attempts)
+                LOAD_ATTR              125 (pop + NULL|self)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                LOAD_CONST               0 (None)
+                CALL                     2
+                POP_TOP
+
+ 745            JUMP_BACKWARD           97 (to L46)
+
+ 748   L49:     LOAD_FAST               50 (cur)
+                LOAD_ATTR               96 (fg_item_id)
+                LOAD_GLOBAL            126 (PROTECTED_FG)
+                CONTAINS_OP              0
+                POP_JUMP_IF_FALSE       57 (to L50)
+
+ 749            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              66 ('  (')
+                LOAD_FAST               49 (tx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              67 (') foreground is protected (fg=')
+                LOAD_FAST               50 (cur)
+                LOAD_ATTR               96 (fg_item_id)
+                FORMAT_SIMPLE
+                LOAD_CONST              68 (') ù skipping')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 751            LOAD_FAST               25 (skipped)
+                LOAD_ATTR              129 (add + NULL|self)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                CALL                     1
+                POP_TOP
+
+ 752            LOAD_FAST               22 (skipped_total)
+                LOAD_CONST              19 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              22 (skipped_total)
+
+ 753            JUMP_BACKWARD          174 (to L46)
+
+ 755   L50:     LOAD_GLOBAL             99 (settle + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               23 (coll)
+                LOAD_FAST               35 (grid)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              102 (height)
+                LOAD_FAST               14 (walk_ms)
+                CALL                     8
+                POP_TOP
+
+ 756            LOAD_GLOBAL             91 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                CALL                     3
+                UNPACK_SEQUENCE          3
+                STORE_FAST              44 (_)
+                STORE_FAST              51 (bx)
+                STORE_FAST              52 (by)
+
+ 761            LOAD_GLOBAL            131 (in_punch_range + NULL)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                LOAD_FAST               51 (bx)
+                LOAD_FAST               52 (by)
+                CALL                     4
+                STORE_FAST              53 (already_in_range)
+
+ 763            LOAD_FAST               53 (already_in_range)
+                TO_BOOL
+                EXTENDED_ARG             1
+                POP_JUMP_IF_TRUE       353 (to L56)
+
+ 764            LOAD_GLOBAL            133 (pick_stand + NULL)
+                LOAD_FAST               35 (grid)
+                LOAD_FAST               23 (coll)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                LOAD_FAST               51 (bx)
+                LOAD_FAST               52 (by)
+
+ 765            LOAD_FAST               34 (world)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              102 (height)
+
+ 764            CALL                     8
+                STORE_FAST              54 (stand)
+
+ 766            LOAD_FAST               54 (stand)
+                POP_JUMP_IF_NOT_NONE    53 (to L52)
+
+ 767            LOAD_GLOBAL            135 (note_failure + NULL)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                LOAD_FAST               24 (attempts)
+                LOAD_FAST               25 (skipped)
+                CALL                     3
+                TO_BOOL
+                POP_JUMP_IF_FALSE       30 (to L51)
+
+ 768            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              66 ('  (')
+                LOAD_FAST               49 (tx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              69 (') no foothold in range ù skipped after ')
+
+ 769            LOAD_GLOBAL            136 (MAX_ATTEMPTS)
+                FORMAT_SIMPLE
+                LOAD_CONST              70 (' tries')
+
+ 768            BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 770            LOAD_FAST               22 (skipped_total)
+                LOAD_CONST              19 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              22 (skipped_total)
+
+ 771   L51:     EXTENDED_ARG             1
+                JUMP_BACKWARD          343 (to L46)
+
+ 772   L52:     LOAD_FAST               51 (bx)
+                LOAD_FAST               52 (by)
+                BUILD_TUPLE              2
+                LOAD_FAST               54 (stand)
+                COMPARE_OP             119 (bool(!=))
+                POP_JUMP_IF_FALSE      251 (to L56)
+
+ 773            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              71 ('  walk (')
+                LOAD_FAST               51 (bx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               52 (by)
+                FORMAT_SIMPLE
+                LOAD_CONST              72 (') -> ')
+                LOAD_FAST               54 (stand)
+                FORMAT_SIMPLE
+                LOAD_CONST              73 (' ...')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 774            LOAD_GLOBAL            139 (walk_grounded + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               35 (grid)
+                LOAD_FAST               23 (coll)
+                LOAD_FAST               54 (stand)
+
+ 775            LOAD_FAST               34 (world)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              102 (height)
+                LOAD_FAST               14 (walk_ms)
+
+ 774            CALL                     9
+                TO_BOOL
+                POP_JUMP_IF_TRUE       187 (to L56)
+
+ 776            LOAD_FAST               48 (diagnosed)
+                TO_BOOL
+                POP_JUMP_IF_TRUE        50 (to L53)
+
+ 777            LOAD_CONST              53 (True)
+                STORE_FAST              48 (diagnosed)
+
+ 778            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              74 ('  unreachable ù diagnosing:')
+                CALL                     1
+                POP_TOP
+
+ 779            LOAD_GLOBAL            141 (diagnose_blocker + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               35 (grid)
+                LOAD_FAST               23 (coll)
+
+ 780            LOAD_FAST               34 (world)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              102 (height)
+                LOAD_FAST               10 (targets)
+
+ 779            CALL                     8
+                POP_TOP
+
+ 781   L53:     LOAD_GLOBAL            135 (note_failure + NULL)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                LOAD_FAST               24 (attempts)
+                LOAD_FAST               25 (skipped)
+                CALL                     3
+                TO_BOOL
+                POP_JUMP_IF_FALSE       30 (to L54)
+
+ 782            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              66 ('  (')
+                LOAD_FAST               49 (tx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              75 (') unreachable ù skipped after ')
+
+ 783            LOAD_GLOBAL            136 (MAX_ATTEMPTS)
+                FORMAT_SIMPLE
+                LOAD_CONST              70 (' tries')
+
+ 782            BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 784            LOAD_FAST               22 (skipped_total)
+                LOAD_CONST              19 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              22 (skipped_total)
+
+ 785   L54:     LOAD_GLOBAL             99 (settle + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               23 (coll)
+                LOAD_FAST               35 (grid)
+
+ 786            LOAD_FAST               34 (world)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              102 (height)
+                LOAD_FAST               14 (walk_ms)
+
+ 785            CALL                     8
+                TO_BOOL
+                POP_JUMP_IF_TRUE        35 (to L55)
+
+ 787            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              76 ('  ! bot is stuck inside solid ground and the server')
+                CALL                     1
+                POP_TOP
+
+ 788            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              77 ('    is refusing to move it. Move the bot out with the')
+                CALL                     1
+                POP_TOP
+
+ 789            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              78 ('    web UI (or respawn) and run again.')
+                CALL                     1
+                POP_TOP
+
+ 790            POP_TOP
+                RETURN_CONST             0 (None)
+
+ 791   L55:     EXTENDED_ARG             2
+                JUMP_BACKWARD          602 (to L46)
+
+ 793   L56:     LOAD_GLOBAL             99 (settle + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               23 (coll)
+                LOAD_FAST               35 (grid)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              102 (height)
+                LOAD_FAST               14 (walk_ms)
+                CALL                     8
+                POP_TOP
+
+ 795            LOAD_GLOBAL             91 (server_pos_tiles + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                CALL                     3
+                UNPACK_SEQUENCE          3
+                STORE_FAST              44 (_)
+                STORE_FAST              55 (sx)
+                STORE_FAST              56 (sy)
+
+ 796            LOAD_GLOBAL            131 (in_punch_range + NULL)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                LOAD_FAST               55 (sx)
+                LOAD_FAST               56 (sy)
+                CALL                     4
+                TO_BOOL
+                POP_JUMP_IF_TRUE        53 (to L58)
+
+ 798            LOAD_GLOBAL            135 (note_failure + NULL)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                LOAD_FAST               24 (attempts)
+                LOAD_FAST               25 (skipped)
+                CALL                     3
+                TO_BOOL
+                POP_JUMP_IF_FALSE       30 (to L57)
+
+ 799            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              66 ('  (')
+                LOAD_FAST               49 (tx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              79 (') out of range after moving ù skipped after ')
+
+ 800            LOAD_GLOBAL            136 (MAX_ATTEMPTS)
+                FORMAT_SIMPLE
+                LOAD_CONST              70 (' tries')
+
+ 799            BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 801            LOAD_FAST               22 (skipped_total)
+                LOAD_CONST              19 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              22 (skipped_total)
+
+ 802   L57:     EXTENDED_ARG             2
+                JUMP_BACKWARD          727 (to L46)
+
+ 803   L58:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              80 ('  punch (')
+                LOAD_FAST               49 (tx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              81 (') dx=')
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               55 (sx)
+                BINARY_OP               10 (-)
+                FORMAT_SIMPLE
+                LOAD_CONST              82 (' dy=')
+                LOAD_FAST               40 (ty_row)
+                LOAD_FAST               56 (sy)
+                BINARY_OP               10 (-)
+                FORMAT_SIMPLE
+                LOAD_CONST              73 (' ...')
+                BUILD_STRING             9
+                CALL                     1
+                POP_TOP
+
+ 804            LOAD_GLOBAL            143 (break_one_tile + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                LOAD_FAST_LOAD_FAST    171 (targets, strengths)
+                LOAD_FAST               15 (place_ms)
+                CALL                     8
+                TO_BOOL
+                POP_JUMP_IF_FALSE      137 (to L60)
+
+ 805            LOAD_FAST               21 (broken)
+                LOAD_CONST              19 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              21 (broken)
+
+ 806            LOAD_FAST               47 (row_broken)
+                LOAD_CONST              19 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              47 (row_broken)
+
+ 807            LOAD_FAST               24 (attempts)
+                LOAD_ATTR              125 (pop + NULL|self)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                LOAD_CONST               0 (None)
+                CALL                     2
+                POP_TOP
+
+ 808            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              83 ('  BROKE (')
+                LOAD_FAST               49 (tx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              84 (') [')
+                LOAD_FAST               21 (broken)
+                FORMAT_SIMPLE
+                LOAD_CONST              85 (']')
+                BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 809            LOAD_GLOBAL             93 (get_tile_safe + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                CALL                     5
+                STORE_FAST              57 (fresh)
+
+ 810            LOAD_FAST               57 (fresh)
+                POP_JUMP_IF_NONE        29 (to L59)
+
+ 811            LOAD_FAST               57 (fresh)
+                LOAD_ATTR               96 (fg_item_id)
+                LOAD_FAST               57 (fresh)
+                LOAD_ATTR              122 (bg_item_id)
+                BUILD_TUPLE              2
+                LOAD_FAST               35 (grid)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                STORE_SUBSCR
+
+ 812   L59:     LOAD_GLOBAL             99 (settle + NULL)
+                LOAD_FAST_LOAD_FAST     56 (stub, bot)
+                LOAD_FAST                1 (md)
+                LOAD_FAST               23 (coll)
+                LOAD_FAST               35 (grid)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              100 (width)
+                LOAD_FAST               34 (world)
+                LOAD_ATTR              102 (height)
+                LOAD_FAST               14 (walk_ms)
+                CALL                     8
+                POP_TOP
+                EXTENDED_ARG             3
+                JUMP_BACKWARD          915 (to L46)
+
+ 814   L60:     LOAD_GLOBAL            135 (note_failure + NULL)
+                LOAD_FAST               49 (tx)
+                LOAD_FAST               40 (ty_row)
+                BUILD_TUPLE              2
+                LOAD_FAST               24 (attempts)
+                LOAD_FAST               25 (skipped)
+                CALL                     3
+                TO_BOOL
+                POP_JUMP_IF_TRUE         3 (to L61)
+                EXTENDED_ARG             3
+                JUMP_BACKWARD          938 (to L46)
+
+ 815   L61:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              66 ('  (')
+                LOAD_FAST               49 (tx)
+                FORMAT_SIMPLE
+                LOAD_CONST              44 (',')
+                LOAD_FAST               40 (ty_row)
+                FORMAT_SIMPLE
+                LOAD_CONST              86 (') would not break ù skipped after ')
+
+ 816            LOAD_GLOBAL            136 (MAX_ATTEMPTS)
+                FORMAT_SIMPLE
+                LOAD_CONST              70 (' tries')
+
+ 815            BUILD_STRING             7
+                CALL                     1
+                POP_TOP
+
+ 817            LOAD_FAST               22 (skipped_total)
+                LOAD_CONST              19 (1)
+                BINARY_OP               13 (+=)
+                STORE_FAST              22 (skipped_total)
+                EXTENDED_ARG             3
+                JUMP_BACKWARD          971 (to L46)
+
+ 739   L62:     END_FOR
+                POP_TOP
+
+ 819   L63:     LOAD_FAST               19 (do_collect)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       43 (to L65)
+                LOAD_FAST               47 (row_broken)
+                TO_BOOL
+                POP_JUMP_IF_FALSE       36 (to L65)
+
+ 820            NOP
+
+ 821   L64:     LOAD_FAST                3 (stub)
+                LOAD_ATTR              145 (Collect + NULL|self)
+                LOAD_GLOBAL             10 (pb)
+                LOAD_ATTR              147 (CollectRequest + NULL|self)
+                LOAD_FAST                8 (bot)
+                LOAD_CONST              87 (3.0)
+                LOAD_CONST              88 (100)
+                LOAD_CONST              89 (('bot', 'range', 'interval_ms'))
+                CALL_KW                  3
+                LOAD_FAST                1 (md)
+                LOAD_CONST               3 (('metadata',))
+                CALL_KW                  2
+                POP_TOP
+
+ 824   L65:     LOAD_FAST               47 (row_broken)
+                LOAD_CONST              13 (0)
+                COMPARE_OP              88 (bool(==))
+                POP_JUMP_IF_FALSE       23 (to L66)
+                LOAD_FAST               36 (pending_by_row)
+                LOAD_ATTR              149 (get + NULL|self)
+                LOAD_FAST               40 (ty_row)
+                CALL                     1
+                TO_BOOL
+                POP_JUMP_IF_TRUE         1 (to L66)
+
+ 825            NOP
+
+ 698   L66:     EXTENDED_ARG             5
+                JUMP_BACKWARD         1527 (to L27)
+
+ 827   L67:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              90 ('done: broken=')
+                LOAD_FAST               21 (broken)
+                FORMAT_SIMPLE
+                LOAD_CONST              91 (' skipped=')
+                LOAD_FAST               22 (skipped_total)
+                FORMAT_SIMPLE
+                BUILD_STRING             4
+                CALL                     1
+                POP_TOP
+                RETURN_CONST             0 (None)
+
+  --   L68:     PUSH_EXC_INFO
+
+ 626            LOAD_GLOBAL             14 (grpc)
+                LOAD_ATTR               16 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       66 (to L72)
+                STORE_FAST               5 (e)
+
+ 627   L69:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST               4 ('ListBots failed: ')
+                LOAD_FAST                5 (e)
+                LOAD_ATTR               19 (code + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                LOAD_CONST               5 (' ')
+                LOAD_FAST                5 (e)
+                LOAD_ATTR               21 (details + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                BUILD_STRING             4
+                CALL                     1
+                POP_TOP
+
+ 628            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST               6 ('Is Mori running with MORI_GRPC_ADDR=0.0.0.0:50051 on 192.168.193.66?')
+                CALL                     1
+                POP_TOP
+
+ 629   L70:     POP_EXCEPT
+                LOAD_CONST               0 (None)
+                STORE_FAST               5 (e)
+                DELETE_FAST              5 (e)
+                RETURN_CONST             0 (None)
+
+  --   L71:     LOAD_CONST               0 (None)
+                STORE_FAST               5 (e)
+                DELETE_FAST              5 (e)
+                RERAISE                  1
+
+ 626   L72:     RERAISE                  0
+
+  --   L73:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L74:     PUSH_EXC_INFO
+
+ 651            LOAD_GLOBAL             14 (grpc)
+                LOAD_ATTR               16 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       24 (to L76)
+                POP_TOP
+
+ 652            LOAD_CONST              24 (4)
+                LOAD_FAST_LOAD_FAST    188 (strengths, tid)
+                STORE_SUBSCR
+
+ 653            LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              25 ('target id=')
+                LOAD_FAST               12 (tid)
+                FORMAT_SIMPLE
+                LOAD_CONST              26 (' (unknown name, assuming ~4 hits)')
+                BUILD_STRING             3
+                CALL                     1
+                POP_TOP
+       L75:     POP_EXCEPT
+                EXTENDED_ARG             9
+                JUMP_BACKWARD         2548 (to L9)
+
+ 651   L76:     RERAISE                  0
+
+  --   L77:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L78:     SWAP                     2
+                POP_TOP
+
+ 687            SWAP                     3
+                STORE_FAST              30 (_b)
+                STORE_FAST              29 (fg)
+                RERAISE                  0
+
+  --   L79:     PUSH_EXC_INFO
+
+ 703            LOAD_GLOBAL             14 (grpc)
+                LOAD_ATTR               16 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE       55 (to L83)
+                STORE_FAST               5 (e)
+
+ 704   L80:     LOAD_GLOBAL              7 (print + NULL)
+                LOAD_CONST              54 ('GetWorld failed: ')
+                LOAD_FAST                5 (e)
+                LOAD_ATTR               19 (code + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                LOAD_CONST               5 (' ')
+                LOAD_FAST                5 (e)
+                LOAD_ATTR               21 (details + NULL|self)
+                CALL                     0
+                FORMAT_SIMPLE
+                BUILD_STRING             4
+                CALL                     1
+                POP_TOP
+
+ 705   L81:     POP_EXCEPT
+                LOAD_CONST               0 (None)
+                STORE_FAST               5 (e)
+                DELETE_FAST              5 (e)
+                RETURN_CONST             0 (None)
+
+  --   L82:     LOAD_CONST               0 (None)
+                STORE_FAST               5 (e)
+                DELETE_FAST              5 (e)
+                RERAISE                  1
+
+ 703   L83:     RERAISE                  0
+
+  --   L84:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+       L85:     SWAP                     2
+                POP_TOP
+
+ 723            SWAP                     3
+                STORE_FAST              42 (_bg)
+                STORE_FAST              29 (fg)
+                RERAISE                  0
+
+  --   L86:     PUSH_EXC_INFO
+
+ 822            LOAD_GLOBAL             14 (grpc)
+                LOAD_ATTR               16 (RpcError)
+                CHECK_EXC_MATCH
+                POP_JUMP_IF_FALSE        4 (to L88)
+                POP_TOP
+
+ 823   L87:     POP_EXCEPT
+                EXTENDED_ARG             1
+                JUMP_BACKWARD_NO_INTERRUPT 299 (to L65)
+
+ 822   L88:     RERAISE                  0
+
+  --   L89:     COPY                     3
+                POP_EXCEPT
+                RERAISE                  1
+ExceptionTable:
+  L1 to L2 -> L68 [0]
+  L10 to L11 -> L74 [1]
+  L20 to L22 -> L78 [8]
+  L23 to L25 -> L78 [8]
+  L29 to L30 -> L79 [0]
+  L37 to L39 -> L85 [3]
+  L40 to L42 -> L85 [3]
+  L64 to L65 -> L86 [0]
+  L68 to L69 -> L73 [1] lasti
+  L69 to L70 -> L71 [1] lasti
+  L71 to L73 -> L73 [1] lasti
+  L74 to L75 -> L77 [2] lasti
+  L76 to L77 -> L77 [2] lasti
+  L79 to L80 -> L84 [1] lasti
+  L80 to L81 -> L82 [1] lasti
+  L82 to L84 -> L84 [1] lasti
+  L86 to L87 -> L89 [1] lasti
+  L88 to L89 -> L89 [1] lasti
