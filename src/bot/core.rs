@@ -1,7 +1,7 @@
 use crate::astar::{self, find_path};
 use crate::bot_state::{
-    BotCommand, BotDelays, BotState, BotStatus, CmdReceiver, InvSlot, PlayerInfo, TileInfo,
-    WorldObjectInfo,
+    BotCommand, BotDelays, BotState, BotStatus, CmdReceiver, InvSlot, PlayerInfo, ProxyInfo,
+    TileInfo, WorldObjectInfo,
 };
 use crate::constants::{FHASH, GAME_VER, PROTOCOL};
 use crate::cursor::Cursor;
@@ -338,6 +338,7 @@ impl Bot {
             s.mac = bot.mac.clone();
             s.collect_radius_tiles = bot.collect_radius_tiles;
             s.collect_blacklist = sorted_blacklist_vec(&bot.collect_blacklist);
+            s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
         }
         bot.host.connect(creds.addr, 2, 0);
         bot
@@ -502,6 +503,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             s.mac = bot.mac.clone();
             s.collect_radius_tiles = bot.collect_radius_tiles;
             s.collect_blacklist = sorted_blacklist_vec(&bot.collect_blacklist);
+            s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
         }
         bot.host.connect(addr, 2, 0);
         bot
@@ -2875,6 +2877,36 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 let mut st = self.state.write().unwrap();
                 st.collect_radius_tiles = self.collect_radius_tiles;
                 st.collect_blacklist = sorted_blacklist_vec(&self.collect_blacklist);
+            }
+            BotCommand::SetProxy { proxy } => {
+                // Proxy only takes effect on the next (re)connect: the live
+                // UDP-via-proxy socket is bound to the old proxy. Disconnect
+                // first so the old control connection is torn down.
+                if self.peer_id.is_some() {
+                    self.disconnect();
+                }
+                self.proxy = proxy.clone();
+                let info = proxy.as_ref().map(ProxyInfo::from_config);
+                self.state.write().unwrap().proxy = info.clone();
+                let (host, port, username, password) = match &info {
+                    Some(i) => (
+                        Some(i.host.clone()),
+                        Some(i.port),
+                        i.username.clone(),
+                        i.password.clone(),
+                    ),
+                    None => (None, None, None, None),
+                };
+                self.emit(WsEvent::BotProxy {
+                    bot_id: self.bot_id,
+                    proxy_host: host,
+                    proxy_port: port,
+                    proxy_username: username,
+                    proxy_password: password,
+                });
+                self.log_console(format!(
+                    "[Bot] Proxy updated — reconnect to apply"
+                ));
             }
             BotCommand::AcceptAccess => self.accept_access(),
         }

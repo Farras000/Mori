@@ -67,6 +67,8 @@ pub enum WsEvent {
     BotAutoCollect { bot_id: u32, enabled: bool },
     /// Bot delays updated.
     BotDelays { bot_id: u32, place_ms: u64, walk_ms: u64, twofa_secs: u64, server_overload_secs: u64, too_many_logins_secs: u64, maintenance_secs: u64 },
+    /// Bot SOCKS5 proxy updated (`proxy_host` is `None` = direct connection).
+    BotProxy { bot_id: u32, proxy_host: Option<String>, proxy_port: Option<u16>, proxy_username: Option<String>, proxy_password: Option<String> },
 }
 
 pub type WsTx = tokio::sync::broadcast::Sender<WsEvent>;

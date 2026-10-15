@@ -114,6 +114,25 @@ impl Default for BotDelays {
 }
 
 #[derive(Clone, Serialize)]
+pub struct ProxyInfo {
+    pub host:     String,
+    pub port:     u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+impl ProxyInfo {
+    pub fn from_config(cfg: &crate::bot::Socks5Config) -> Self {
+        Self {
+            host:     cfg.proxy_addr.ip().to_string(),
+            port:     cfg.proxy_addr.port(),
+            username: cfg.username.clone(),
+            password: cfg.password.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
 pub struct BotState {
     pub status:          BotStatus,
     pub username:        String,
@@ -155,6 +174,8 @@ pub struct BotState {
     pub collect_path_check: bool,
     /// Whether the bot should automatically reconnect after a disconnect.
     pub auto_reconnect: bool,
+    /// Current SOCKS5 proxy (`None` = direct connection).
+    pub proxy: Option<ProxyInfo>,
 }
 
 impl Default for BotState {
@@ -187,6 +208,7 @@ impl Default for BotState {
             auto_ban: false,
             collect_path_check: true,
             auto_reconnect: true,
+            proxy: None,
         }
     }
 }
@@ -241,6 +263,7 @@ pub enum BotCommand {
     SetReconnectInterval { ms: u64 },
     SetPlaceDelay { ms: u64 },
     SetWalkDelay { ms: u64 },
+    SetProxy { proxy: Option<crate::bot::Socks5Config> },
     AcceptAccess,
 }
 

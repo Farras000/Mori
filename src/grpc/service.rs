@@ -267,7 +267,8 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::BotTrackInfo { bot_id, .. }
         | WsEvent::BotUsername { bot_id, .. }
         | WsEvent::BotAutoCollect { bot_id, .. }
-        | WsEvent::BotDelays { bot_id, .. } => *bot_id,
+        | WsEvent::BotDelays { bot_id, .. }
+        | WsEvent::BotProxy { bot_id, .. } => *bot_id,
     }
 }
 
@@ -464,6 +465,17 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
                 maintenance_secs: *maintenance_secs,
             }),
         }),
+        WsEvent::BotProxy { bot_id, proxy_host, proxy_port, .. } => {
+            // No dedicated proto event yet — surface as a console line.
+            let target = match (proxy_host, proxy_port) {
+                (Some(h), Some(p)) => format!("{h}:{p}"),
+                _ => "direct".to_string(),
+            };
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Bot] Proxy updated — {target}"),
+            })
+        }
     };
     mori::BotEvent { event: Some(event) }
 }

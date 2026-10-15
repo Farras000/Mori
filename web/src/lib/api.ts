@@ -93,6 +93,13 @@ export interface InventoryItem {
   action_type: number;
 }
 
+export interface ProxyInfo {
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+}
+
 export interface BotState {
   status: BotStatus;
   world_name: string;
@@ -132,6 +139,7 @@ export interface BotState {
   collect_radius_tiles: number;
   collect_blacklist: number[];
   auto_reconnect: boolean;
+  proxy: ProxyInfo | null;
 }
 
 export interface SpawnBotBody {
@@ -175,6 +183,13 @@ export type BotCmd =
   | { type: "set_auto_reconnect"; enabled: boolean }
   | { type: "disconnect" }
   | { type: "reconnect" }
+  | {
+    type: "set_proxy";
+    proxy_host?: string;
+    proxy_port?: number;
+    proxy_username?: string;
+    proxy_password?: string;
+  }
   | { type: "set_collect_config"; radius_tiles: number; blacklist: number[] }
   | { type: "accept_access" }
   | { type: "warp"; name: string; id: string };

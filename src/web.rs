@@ -291,6 +291,16 @@ enum CmdRequest {
     SetAutoReconnect { enabled: bool },
     Disconnect,
     Reconnect,
+    SetProxy {
+        #[serde(default)]
+        proxy_host:     Option<String>,
+        #[serde(default)]
+        proxy_port:     Option<u16>,
+        #[serde(default)]
+        proxy_username: Option<String>,
+        #[serde(default)]
+        proxy_password: Option<String>,
+    },
     AcceptAccess,
     Warp { name: String, id: String },
 }
@@ -400,6 +410,11 @@ async fn bot_cmd(
         CmdRequest::SetAutoReconnect { enabled } => BotCommand::SetAutoReconnect { enabled },
         CmdRequest::Disconnect => BotCommand::Disconnect,
         CmdRequest::Reconnect => BotCommand::Reconnect,
+        CmdRequest::SetProxy { proxy_host, proxy_port, proxy_username, proxy_password } => {
+            BotCommand::SetProxy {
+                proxy: proxy_from_parts(proxy_host, proxy_port, proxy_username, proxy_password),
+            }
+        }
         CmdRequest::AcceptAccess => BotCommand::AcceptAccess,
         CmdRequest::Warp { name, id } => BotCommand::Warp { name, id },
     };
