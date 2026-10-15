@@ -249,11 +249,12 @@ impl OAuthStore {
         &self,
         proxy: Option<Socks5Config>,
         watch_timeout_secs: u64,
+        mac: Option<String>,
     ) -> Result<OAuthSessionView, String> {
         let proxy_url = proxy_url(proxy.as_ref());
         let proxy_url_for_mint = proxy_url.clone();
         let minted: MintedSession = tokio::task::spawn_blocking(move || {
-            mint_with_backoff(proxy_url_for_mint.as_deref(), 3)
+            mint_with_backoff(proxy_url_for_mint.as_deref(), 3, mac.as_deref())
         })
         .await
         .map_err(|e| format!("mint task failed: {e}"))?

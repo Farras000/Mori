@@ -22,7 +22,7 @@ use rand::Rng;
 use regex::Regex;
 use ureq::ResponseExt;
 
-use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, random_mac};
+use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, resolve_mac};
 use crate::server_data::ServerData;
 
 /// OAuth descriptor uses Mori's in-game pair (`constants.rs`: 5.59/225).
@@ -99,7 +99,7 @@ pub struct OAuthDescriptor {
     pub hash: i32,
 }
 
-pub fn build_descriptor(meta: &str) -> OAuthDescriptor {
+pub fn build_descriptor(meta: &str, mac_override: Option<&str>) -> OAuthDescriptor {
     let mut rng = rand::rng();
     let rid = generate_rid();
     let hash = hash_string("RT");
@@ -108,7 +108,9 @@ pub fn build_descriptor(meta: &str) -> OAuthDescriptor {
     let requested: u32 = rng.random_range(10000..100000);
     let hash2: u32 = rng.random_range(100_000_000..1_000_000_000);
     let country = COUNTRIES[rng.random_range(0..COUNTRIES.len())];
-    let mac = random_mac();
+    // Frontend-pinned MAC when valid (sidebar "MAC" field) so dashboard →
+    // checktoken → ENet all carry the same value; else random (old clients).
+    let mac = resolve_mac(mac_override);
     let wk = random_hex(32);
     let raw = format!(
         "tankIDName|\ntankIDPass|\nrequestedName|{requested}\n\
@@ -170,8 +172,9 @@ pub fn step_server_data(agent: &ureq::Agent) -> OAuthResult<String> {
 pub fn step_dashboard(
     agent: &ureq::Agent,
     meta: &str,
+    mac: Option<&str>,
 ) -> OAuthResult<(OAuthDescriptor, String)> {
-    let desc = build_descriptor(meta);
+    let desc = build_descriptor(meta, mac);
     let encoded = client_percent_encode(&desc.raw);
     let html = agent
         .post(DASHBOARD_URL)
@@ -425,16 +428,21 @@ pub struct MintedSession {
     pub seed_cookies: Vec<SeedCookie>,
 }
 
-pub fn mint_with_backoff(proxy_url: Option<&str>, max_attempts: usize) -> OAuthResult<MintedSession> {
+pub fn mint_with_backoff(
+    proxy_url: Option<&str>,
+    max_attempts: usize,
+    mac: Option<&str>,
+) -> OAuthResult<MintedSession> {
     let backoff = [10, 30, 60];
     let mut last_err = OAuthError::Fatal("no attempts made".to_string());
     for attempt in 0..max_attempts.max(1) {
         let agent = new_oauth_agent(proxy_url)?;
+        let mac_owned = mac.map(str::to_string);
         let outcome = (|| -> OAuthResult<MintedSession> {
             let meta = step_server_data(&agent)?;
             // Demo spacing (~1.5 s) between mint calls — be kind to the throttle.
             std::thread::sleep(Duration::from_millis(1500));
-            let (desc, google_href) = step_dashboard(&agent, &meta)?;
+            let (desc, google_href) = step_dashboard(&agent, &meta, mac_owned.as_deref())?;
             std::thread::sleep(Duration::from_millis(1500));
             let authorize = step_google_redirect(&agent, &google_href)?;
             let seed_cookies = export_seed_cookies(&agent);
@@ -476,7 +484,7 @@ mod tests {
 
     #[test]
     fn descriptor_has_required_fields() {
-        let d = build_descriptor("testmeta");
+        let d = build_descriptor("testmeta", None);
         for field in ["klv|", "rid|", "wk|", "mac|", "meta|testmeta", "hash|-1431569110"] {
             assert!(d.raw.contains(field), "missing {field}");
         }
@@ -485,6 +493,13 @@ mod tests {
         assert_eq!(d.rid.len(), 32);
         assert_eq!(d.wk.len(), 32);
         assert_eq!(d.hash, -1431569110);
+    }
+
+    #[test]
+    fn descriptor_reuses_pinned_mac() {
+        let d = build_descriptor("testmeta", Some("aa:bb:cc:dd:ee:ff"));
+        assert_eq!(d.mac, "AA:BB:CC:DD:EE:FF");
+        assert!(d.raw.contains("mac|AA:BB:CC:DD:EE:FF\n"));
     }
 
     #[test]

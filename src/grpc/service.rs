@@ -492,7 +492,7 @@ impl Mori for MoriService {
             .manager
             .lock()
             .map_err(|_| Status::internal("manager lock poisoned"))?
-            .spawn(r.username, r.password, proxy);
+            .spawn(r.username, r.password, proxy, None);
         Ok(Response::new(mori::SpawnBotResponse { bot_id: id }))
     }
 

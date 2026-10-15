@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy, Check } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy, Check, RefreshCw } from 'lucide-react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { botsAtom, selectedBotIdAtom } from '@/lib/store'
 import { api, type BotStatus, type OAuthProxy, type OAuthSession, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
@@ -71,9 +71,24 @@ export function BotSidebar({ onClose }: { onClose?: () => void }) {
   )
 }
 
+// ── Pinned device MAC ───────────────────────────────────────────────────────
+// One MAC per Add-Bot flow, reused dashboard → checktoken → ENet so the
+// server never sees divergent values. Format matches
+// `protocol/crypto.rs::random_mac` (locally-administered unicast `02:…`).
+function randomMac(): string {
+  const b = new Uint8Array(5)
+  crypto.getRandomValues(b)
+  return ['02', ...Array.from(b, (x) => x.toString(16).padStart(2, '0').toUpperCase())].join(':')
+}
+
+function isValidMac(m: string): boolean {
+  return /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(m.trim())
+}
+
 // ── Add Bot Form ────────────────────────────────────────────────────────────
 
 function AddBotForm({ onDone }: { onDone: () => void }) {
+  const [mac, setMac] = useState(() => randomMac())
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [ltokenStr, setLtokenStr] = useState('')
@@ -83,7 +98,15 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState('')
   const [method, setMethod] = useState<'legacy' | 'ltoken' | 'google'>('legacy')
 
+  const macValid = isValidMac(mac)
+  const ltokenMac = (() => {
+    const parts = ltokenStr.split('|')
+    return parts.length === 4 ? parts[2].trim().toUpperCase() : ''
+  })()
+  const ltokenMismatch = method === 'ltoken' && ltokenMac !== '' && ltokenMac !== mac.trim().toUpperCase()
+
   function buildProxy(body: SpawnBotBody | SpawnLtokenBody | OAuthProxy) {
+    body.mac = mac.trim().toUpperCase()
     if (showProxy && proxyStr) {
       const parts = proxyStr.split(':')
       if (parts.length >= 2) {
@@ -97,6 +120,14 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (!macValid) {
+      setError('Invalid MAC — want XX:XX:XX:XX:XX:XX')
+      return
+    }
+    if (ltokenMismatch) {
+      setError(`MAC mismatch with ltoken bundle (${ltokenMac})`)
+      return
+    }
     setError('')
     setLoading(true)
 
@@ -122,6 +153,33 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-1.5">
+      <label className="text-[10px] font-medium text-muted-foreground">MAC address</label>
+      <div className="flex gap-1">
+        <Input
+          placeholder="XX:XX:XX:XX:XX:XX"
+          value={mac}
+          onChange={(e) => setMac(e.target.value)}
+          className="h-7 text-xs font-mono flex-1"
+          spellCheck={false}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 shrink-0"
+          title="Randomize MAC"
+          onClick={() => setMac(randomMac())}
+        >
+          <RefreshCw className="w-3 h-3" />
+        </Button>
+      </div>
+      {!macValid && (
+        <p className="text-[10px] text-destructive leading-snug">Invalid MAC — want XX:XX:XX:XX:XX:XX</p>
+      )}
+      {ltokenMismatch && (
+        <p className="text-[10px] text-destructive leading-snug">MAC differs from ltoken bundle ({ltokenMac})</p>
+      )}
+      <label className="text-[10px] font-medium text-muted-foreground">Account type</label>
       <Tabs value={method} onValueChange={(v) => setMethod(v as 'legacy' | 'ltoken' | 'google')}>
         <TabsList className="w-full h-7">
           <TabsTrigger value="legacy" className="flex-1 text-[10px]">Legacy</TabsTrigger>
@@ -158,7 +216,7 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
         </TabsContent>
 
         <TabsContent value="google" className="mt-1.5">
-          <GoogleOAuthForm getProxy={() => { const b: OAuthProxy = {}; buildProxy(b); return b }} onSpawned={onDone} />
+          <GoogleOAuthForm mac={mac} macValid={macValid && !ltokenMismatch} getProxy={() => { const b: OAuthProxy = {}; buildProxy(b); return b }} onSpawned={onDone} />
         </TabsContent>
       </Tabs>
 
@@ -180,7 +238,7 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
       )}
 
       {method !== 'google' && (
-        <Button type="submit" size="sm" className="w-full text-xs" disabled={loading}>
+        <Button type="submit" size="sm" className="w-full text-xs" disabled={loading || !macValid || ltokenMismatch}>
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Spawn'}
         </Button>
       )}
@@ -199,7 +257,7 @@ const OAUTH_STATUS_LABEL: Record<string, string> = {
   failed: 'Failed',
 }
 
-function GoogleOAuthForm({ getProxy, onSpawned }: { getProxy: () => OAuthProxy; onSpawned: () => void }) {
+function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; macValid: boolean; getProxy: () => OAuthProxy; onSpawned: () => void }) {
   const [session, setSession] = useState<OAuthSession | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -274,8 +332,11 @@ function GoogleOAuthForm({ getProxy, onSpawned }: { getProxy: () => OAuthProxy; 
           inside the in-app browser, then Spawn.
         </p>
         {cloakDetail && <p className="text-[10px] text-muted-foreground leading-snug">Browser: {cloakDetail}</p>}
-        <Button size="sm" className="w-full text-xs" disabled={loading}
-          onClick={() => run(() => api.oauthGoogleStart(getProxy()), setSession)}>
+        {!macValid && (
+          <p className="text-[10px] text-destructive leading-snug">Set a valid MAC above first — XX:XX:XX:XX:XX:XX</p>
+        )}
+        <Button size="sm" className="w-full text-xs" disabled={loading || !macValid}
+          onClick={() => run(() => api.oauthGoogleStart({ ...getProxy(), mac: mac.trim().toUpperCase() }), setSession)}>
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Start Google login'}
         </Button>
         {error && <p className="text-[10px] text-destructive text-center">{error}</p>}

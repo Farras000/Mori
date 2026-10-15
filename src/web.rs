@@ -162,16 +162,31 @@ async fn list_bots(State(s): State<AppState>) -> Json<Vec<BotInfo>> {
 struct SpawnRequest {
     username:       String,
     password:       String,
+    mac:            Option<String>,
     proxy_host:     Option<String>,
     proxy_port:     Option<u16>,
     proxy_username: Option<String>,
     proxy_password: Option<String>,
 }
 
+/// Normalized frontend-pinned MAC or `None` (caller falls back to random).
+/// `Err` → 400 when a MAC was sent but malformed.
+fn validated_mac(raw: Option<String>) -> Result<Option<String>, (StatusCode, Json<serde_json::Value>)> {
+    match raw {
+        None => Ok(None),
+        Some(s) if s.trim().is_empty() => Ok(None),
+        Some(s) => match crate::protocol::crypto::normalize_mac(&s) {
+            Some(m) => Ok(Some(m)),
+            None => Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "invalid mac, want XX:XX:XX:XX:XX:XX" })))),
+        },
+    }
+}
+
 async fn spawn_bot(
     State(s): State<AppState>,
     Json(req): Json<SpawnRequest>,
-) -> Json<serde_json::Value> {
+) -> ApiResult<serde_json::Value> {
+    let mac = validated_mac(req.mac)?;
     let proxy = match (req.proxy_host, req.proxy_port) {
         (Some(host), Some(port)) => {
             let addr = format!("{}:{}", host, port)
@@ -192,13 +207,14 @@ async fn spawn_bot(
         }
         _ => None,
     };
-    let id = s.manager.lock().unwrap().spawn(req.username, req.password, proxy);
-    Json(serde_json::json!({ "id": id }))
+    let id = s.manager.lock().unwrap().spawn(req.username, req.password, proxy, mac);
+    Ok(Json(serde_json::json!({ "id": id })))
 }
 
 #[derive(Deserialize)]
 struct SpawnLtokenRequest {
     ltoken:         String,
+    mac:            Option<String>,
     proxy_host:     Option<String>,
     proxy_port:     Option<u16>,
     proxy_username: Option<String>,
@@ -208,7 +224,16 @@ struct SpawnLtokenRequest {
 async fn spawn_ltoken_bot(
     State(s): State<AppState>,
     Json(req): Json<SpawnLtokenRequest>,
-) -> Json<serde_json::Value> {
+) -> ApiResult<serde_json::Value> {
+    let mac = validated_mac(req.mac)?;
+    // When the sidebar pins a MAC, it must match the bundle's embedded MAC
+    // (`token|rid|mac|wk`) — otherwise HTTP login and ENet would diverge.
+    if let Some(want) = mac.as_deref() {
+        let embedded = req.ltoken.split('|').nth(2).unwrap_or("").to_ascii_uppercase();
+        if !embedded.is_empty() && embedded != want {
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "mac does not match ltoken bundle" }))));
+        }
+    }
     let proxy = match (req.proxy_host, req.proxy_port) {
         (Some(host), Some(port)) => {
             let addr = format!("{}:{}", host, port).parse().ok();
@@ -221,7 +246,7 @@ async fn spawn_ltoken_bot(
         _ => None,
     };
     let id = s.manager.lock().unwrap().spawn_ltoken(req.ltoken, proxy);
-    Json(serde_json::json!({ "id": id }))
+    Ok(Json(serde_json::json!({ "id": id })))
 }
 
 async fn stop_bot(
@@ -425,6 +450,7 @@ async fn proxy_check(
 
 #[derive(Deserialize)]
 struct OAuthStartRequest {
+    mac:                Option<String>,
     proxy_host:         Option<String>,
     proxy_port:         Option<u16>,
     proxy_username:     Option<String>,
@@ -445,8 +471,9 @@ async fn oauth_google_start(
     Json(req): Json<OAuthStartRequest>,
 ) -> ApiResult<OAuthSessionView> {
     let proxy = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    let mac = validated_mac(req.mac)?;
     s.oauth
-        .start(proxy, req.watch_timeout_secs.unwrap_or(600).clamp(60, 3600))
+        .start(proxy, req.watch_timeout_secs.unwrap_or(600).clamp(60, 3600), mac)
         .await
         .map(Json)
         .map_err(api_err)

@@ -57,6 +57,34 @@ pub fn random_mac() -> String {
     )
 }
 
+/// Returns the uppercase `XX:…:XX` form when `s` is a valid MAC, else `None`.
+pub fn normalize_mac(s: &str) -> Option<String> {
+    let s = s.trim();
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 6 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(6);
+    for p in parts {
+        if p.len() != 2 || !p.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        out.push(p.to_ascii_uppercase());
+    }
+    Some(out.join(":"))
+}
+
+/// True when `s` parses as `XX:XX:XX:XX:XX:XX` (hex, case-insensitive).
+pub fn is_valid_mac(s: &str) -> bool {
+    normalize_mac(s).is_some()
+}
+
+/// Frontend-pinned MAC if valid, else a fresh random one (old clients / scripts).
+pub fn resolve_mac(override_mac: Option<&str>) -> String {
+    override_mac
+        .and_then(normalize_mac)
+        .unwrap_or_else(random_mac)
+}
 /// Generates a 32-char uppercase hex RID derived from the current nanosecond timestamp.
 pub fn generate_rid() -> String {
     let nanos = std::time::SystemTime::now()

@@ -5,7 +5,7 @@ use crate::bot_state::{
 };
 use crate::constants::{FHASH, GAME_VER, PROTOCOL};
 use crate::cursor::Cursor;
-use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, random_mac};
+use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, resolve_mac};
 use crate::events::{WsEvent, WsInvItem, WsObject, WsTile, WsTx};
 use crate::inventory::Inventory;
 use crate::items::ItemsDat;
@@ -240,6 +240,7 @@ impl Bot {
         items_dat: Arc<ItemsDat>,
         bot_id: u32,
         ws_tx: Option<WsTx>,
+        mac_override: Option<&str>,
     ) -> Self {
         let log_state = Arc::clone(&state);
         let log_ws_tx = ws_tx.clone();
@@ -262,7 +263,7 @@ impl Bot {
         };
         let creds = fetch_credentials(username, password, proxy.as_ref(), &mut log_fn);
 
-        let mac = random_mac();
+        let mac = resolve_mac(mac_override);
         let hash = hash_string(&format!("{}RT", mac));
         let hash2 = hash_string(&format!("{}RT", random_hex(16)));
         let wk = random_hex(32);

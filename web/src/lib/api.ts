@@ -137,6 +137,7 @@ export interface BotState {
 export interface SpawnBotBody {
   username: string;
   password: string;
+  mac?: string;
   proxy_host?: string;
   proxy_port?: number;
   proxy_username?: string;
@@ -145,6 +146,7 @@ export interface SpawnBotBody {
 
 export interface SpawnLtokenBody {
   ltoken: string;
+  mac?: string;
   proxy_host?: string;
   proxy_port?: number;
   proxy_username?: string;
@@ -271,6 +273,7 @@ export interface OAuthSession {
 }
 
 export interface OAuthProxy {
+  mac?: string;
   proxy_host?: string;
   proxy_port?: number;
   proxy_username?: string;
