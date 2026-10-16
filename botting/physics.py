@@ -38,7 +38,7 @@ KNOWN_SOLID_FG: Set[int] = {
 }
 
 # Collision types (items.dat) that provide solid ground support.
-SOLID_SUPPORT_TYPES: frozenset = frozenset({1, 2, 3, 10, 11})
+SOLID_SUPPORT_TYPES: frozenset = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12})
 
 # Punch hits needed when GetItemInfo is unavailable (block_health / 6).
 DEFAULT_STRENGTH: dict = {

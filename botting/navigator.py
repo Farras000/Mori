@@ -19,6 +19,7 @@ unit-testable.
 
 from __future__ import annotations
 
+import heapq
 import time
 from collections import deque
 from typing import Dict, Iterator, List, Mapping, Optional, Set, Tuple
@@ -44,7 +45,7 @@ def get_tile_safe(client: MoriClient, x: int, y: int) -> Optional[Tuple[int, int
     try:
         return client.get_tile(x, y)
     except grpc.RpcError:
-        return None
+        return client.grid_get(x, y)
 
 
 def live_is_solid(client: MoriClient, x: int, y: int, coll: Mapping[int, int]) -> Optional[bool]:
@@ -92,8 +93,8 @@ def pace_step(walk_ms: int = 180) -> None:
 def step_one(client: MoriClient, frm: Coord, to: Coord, walk_ms: int = 180) -> bool:
     """Takes exactly ONE step to an adjacent tile (|dx| + |dy| == 1).
 
-    Issues WalkTo and verifies the server position update so the script never
-    runs ahead of the bot (no teleport desync).
+    Issues single-tile MoveTo (via walk_to) and verifies the server position
+    update so the script never runs ahead of the bot (no teleport desync).
     """
     fx, fy = frm
     tx, ty = to
@@ -111,7 +112,7 @@ def step_one(client: MoriClient, frm: Coord, to: Coord, walk_ms: int = 180) -> b
 
     timeout = max(walk_ms / 1000.0, 0.15) + 0.9
     ok = client.wait_arrival(tx, ty, timeout=timeout)
-    if ok:
+    if ok and not getattr(client, "events_active", False):
         pace_step(walk_ms)
     return ok
 
@@ -127,8 +128,9 @@ def run_horizontal(
 ) -> bool:
     """Runs continuously in a straight horizontal line on solid ground.
 
-    Emulates holding left/right key: sends WalkTo to the destination and waits
-    smoothly without stopping and pausing between every single intermediate tile.
+    Verifies the entire horizontal segment is passable and grounded up front,
+    then steps tile-by-tile using direct single-tile moves (never invoking
+    server-side A* pathfinding).
     """
     fx, fy = frm
     tx, ty = to
@@ -144,18 +146,14 @@ def run_horizontal(
         if not standable_live(client, coll, x, fy, world_h):
             return False
 
-    face_for_step(client, direction)
-    try:
-        client.walk_to(tx, ty)
-    except grpc.RpcError:
-        return False
-
-    dist = abs(tx - fx)
-    timeout = dist * (max(walk_ms, 120) / 1000.0) + 1.2
-    ok = client.wait_arrival(tx, ty, timeout=timeout)
-    if ok:
-        pace_step(walk_ms)
-    return ok
+    cur_x = fx
+    for x in range(fx + direction, tx + direction, direction):
+        if _should_stop(getattr(client, "bot_id", None)):
+            return False
+        if not step_one(client, (cur_x, fy), (x, fy), walk_ms=walk_ms):
+            return False
+        cur_x = x
+    return True
 
 
 def standable_live(client: MoriClient, coll: Mapping[int, int], x: int, y: int, world_h: int) -> bool:
@@ -171,14 +169,16 @@ def standable_live(client: MoriClient, coll: Mapping[int, int], x: int, y: int, 
     return bool(below)
 
 
-def settle(client: MoriClient, coll: Mapping[int, int], world_h: int, walk_ms: int = 180, max_fall: int = 40) -> bool:
-    """Simulates gravity settlement tile-by-tile downward.
+def settle(client: MoriClient, coll: Mapping[int, int], world_h: int, walk_ms: int = 180, max_fall: int = 60) -> bool:
+    """Lets gravity settle the bot down onto the nearest solid tile below it.
 
     If the bot is embedded in a solid tile it tries to escape; if it floats in
-    mid-air it steps downward tile-by-tile at gravity speed (fast arrival,
-    no multi-second hovering in mid-air).
+    mid-air it falls directly down to the nearest solid foothold in column bx
+    in one natural gravity descent instead of hovering tile-by-tile.
     """
-    for _ in range(max_fall):
+    for _ in range(4):
+        if _should_stop(getattr(client, "bot_id", None)):
+            return False
         bx, by = server_pos_tiles(client)
 
         # Embedded in a block? Escape first.
@@ -194,20 +194,46 @@ def settle(client: MoriClient, coll: Mapping[int, int], world_h: int, walk_ms: i
         if below is True:
             client.plant_footing()
             return True
-
-        # Fall one tile downward (distance = 1, vanilla gravity, no teleport)
-        ny = by + 1
-        try:
-            client.walk_to(bx, ny)
-        except grpc.RpcError:
+        if below is None:
+            # Cannot verify tile below (RPC error / OOB): never fall blind
             return False
 
-        # Fast gravity arrival check (no stall, no dwelling in air)
-        timeout = max(walk_ms / 1000.0, 0.12) + 0.35
-        if not client.wait_arrival(bx, ny, timeout=timeout):
-            cur_x, cur_y = server_pos_tiles(client)
-            if (cur_x, cur_y) == (bx, by):
-                return False  # genuinely stuck
+        # Scan downward along column bx to find the landing foothold
+        landing_y = by
+        limit_y = min(world_h, by + max_fall + 1)
+        for y in range(by + 1, limit_y):
+            t = get_tile_safe(client, bx, y)
+            if t is None or not is_tile_passable(t[0], coll, is_downward=True):
+                break
+            landing_y = y
+            if y + 1 >= world_h:
+                break
+            solid_under = live_is_solid(client, bx, y + 1, coll)
+            if solid_under is True:
+                break
+
+        if landing_y == by:
+            client.plant_footing()
+            return True
+
+        # Descend strictly 1 tile at a time to prevent server anticheat rubberbanding / teleportation
+        for ny in range(by + 1, landing_y + 1):
+            try:
+                client.walk_to(bx, ny)
+            except grpc.RpcError:
+                return False
+            # Fast event-driven arrival check per tile
+            timeout = max(walk_ms / 1000.0, 0.05) + 0.1
+            if not client.wait_arrival(bx, ny, timeout=timeout):
+                cur_x, cur_y = server_pos_tiles(client)
+                if (cur_x, cur_y) == (bx, ny - 1):
+                    return False  # genuinely stuck on this step
+                break
+
+        cur_x, cur_y = server_pos_tiles(client)
+        if cur_y + 1 >= world_h or live_is_solid(client, cur_x, cur_y + 1, coll) is True:
+            client.plant_footing()
+            return True
 
     client.plant_footing()
     return True
@@ -239,7 +265,7 @@ def step_climb(
 
     timeout = max(walk_ms / 1000.0, 0.15) + 0.9
     ok = client.wait_arrival(tx, ty, timeout=timeout)
-    if ok:
+    if ok and not getattr(client, "events_active", False):
         pace_step(walk_ms)
     return ok
 
@@ -274,7 +300,7 @@ def step_fall(
         bx, by = server_pos_tiles(client)
         if bx == tx and by >= fy:
             break
-        time.sleep(0.05)
+        time.sleep(0.03)
 
     if not settle(client, coll, world_h, walk_ms):
         return False
@@ -289,14 +315,15 @@ def verify_step_live(
     frm: Coord,
     nxt: Coord,
 ) -> bool:
-    """Live re-checks one BFS-planned step before executing it.
+    """Live re-checks one planned step before executing it.
 
-    The BFS plans on a snapshot that may be stale (or sparse: missing tiles
-    read as air). A step is only executed when live ``GetTile`` confirms it:
-    walk/climb targets must be passable AND standable, fall landings must be
-    standable with the whole fall column passable downward (mirroring
-    ``fall_landing``). ``None`` (OOB / unknown) fails closed — the caller
-    replans instead of stepping into the unknown.
+    The pathfinder plans on a snapshot that may be stale (or sparse: missing
+    tiles read as air). A step is only executed when live ``GetTile`` confirms
+    it: walk/climb targets must be passable AND standable (with headroom above
+    the bot for climbs), fall landings must be standable with the whole fall
+    column passable downward (mirroring ``fall_landing``). ``None`` (OOB /
+    unknown) fails closed — the caller replans instead of stepping into the
+    unknown.
     """
     fx, fy = frm
     tx, ty = nxt
@@ -309,6 +336,10 @@ def verify_step_live(
         return standable_live(client, coll, tx, ty, world_h)
 
     if dy == -1 and abs(dx) == 1:
+        if fy - 1 >= 0:
+            head = get_tile_safe(client, fx, fy - 1)
+            if head is not None and not is_tile_passable(head[0], coll):
+                return False
         body = get_tile_safe(client, tx, ty)
         if body is None or not is_tile_passable(body[0], coll):
             return False
@@ -329,13 +360,17 @@ def verify_step_live(
 def escape_embedded(client: MoriClient, coll: Mapping[int, int], world_h: int, walk_ms: int = 180, tries: int = 4) -> bool:
     """Escapes if the bot gets embedded inside a solid block."""
     for _ in range(tries):
+        if _should_stop(getattr(client, "bot_id", None)):
+            return False
         bx, by = server_pos_tiles(client)
         if not live_is_solid(client, bx, by, coll):
             return True  # Body tile is clear.
 
         routes = [(bx, by - 1), (bx - 1, by), (bx + 1, by), (bx, by + 1)]
         for tx, ty in routes:
-            if tx < 0 or ty < 0:
+            if tx < 0 or ty < 0 or ty >= world_h:
+                continue
+            if live_is_solid(client, tx, ty, coll) is not False:
                 continue
             if step_one(client, (bx, by), (tx, ty), walk_ms):
                 if not live_is_solid(client, tx, ty, coll):
@@ -428,18 +463,20 @@ def move_neighbors(
     """Every foothold reachable from (x, y) with one vanilla move.
 
     - climb:  diagonal auto-step up onto a foothold (its support below is the
-              1-tile wall being stepped over),
+              1-tile wall being stepped over, and the tile above (x, y) must be
+              passable so the bot does not clip through a ceiling),
     - walk:   level step onto a foothold,
     - fall:   step sideways into an open gap, gravity lands the bot on the
               first foothold below. Never used to break anything.
     """
     y_up = y - 1
+    head_ok = y_up < 0 or is_tile_passable(grid_fg(grid, x, y_up), coll)
     for dx in (-1, 1):
         nx = x + dx
         if nx < 0 or nx >= world_w:
             continue
 
-        if y_up >= 0 and is_standable_grid(grid, coll, nx, y_up, world_w, world_h):
+        if y_up >= 0 and head_ok and is_standable_grid(grid, coll, nx, y_up, world_w, world_h):
             yield (nx, y_up)
 
         fg, _bg = grid_tile(grid, nx, y)
@@ -453,6 +490,77 @@ def move_neighbors(
                 yield land
 
 
+def astar_move_path(
+    grid: Mapping[Tuple[int, int], Tuple[int, int]],
+    coll: Mapping[int, int],
+    start: Coord,
+    goal: Coord,
+    world_w: int,
+    world_h: int,
+    limit: int = 4096,
+) -> Optional[List[Coord]]:
+    """Weighted A* pathfinder over physics-verified footholds.
+
+    Prefers flat horizontal walking (cost 1.0) over 1-tile climbs (1.2) and
+    gravity drops (1.1 + 0.25 * dy), with a tiny penalty (+0.05) for direction
+    reversals so the bot takes smooth, human-like paths instead of zig-zagging
+    or dropping into unnecessary pits.
+    """
+    if start == goal:
+        return [start]
+
+    if not is_standable_grid(grid, coll, goal[0], goal[1], world_w, world_h):
+        return None
+
+    gx, gy = goal
+
+    def heuristic(x: int, y: int) -> float:
+        return abs(gx - x) + abs(gy - y) * 1.15
+
+    g_score: Dict[Coord, float] = {start: 0.0}
+    prev: Dict[Coord, Optional[Coord]] = {start: None}
+    prev_dir: Dict[Coord, int] = {start: 0}
+    tie = 0
+    open_heap: List[Tuple[float, int, Coord]] = [(heuristic(start[0], start[1]), tie, start)]
+
+    while open_heap and len(g_score) < limit:
+        _f, _t, cur = heapq.heappop(open_heap)
+        if cur == goal:
+            path = [cur]
+            while prev[path[-1]] is not None:
+                path.append(prev[path[-1]])  # type: ignore[arg-type]
+            return path[::-1]
+
+        cx, cy = cur
+        cur_g = g_score[cur]
+        last_dx = prev_dir.get(cur, 0)
+
+        for nxt in move_neighbors(grid, coll, cx, cy, world_w, world_h):
+            nx, ny = nxt
+            dx = nx - cx
+            dy = ny - cy
+            if dy == 0:
+                step_cost = 1.0
+            elif dy == -1:
+                step_cost = 1.20
+            else:
+                step_cost = 1.10 + 0.25 * dy
+
+            if last_dx != 0 and dx * last_dx < 0:
+                step_cost += 0.05
+
+            tentative_g = cur_g + step_cost
+            if tentative_g + 1e-9 < g_score.get(nxt, float("inf")):
+                g_score[nxt] = tentative_g
+                prev[nxt] = cur
+                prev_dir[nxt] = dx
+                tie += 1
+                f_score = tentative_g + heuristic(nx, ny)
+                heapq.heappush(open_heap, (f_score, tie, nxt))
+
+    return None
+
+
 def bfs_move_path(
     grid: Mapping[Tuple[int, int], Tuple[int, int]],
     coll: Mapping[int, int],
@@ -462,37 +570,12 @@ def bfs_move_path(
     world_h: int,
     limit: int = 4096,
 ) -> Optional[List[Coord]]:
-    """Finds a route of footholds connecting start to goal (move graph).
+    """Finds an optimal physics-safe route of footholds connecting start to goal.
 
-    Nodes are standable footholds; edges are the vanilla moves from
-    ``move_neighbors`` (walk, one-tile climb, fall through an existing gap).
-    Falls skip the open air in between, so a path can cross a pit the bot
-    fell into — the bot walks through it and climbs back out, without ever
-    breaking a block.
+    Delegates to ``astar_move_path`` over ``move_neighbors`` (level walk,
+    1-tile climb, fall through an existing gap).
     """
-    if start == goal:
-        return [start]
-
-    if not is_standable_grid(grid, coll, goal[0], goal[1], world_w, world_h):
-        return None
-
-    q: deque = deque([start])
-    prev: Dict[Coord, Optional[Coord]] = {start: None}
-
-    while q and len(prev) < limit:
-        cur = q.popleft()
-        for nxt in move_neighbors(grid, coll, cur[0], cur[1], world_w, world_h):
-            if nxt in prev:
-                continue
-            prev[nxt] = cur
-            if nxt == goal:
-                path = [nxt]
-                while prev[path[-1]] is not None:
-                    path.append(prev[path[-1]])  # type: ignore[arg-type]
-                return path[::-1]
-            q.append(nxt)
-
-    return None
+    return astar_move_path(grid, coll, start, goal, world_w, world_h, limit=limit)
 
 
 def move_reach(
@@ -611,6 +694,45 @@ def walk_grounded(
     return False
 
 
+def stand_foothold_tier(
+    p: Coord,
+    tx: int,
+    ty: int,
+    bx: int,
+    by: int,
+    direction: Optional[int] = None,
+) -> int:
+    """Classifies a candidate foothold into priority tiers.
+
+    Tier 0 (Front same-row): 1 tile in front of the target on the same row.
+    Tier 1 (Front reach same-row): 2 tiles in front of the target on the same row.
+    Tier 2 (Other same-row): Any other foothold on the same row (sy == ty).
+    Tier 3 (From below): Standing below the target (sy > ty, upward punch).
+    Tier 4 (From above - diagonal): Standing above the target (sy < ty, downward diagonal punch).
+    Tier 5 (On top): Standing directly on the target block (tx, ty - 1).
+    """
+    sx, sy = p
+    if sy == ty:
+        eff_dir = direction if direction is not None and direction != 0 else (1 if bx <= tx else -1)
+        if eff_dir > 0:
+            if sx == tx - 1:
+                return 0
+            if sx == tx - 2:
+                return 1
+            return 2
+        else:
+            if sx == tx + 1:
+                return 0
+            if sx == tx + 2:
+                return 1
+            return 2
+    if sy > ty:
+        return 3
+    if p == (tx, ty - 1):
+        return 5
+    return 4
+
+
 def stand_candidates(
     grid: Mapping[Tuple[int, int], Tuple[int, int]],
     coll: Mapping[int, int],
@@ -620,17 +742,17 @@ def stand_candidates(
     by: int,
     world_w: int,
     world_h: int,
+    direction: Optional[int] = None,
 ) -> List[Coord]:
     """All standable footholds within punch reach of (tx, ty), lateral/horizontal first.
 
-    Places lateral (same-row) footholds ahead of standing on top, so when distances
-    are tied or adjacent, the bot stands beside the block and punches horizontally.
+    Guarantees same-row footholds (sy == ty) are prioritized over breaking from
+    above (sy < ty), matching the natural front-facing punch behavior.
     """
     candidates: List[Coord] = []
 
     # Lateral same-row footholds first
     candidates.extend([(tx - 1, ty), (tx + 1, ty)])
-    # Standing on top
     candidates.append((tx, ty - 1))
 
     offsets = [
@@ -642,10 +764,23 @@ def stand_candidates(
     for dx, dy in offsets:
         candidates.append((tx + dx, ty + dy))
 
-    candidates.sort(key=lambda p: abs(p[0] - bx) + abs(p[1] - by))
+    # Deduplicate while preserving order
+    seen: Set[Coord] = set()
+    dedup: List[Coord] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            dedup.append(c)
+
+    dedup.sort(
+        key=lambda p: (
+            stand_foothold_tier(p, tx, ty, bx, by, direction),
+            abs(p[0] - bx) + abs(p[1] - by),
+        )
+    )
 
     out: List[Coord] = []
-    for sx, sy in candidates:
+    for sx, sy in dedup:
         if not is_standable_grid(grid, coll, sx, sy, world_w, world_h):
             continue
         dx = tx - sx
@@ -666,9 +801,10 @@ def pick_stand(
     by: int,
     world_w: int,
     world_h: int,
+    direction: Optional[int] = None,
 ) -> Optional[Coord]:
     """Selects the best standable foothold within punch reach of (tx, ty)."""
-    cands = stand_candidates(grid, coll, tx, ty, bx, by, world_w, world_h)
+    cands = stand_candidates(grid, coll, tx, ty, bx, by, world_w, world_h, direction=direction)
     return cands[0] if cands else None
 
 

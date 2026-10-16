@@ -57,6 +57,7 @@ for _p in (_ROOT, os.path.join(_ROOT, "examples")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from botting import dropper  # noqa: E402
 from botting import navigator as nav  # noqa: E402
 from botting import runlock  # noqa: E402
 from botting import sweep  # noqa: E402
@@ -133,6 +134,11 @@ class ClearWorldRunner:
         # halves must be cleared before the layer transition).
         self.row_legs_required = 1
 
+        # White door drop handling.
+        self.door_coord: Optional[Coord] = None
+        self.drop_retry_at: float = 0.0
+        self._active_blacklist: Set[int] = set()
+
     def stop(self) -> None:
         self.running = False
         bot_id = getattr(self.client, "bot_id", None)
@@ -196,6 +202,11 @@ class ClearWorldRunner:
         c.set_walk_delay(self.cfg.walk_delay_ms)
         c.set_place_delay(self.cfg.punch_delay_ms)
         c.set_auto_collect(self.cfg.auto_collect)
+        if self.cfg.auto_collect:
+            try:
+                c.set_collect_interval(self.cfg.collect_interval_ms)
+            except (grpc.RpcError, AttributeError):
+                pass
         try:
             c.set_auto_reconnect(True)
         except grpc.RpcError:
@@ -208,6 +219,13 @@ class ClearWorldRunner:
             f"pacing: walk {self.cfg.walk_delay_ms}ms/tile, punch {self.cfg.punch_delay_ms}ms "
             f"(batched, hold-button style)"
         )
+        if self.cfg.auto_collect:
+            self.log(
+                f"auto-collect: ON (interval {self.cfg.collect_interval_ms}ms, "
+                f"drop threshold {self.cfg.drop_threshold})"
+            )
+        else:
+            self.log("auto-collect: OFF")
 
     def ensure_item_info(self, item_ids: Set[int]) -> None:
         need = {i for i in item_ids if i and i > 0} | self.targets
@@ -251,7 +269,9 @@ class ClearWorldRunner:
             ids.add(fg)
             ids.add(bg)
         self.ensure_item_info(ids)
-        self.log(f"world {name!r} {w}x{h} synced ({len(self._snapshot())} tiles cached)")
+        self.door_coord = dropper.find_white_door(self._snapshot())
+        door_info = f", white door at ({self.door_coord[0]},{self.door_coord[1]})" if self.door_coord else ""
+        self.log(f"world {name!r} {w}x{h} synced ({len(self._snapshot())} tiles cached{door_info})")
         return True
 
     # ── movement ──────────────────────────────────────────────────────────────
@@ -280,13 +300,21 @@ class ClearWorldRunner:
         """
         now = time.time()
         key = (x, y)
+        hit = self._floor_cache.get(key)
+        if hit is not None and now - hit[1] < self._floor_cache_ttl:
+            return hit[0]
+        if getattr(self.client, "events_active", False):
+            cached = self.client.grid_get(x, y)
+            if cached is not None:
+                fg = cached[0]
+                self._floor_cache[key] = (fg, now)
+                return fg
         try:
             t = self.client.get_tile(x, y)
         except grpc.RpcError:
             t = None
         if t is None:
             self._live_fail_streak += 1
-            hit = self._floor_cache.get(key)
             if hit is not None and now - hit[1] < self._floor_cache_ttl:
                 return hit[0]
             return None
@@ -344,6 +372,195 @@ class ClearWorldRunner:
             return False
         return True
 
+    def _manage_collect_blacklist(self) -> None:
+        """Manages temporary collect blacklist so dropped piles near the white door
+        are not immediately sucked up while the bot is nearby, but can be collected
+        again when the bot is far away sweeping the world."""
+        if not self.cfg.auto_collect:
+            return
+        pos = self._pos()
+        if pos is None or self.door_coord is None:
+            return
+        dx, dy = self.door_coord
+        bx, by = pos
+        # If bot is within 5 tiles of white door, keep blacklist active
+        is_near_door = abs(bx - dx) <= 5 and abs(by - dy) <= 5
+        if not is_near_door and self._active_blacklist:
+            try:
+                self.client.set_collect_config(radius_tiles=3, blacklist=[])
+                self._active_blacklist.clear()
+            except (grpc.RpcError, AttributeError):
+                pass
+
+    def _execute_drop(self, item_id: int, count: int) -> bool:
+        """Drops item_id using fast_drop with fallback to standard drop dialog."""
+        old_cnt = self.client.inventory_amounts().get(item_id, count)
+        try:
+            self.client.fast_drop(item_id, count)
+        except (grpc.RpcError, AttributeError) as e:
+            self.log(f"fast_drop failed: {e}")
+        if self.client.wait_inventory_change(item_id, old_cnt, timeout=0.25):
+            return True
+        try:
+            self.client.drop(item_id, count)
+            if self.client.wait_inventory_change(item_id, old_cnt, timeout=1.5):
+                return True
+        except (grpc.RpcError, AttributeError) as e:
+            self.log(f"drop failed: {e}")
+        return self.client.inventory_amounts().get(item_id, 0) != old_cnt
+
+    def maybe_drop_trip(self, current_row: Optional[int] = None) -> Optional[str]:
+        """Checks if any inventory item is maxed (>= drop_threshold) and executes
+        a drop trip next to the white door.
+
+        Returns:
+            - None: no drop was needed or trip completed and bot returned to position.
+            - "respawned": white door was unreachable on foot so bot respawned to door,
+              dropped the items, and caller should resume sweep from the top remaining layer.
+        """
+        if not self.cfg.drop_enabled:
+            return None
+        if time.time() < self.drop_retry_at:
+            return None
+        if should_stop(self.client.bot_id):
+            return None
+
+        amounts = self.client.inventory_amounts()
+        active_ids = self.client.inventory_active_ids()
+        to_drop = dropper.maxed_items(
+            amounts, active_ids, threshold=self.cfg.drop_threshold
+        )
+        if not to_drop:
+            return None
+
+        self.log(
+            f"maxed item(s) in inventory: "
+            f"{', '.join(f'id={item_id} ({cnt}x)' for item_id, cnt in to_drop)} — "
+            f"initiating drop trip to white door"
+        )
+
+        if self.door_coord is None:
+            self.door_coord = dropper.find_white_door(self._snapshot())
+        if self.door_coord is None:
+            self.log("white door (item id 6) not found — skipping drop trip")
+            self.drop_retry_at = time.time() + 60.0
+            return None
+
+        pos = self._pos()
+        if pos is None:
+            return None
+        bx, by = pos
+
+        # Check if drop spot is reachable on foot from current position
+        reach = nav.move_reach(self.client, self.coll, self.world_w, self.world_h)
+        spot = dropper.pick_drop_spot(
+            self._snapshot(), self.coll, self.door_coord, self.world_w, self.world_h, reach, bx, by
+        )
+
+        if spot is not None:
+            # Skenario 1: White door reachable on foot!
+            drop_ids = [item_id for item_id, _ in to_drop]
+            try:
+                self.client.set_collect_config(radius_tiles=3, blacklist=drop_ids)
+                self._active_blacklist.update(drop_ids)
+            except (grpc.RpcError, AttributeError):
+                pass
+
+            self.log(f"walking to drop spot {spot.stand} beside white door")
+            if not self.walk_grounded_to(spot.stand):
+                self.log(f"failed to walk to drop spot {spot.stand} — aborting trip")
+                self.drop_retry_at = time.time() + 10.0
+                self.walk_grounded_to((bx, by))
+                return None
+
+            try:
+                self.client.set_direction(facing_left=spot.facing_left)
+            except Exception:
+                pass
+            time.sleep(0.05)
+
+            for item_id, count in to_drop:
+                if should_stop(self.client.bot_id):
+                    break
+                self.log(f"dropping {count}x item id {item_id} at {spot.item_tile}")
+                self._execute_drop(item_id, count)
+                time.sleep(0.15)
+
+            # Walk back to original position
+            self.log(f"returning to sweep position ({bx},{by})")
+            if not self.walk_grounded_to((bx, by)):
+                self.log(f"could not return to ({bx},{by}) — settling")
+                self.settle()
+
+            self._manage_collect_blacklist()
+            return None
+
+        # Skenario 2: White door NOT reachable on foot from current position!
+        # Sesuai arahan user: "kalau gabisa ke white door, respawn aja lalu drop blocknya"
+        self.log(
+            "white door not reachable on foot — respawning to white door to drop maxed items"
+        )
+        drop_ids = [item_id for item_id, _ in to_drop]
+        try:
+            self.client.set_collect_config(radius_tiles=3, blacklist=drop_ids)
+            self._active_blacklist.update(drop_ids)
+        except (grpc.RpcError, AttributeError):
+            pass
+
+        try:
+            self.client.respawn()
+        except grpc.RpcError as e:
+            self.log(f"respawn failed: {e}")
+            self.drop_retry_at = time.time() + 10.0
+            return None
+
+        time.sleep(1.5)
+        self.settle()
+        self.load_world()
+
+        new_pos = self._pos()
+        if new_pos is not None:
+            nbx, nby = new_pos
+            reach = nav.move_reach(self.client, self.coll, self.world_w, self.world_h)
+            spot = dropper.pick_drop_spot(
+                self._snapshot(), self.coll, self.door_coord, self.world_w, self.world_h, reach, nbx, nby
+            )
+            if spot is None and self.door_coord is not None:
+                dx, dy = self.door_coord
+                # Check if clearing an adjacent target block can open a drop spot
+                for cand_ix in (dx - 1, dx + 1):
+                    if 0 <= cand_ix < self.world_w:
+                        t = self._tile(cand_ix, dy)
+                        if self._is_target_tile(t):
+                            self.log(f"clearing block at ({cand_ix},{dy}) beside white door to make drop space")
+                            self.clear_tile(cand_ix, dy)
+                            spot = dropper.pick_drop_spot(
+                                self._snapshot(), self.coll, self.door_coord, self.world_w, self.world_h, reach, nbx, nby
+                            )
+                            if spot is not None:
+                                break
+
+            if spot is not None:
+                if (nbx, nby) != spot.stand:
+                    self.walk_grounded_to(spot.stand)
+                try:
+                    self.client.set_direction(facing_left=spot.facing_left)
+                except Exception:
+                    pass
+                time.sleep(0.05)
+
+                for item_id, count in to_drop:
+                    if should_stop(self.client.bot_id):
+                        break
+                    self.log(f"dropping {count}x item id {item_id} at {spot.item_tile}")
+                    self._execute_drop(item_id, count)
+                    time.sleep(0.15)
+            else:
+                self.log(f"warning: no valid drop spot found beside white door at {self.door_coord}")
+
+        return "respawned"
+
+
     def settle(self) -> bool:
         return nav.settle(self.client, self.coll, self.world_h, self.cfg.walk_delay_ms)
 
@@ -354,7 +571,7 @@ class ClearWorldRunner:
         target tile has no floor, gravity drops the bot onto the first solid
         tile underneath — the settled outcome counts as a successful step.
         Facing is set before every horizontal step so the move renders as a
-        walk cycle (not a glide), with a walk-delay dwell afterwards (when dwell=True).
+        walk cycle (not a glide).
 
         Anti-float: the bot must be grounded (live) where it stands before a
         flat step, and grounded where it lands afterwards. A floating arrival
@@ -365,7 +582,7 @@ class ClearWorldRunner:
             return True
         pos = self._pos()
         if pos is not None and abs(x - pos[0]) + abs(y - pos[1]) > 1:
-            # Long moves are always routed via the move-aware BFS walker.
+            # Long moves are always routed via the move-aware A* walker.
             return self.walk_grounded_to((x, y))
         for _ in range(2):
             cur = self._pos()
@@ -401,21 +618,31 @@ class ClearWorldRunner:
                 self.client.walk_to(x, y)
             except grpc.RpcError:
                 return False
+
             deadline = time.time() + self.cfg.walk_timeout_s
-            while time.time() < deadline:
-                try:
-                    p = self.client.refresh_pos()
-                except grpc.RpcError:
-                    p = None
+            # Fast event-driven arrival check first (<1ms on BotMoveEvent)
+            if not gap_ahead and self.client.wait_arrival(x, y, timeout=min(0.45, self.cfg.walk_timeout_s)):
+                p: Optional[Coord] = (x, y)
+            else:
+                p = None
+
+            while True:
+                if p is None:
+                    p = self._pos()
+                    if p is None or p[0] != x or p[1] < y:
+                        try:
+                            p = self.client.refresh_pos()
+                        except grpc.RpcError:
+                            p = None
                 if p is not None and p[0] == x and p[1] >= y:
                     floating = gap_ahead or not self._grounded_live(p[0], p[1])
                     if not floating:
-                        if dwell:
+                        if dwell and not getattr(self.client, "events_active", False):
                             try:
                                 time.sleep(max(0, self.cfg.walk_delay_ms) / 1000.0)
                             except Exception:
                                 pass
-                        self.client.plant_footing()
+                        self._manage_collect_blacklist()
                         return True
                     if not settle_after:
                         return False
@@ -426,10 +653,14 @@ class ClearWorldRunner:
                     p2 = self._pos()
                     if p2 is not None and self._grounded_live(p2[0], p2[1]):
                         self.client.plant_footing()
+                        self._manage_collect_blacklist()
                         return True
                     return False
-                time.sleep(0.08)
-            time.sleep(0.12)
+                if time.time() >= deadline:
+                    break
+                p = None
+                time.sleep(0.03)
+            time.sleep(0.05)
         return False
 
     def walk_grounded_to(self, goal: Coord) -> bool:
@@ -479,10 +710,11 @@ class ClearWorldRunner:
             return False
         if not self.client.wait_arrival(x, y, self.cfg.walk_timeout_s):
             return False
-        try:
-            time.sleep(max(0, self.cfg.walk_delay_ms) / 1000.0)
-        except Exception:
-            pass
+        if not getattr(self.client, "events_active", False):
+            try:
+                time.sleep(max(0, self.cfg.walk_delay_ms) / 1000.0)
+            except Exception:
+                pass
         if not self._grounded(x, y):
             self.settle()
         return True
@@ -504,18 +736,30 @@ class ClearWorldRunner:
     def clear_tile(self, tx: int, ty: int) -> bool:
         """Clears a tile with batched punches (hold-button emulation).
 
-        Returns True when the tile ends up free of target blocks. The batch
-        size is the exact remaining fg+bg hit estimate; the server paces each
-        punch by ``place_ms``. Between batches the tile is verified live.
+        Returns True when the tile ends up free of target blocks. Sends the
+        full fg+bg hit count in a single burst so the server paces every punch
+        at ``place_ms`` with zero pause between foreground and background or
+        before the next step.
         """
         place_s = self.cfg.place_s
+        walk_s = max(0, self.cfg.walk_delay_ms) / 1000.0
+        extra_wait = (walk_s + 0.65) if getattr(self.client, "events_active", False) else 0.25
         sent_total = 0
 
-        for _ in range(self.cfg.max_punch_rounds):
+        for round_idx in range(self.cfg.max_punch_rounds):
             if not self.running or should_stop(self.client.bot_id):
                 return False
 
-            plan = self._plan(tx, ty)
+            if round_idx == 0 and getattr(self.client, "events_active", False):
+                cached = self.client.grid_get(tx, ty)
+                if cached is not None:
+                    fg, bg = cached
+                else:
+                    fg, bg = self._refresh(tx, ty)
+            else:
+                fg, bg = self._refresh(tx, ty)
+            plan = plan_punch(fg, bg, self.targets, self.strength, self.coll)
+
             if plan.hits == 0:
                 self._invalidate_floor_cache(tx, ty)
                 return True  # nothing (left) to punch here
@@ -537,15 +781,7 @@ class ClearWorldRunner:
                 except Exception:
                     pass
 
-            fg, bg = self._tile(tx, ty)
-            fg_hits = max(1, self.strength.get(fg, DEFAULT_STRENGTH.get(fg, 3))) if fg in self.targets else 0
-            bg_hits = max(1, self.strength.get(bg, DEFAULT_STRENGTH.get(bg, 3))) if bg in self.targets else 0
-
-            # If both fg and bg are present, break fg first then bg seamlessly without waiting timeout
-            burst_hits = fg_hits if fg_hits > 0 else bg_hits
-            if burst_hits == 0:
-                burst_hits = plan.hits
-
+            burst_hits = plan.hits
             if sent_total + burst_hits > self.cfg.max_hits_per_tile:
                 burst_hits = max(0, self.cfg.max_hits_per_tile - sent_total)
                 if burst_hits == 0:
@@ -560,22 +796,24 @@ class ClearWorldRunner:
                     return False
                 sent_total += 1
 
-            # Quick wait for this burst to take effect
-            burst_timeout = burst_hits * place_s + 0.35
-            if fg_hits > 0 and bg_hits > 0:
-                # Poll briefly until fg breaks, then immediately loop to punch bg!
-                t0 = time.time()
-                while time.time() - t0 < burst_timeout:
-                    t = self.client.grid_get(tx, ty)
-                    if t is not None and t[0] == 0:
-                        break
-                    time.sleep(0.04)
-                continue
-
+            burst_timeout = burst_hits * place_s + extra_wait
             if self.client.wait_tile_cleared(tx, ty, self._is_target_tile, burst_timeout):
                 self.broken += 1
                 self._invalidate_floor_cache(tx, ty)
                 return True
+
+            after_fg, after_bg = self._refresh(tx, ty)
+            if not self._is_target_tile((after_fg, after_bg)):
+                self.broken += 1
+                self._invalidate_floor_cache(tx, ty)
+                return True
+            fg_hp = self.strength.get(fg, DEFAULT_STRENGTH.get(fg, 3)) if fg in self.targets else 0
+            if (after_fg, after_bg) == (fg, bg) and (
+                round_idx >= 1 or (fg_hp > 0 and burst_hits >= fg_hp + 2)
+            ):
+                # Tile took zero layer changes despite a full fg+bg burst or retry:
+                # locked by a lock the bot does not own.
+                return False
 
         return not self._is_target_tile(self._refresh(tx, ty))
 
@@ -613,12 +851,18 @@ class ClearWorldRunner:
             except grpc.RpcError:
                 pass
             if self.client.wait_arrival(bx, ty, timeout=0.8):
+                if not self._grounded_live(bx, ty):
+                    self.settle()
                 self.client.plant_footing()
                 return "ok"
 
         if not self.advance_to(bx, ty):
             return "stuck"
+        cur_pos = self._pos()
+        if cur_pos is not None and not self._grounded_live(cur_pos[0], cur_pos[1]):
+            self.settle()
         return "ok"
+
 
     # ── layer transitions (world-edge rule) ───────────────────────────────────
 
@@ -884,13 +1128,16 @@ class ClearWorldRunner:
         for cx in cols:
             if not self.running or should_stop(self.client.bot_id):
                 break
+            self._manage_collect_blacklist()
+            if self.maybe_drop_trip(current_row=row) == "respawned":
+                break
             fg, bg = self._refresh(cx, row)
             if not plan_punch(fg, bg, self.targets, self.strength, self.coll).has_work:
                 self.blocked.pop((cx, row), None)
                 continue
             if not sweep.is_exposed(
                 self._snapshot(), self.coll, self.targets, self.strength,
-                cx, row, self.world_h,
+                cx, row, self.world_h, blocked=self.blocked,
             ):
                 self.note_blocked(cx, row, "target above — layer order")
                 continue
@@ -901,9 +1148,16 @@ class ClearWorldRunner:
 
             bx, by = self._pos() or (cx, row)
             cands = nav.stand_candidates(
-                self._snapshot(), self.coll, cx, row, bx, by, self.world_w, self.world_h
+                self._snapshot(), self.coll, cx, row, bx, by, self.world_w, self.world_h, direction=direction
             )
-            cands = sorted(cands, key=lambda c: self._stand_visits.get(c, 0))
+            cands = sorted(
+                cands,
+                key=lambda c: (
+                    nav.stand_foothold_tier(c, cx, row, bx, by, direction=direction),
+                    self._stand_visits.get(c, 0),
+                    abs(c[0] - bx) + abs(c[1] - by),
+                ),
+            )
             stand = next((c for c in cands if c in reach), None)
             if stand is None:
                 self.note_blocked(cx, row, "remainder unreachable on foot")
@@ -924,6 +1178,9 @@ class ClearWorldRunner:
             self._clear_roof(row, col=cx)
             if self.clear_tile(cx, row):
                 self.blocked.pop((cx, row), None)
+                cur_pos = self._pos()
+                if cur_pos is not None and not self._grounded_live(cur_pos[0], cur_pos[1]):
+                    self.settle()
             else:
                 self.note_blocked(cx, row, "remainder punch failed")
 
@@ -1024,15 +1281,15 @@ class ClearWorldRunner:
         if pos is None:
             return
         bx, by = pos
-        if by != row:
+        if by < row:
             return
         cx = bx if col is None else col
 
         # Topmost first: within the 3-tile reach the highest leftover of the
         # column is finished before the one below it (layer order).
         for dy in (3, 2, 1):
-            ty = row - dy
-            if ty < 0:
+            ty = by - dy
+            if ty < 0 or ty >= row:
                 continue
             if not is_within_punch_range(cx - bx, ty - by):
                 continue
@@ -1047,6 +1304,7 @@ class ClearWorldRunner:
                 if not self.clear_tile(cx, ty):
                     self.log(f"roof leftover at ({cx},{ty}) not clearable from below")
                     break
+                self.blocked.pop((cx, ty), None)
 
     def _is_standable(self, snap: Dict[Coord, Tuple[int, int]], x: int, y: int) -> bool:
         return is_standable_grid(snap, self.coll, x, y, self.world_w, self.world_h)
@@ -1083,6 +1341,113 @@ class ClearWorldRunner:
             return None
         return best
 
+    def _climb_back_to_row_any(self, row: int) -> Optional[int]:
+        """Walks back up onto row ``row`` at any reachable standing foothold."""
+        pos = self._pos()
+        if pos is None:
+            return None
+        reach = nav.move_reach(self.client, self.coll, self.world_w, self.world_h)
+        cands = [
+            (x, d) for (x, y), d in reach.items()
+            if y == row and 0 <= x < self.world_w
+        ]
+        if not cands:
+            return None
+        cands.sort(key=lambda t: t[1])
+        for best, _d in cands:
+            if (self._pos() or (0, 0)) == (best, row):
+                return best
+            if self.walk_grounded_to((best, row)):
+                return best
+        return None
+
+    def _pre_clear_across_gap(self, bx: int, row: int, direction: int) -> None:
+        """When the tile ahead (bx + direction, row) has no floor below it,
+        pre-clears the far lip (bx + 2 * direction, row) while still standing
+        on solid ground at (bx, row). This ensures the bot has an open ledge
+        to climb back onto after stepping into the gap.
+        """
+        nx = bx + 2 * direction
+        if not (0 <= nx < self.world_w):
+            return
+        self._prep_decision_tiles(nx, row)
+        if not sweep.plan_for(
+            self._snapshot(), self.coll, self.targets, self.strength, nx, row
+        ).has_work:
+            return
+        if not sweep.is_exposed(
+            self._snapshot(), self.coll, self.targets, self.strength,
+            nx, row, self.world_h,
+        ):
+            self._clear_roof(row, col=nx)
+        if sweep.is_exposed(
+            self._snapshot(), self.coll, self.targets, self.strength,
+            nx, row, self.world_h, blocked=self.blocked,
+        ):
+            if self.clear_tile(nx, row):
+                self.blocked.pop((nx, row), None)
+
+    def _open_row_lip_from_pit(self, row: int, direction: int) -> bool:
+        """When the bot has dropped into a gap (by > row) and cannot climb back
+        onto ``row`` because the exit ledge on ``row`` still holds target blocks,
+        clears those ``row`` blocks (and roof above them) from within punch
+        range. Never punches below ``row``.
+        """
+        pos = self._pos()
+        if pos is None:
+            return False
+        bx, by = pos
+        if by <= row:
+            return False
+
+        def _try_punch_lip(cur_x: int, cur_y: int) -> bool:
+            did_open = False
+            for step in (0, 1, 2, 3):
+                cx = cur_x + step * direction
+                if not (0 <= cx < self.world_w):
+                    continue
+                if not is_within_punch_range(cx - cur_x, row - cur_y):
+                    continue
+                self._prep_decision_tiles(cx, row)
+                if not sweep.plan_for(
+                    self._snapshot(), self.coll, self.targets, self.strength, cx, row
+                ).has_work:
+                    continue
+                if not sweep.is_exposed(
+                    self._snapshot(), self.coll, self.targets, self.strength,
+                    cx, row, self.world_h,
+                ):
+                    self._clear_roof(row, col=cx)
+                if sweep.is_exposed(
+                    self._snapshot(), self.coll, self.targets, self.strength,
+                    cx, row, self.world_h, blocked=self.blocked,
+                ):
+                    if self.clear_tile(cx, row):
+                        self.blocked.pop((cx, row), None)
+                        did_open = True
+            return did_open
+
+        if _try_punch_lip(bx, by):
+            return True
+
+        # If the pit is wider than punch reach, advance to the furthest
+        # reachable pit foothold in the sweep direction and try again.
+        reach = nav.move_reach(self.client, self.coll, self.world_w, self.world_h)
+        pit_cands = [
+            (x, y) for (x, y) in reach
+            if y > row and ((direction > 0 and x > bx) or (direction < 0 and x < bx))
+        ]
+        if not pit_cands:
+            return False
+        pit_cands.sort(key=lambda c: c[0] * direction, reverse=True)
+        for cand in pit_cands[:2]:
+            if self.walk_grounded_to(cand):
+                nx, ny = self._pos() or cand
+                if _try_punch_lip(nx, ny):
+                    return True
+                break
+        return False
+
     def sweep_row(self, row: int, direction: int) -> str:
         """Sweeps one row, covering every reachable column before returning.
 
@@ -1092,8 +1457,9 @@ class ClearWorldRunner:
         cleared before the layer transition.
 
         When a step drops into an existing gap the bot walks through the gap
-        and climbs back onto this row ahead (move-only); if that is impossible
-        the sweep continues on the row gravity landed it on.
+        and climbs back onto this row ahead (move-only); if the exit ledge on
+        ``row`` still holds target blocks within punch range, it clears them
+        upward and climbs back out.
 
         On an obstacle the bot NEVER breaks down there: if more legs are
         needed it walks back to the row entry and flips direction, otherwise
@@ -1126,6 +1492,15 @@ class ClearWorldRunner:
             if pos is None:
                 return "stuck"
             bx, by = pos
+
+            trip_status = self.maybe_drop_trip(current_row=row)
+            if trip_status == "respawned":
+                return "respawned"
+            pos = self._pos()
+            if pos is None:
+                return "stuck"
+            bx, by = pos
+
             if not self._watch_progress():
                 return "abort"
             hist.append((bx, by))
@@ -1155,12 +1530,26 @@ class ClearWorldRunner:
             if by != row:
                 if by < row:
                     return "stuck"
-                # The step walked into an existing gap (a pit / the bot's own
-                # tunnel) and gravity dropped the bot below the sweep row.
-                # A real client walks through the gap and climbs back out
-                # ahead: walk/fall/climb only, never a punch.
+                # The step walked into an existing gap (a pit / cave pocket)
+                # and gravity dropped the bot below the sweep row.
                 col = self._climb_back_to_row(row, direction)
+                if col is None and self._open_row_lip_from_pit(row, direction):
+                    col = self._climb_back_to_row(row, direction)
                 if col is None:
+                    # Could not climb forward onto row in sweep direction.
+                    # Try climbing back up to ANY reachable foothold on row.
+                    any_col = self._climb_back_to_row_any(row)
+                    if any_col is not None and legs + 1 < required:
+                        self.log(
+                            f"row {row}: gap at x={bx} cannot be crossed forward — "
+                            f"climbed back up to x={any_col}, ending leg"
+                        )
+                        bx, by = any_col, row
+                        legs += 1
+                        direction = -direction
+                        hist.clear()
+                        hist_broken.clear()
+                        continue
                     self.log(
                         f"row {row}: dropped to ({bx},{by}) with no way back up "
                         f"— continuing on row {by}"
@@ -1172,6 +1561,14 @@ class ClearWorldRunner:
                 else:
                     self.log(f"row {row}: dipped through the gap — back on the row at x={col}")
                     bx, by = col, row
+
+            # Clear target at bot's current standing tile if any (e.g. passable Cave BG)
+            if sweep.plan_for(self._snapshot(), self.coll, self.targets, self.strength, bx, row).has_work:
+                if sweep.is_exposed(
+                    self._snapshot(), self.coll, self.targets, self.strength,
+                    bx, row, self.world_h, blocked=self.blocked,
+                ):
+                    self.clear_tile(bx, row)
 
             # Finish leftovers of the layers above from below (upward punches).
             self._clear_roof(row)
@@ -1204,7 +1601,7 @@ class ClearWorldRunner:
 
                     if not sweep.is_exposed(
                         self._snapshot(), self.coll, self.targets, self.strength,
-                        tx, row, self.world_h,
+                        tx, row, self.world_h, blocked=self.blocked,
                     ):
                         self.note_blocked(tx, row, "target above — layer order")
                         self.sweep_row_remainder(row, tx, direction)
@@ -1214,13 +1611,19 @@ class ClearWorldRunner:
                         self.note_blocked(tx, row, f"punch failed ({reason})")
                         self.sweep_row_remainder(row, tx + direction, direction)
                         leg_over = True
-                    elif not self.advance_to(tx, row, dwell=False):
-                        return "stuck"
-                    elif dec.needs_settle:
-                        # The tile ahead had no floor even before breaking:
-                        # force gravity now instead of trusting arrival reads.
-                        self.settle()
+                    else:
+                        self.blocked.pop((tx, row), None)
+                        if dec.needs_settle:
+                            self._pre_clear_across_gap(bx, row, direction)
+                        if not self.advance_to(tx, row, dwell=False):
+                            return "stuck"
+                        if dec.needs_settle:
+                            # The tile ahead had no floor even before breaking:
+                            # force gravity now instead of trusting arrival reads.
+                            self.settle()
                 elif dec.kind is StepKind.WALK:
+                    if dec.needs_settle:
+                        self._pre_clear_across_gap(bx, row, direction)
                     if not self.advance_to(tx, row):
                         return "stuck"
                     if dec.needs_settle:
@@ -1369,6 +1772,11 @@ class ClearWorldRunner:
 
         # 3) No route on foot: break into the top layer. The first break is
         #    always a row-y0 tile (never a deeper row).
+        if by < y0 - 1 and y0 - 1 >= 0:
+            surf_col = self._walk_to_row(y0 - 1)
+            if surf_col is not None:
+                pos = self._pos() or (surf_col, y0 - 1)
+                bx, by = pos
         if by == y0 - 1:
             if self._break_into_top_layer(y0):
                 pos = self._pos() or (bx, y0)
@@ -1422,6 +1830,8 @@ class ClearWorldRunner:
         """True when nothing above (x, y) in the same column needs clearing."""
         snap = self._snapshot()
         for yy in range(y):
+            if (x, yy) in self.blocked:
+                continue
             if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, yy).has_work:
                 self.log(f"mid-world start refused: ({x},{yy}) above the bot still needs clearing")
                 return False
@@ -1526,12 +1936,14 @@ class ClearWorldRunner:
                 break
             snap = self._snapshot()
             # Layer-order rule: only exposed tiles (nothing left to clear in
-            # the same column above them) may be picked up by the cleanup.
+            # the same column above them, ignoring already-blocked sky tiles)
+            # may be picked up by the cleanup.
             left = [
                 (x, y)
                 for (x, y) in self._remaining_targets()
                 if sweep.is_exposed(
-                    snap, self.coll, self.targets, self.strength, x, y, self.world_h
+                    snap, self.coll, self.targets, self.strength, x, y, self.world_h,
+                    blocked=self.blocked,
                 )
             ]
             if not left:
@@ -1560,6 +1972,8 @@ class ClearWorldRunner:
             for tx, ty in left:
                 if not self.running or should_stop(self.client.bot_id):
                     break
+                self._manage_collect_blacklist()
+                self.maybe_drop_trip()
                 if (tx, ty) in failed_this_round:
                     continue
                 if self._cleanup_fails.get((tx, ty), 0) >= 2:
@@ -1569,15 +1983,21 @@ class ClearWorldRunner:
                     continue
 
                 bx, by = self._pos() or (0, 0)
+                dir_to_target = 1 if bx <= tx else -1
                 cands = nav.stand_candidates(
-                    self._snapshot(), self.coll, tx, ty, bx, by, self.world_w, self.world_h
+                    self._snapshot(), self.coll, tx, ty, bx, by, self.world_w, self.world_h, direction=dir_to_target
                 )
                 if not cands:
                     self.note_blocked(tx, ty, "no standable neighbor in punch range")
                     continue
-                # Prefer stands not recently overused (ping-pong guard): the
-                # nearest fresh foothold wins over a repeatedly visited one.
-                cands = sorted(cands, key=lambda c: self._stand_visits.get(c, 0))
+                cands = sorted(
+                    cands,
+                    key=lambda c: (
+                        nav.stand_foothold_tier(c, tx, ty, bx, by, direction=dir_to_target),
+                        self._stand_visits.get(c, 0),
+                        abs(c[0] - bx) + abs(c[1] - by),
+                    ),
+                )
                 stand = next((c for c in cands if c in reach), None)
                 if stand is None:
                     unreachable.append((tx, ty))
@@ -1619,6 +2039,9 @@ class ClearWorldRunner:
                     progress += 1
                     self.blocked.pop((tx, ty), None)
                     self._cleanup_fails.pop((tx, ty), None)
+                    cur_pos = self._pos()
+                    if cur_pos is not None and not self._grounded_live(cur_pos[0], cur_pos[1]):
+                        self.settle()
                 else:
                     self.note_blocked(tx, ty, "punch failed")
                     failed_this_round.add((tx, ty))
@@ -1668,6 +2091,63 @@ class ClearWorldRunner:
 
     # ── main ──────────────────────────────────────────────────────────────────
 
+    def _find_top_unblocked_row(self) -> Optional[int]:
+        snap = self._snapshot()
+        for y in range(self.world_h):
+            for x in range(self.world_w):
+                if (x, y) in self.blocked:
+                    continue
+                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, y).has_work:
+                    return y
+        return None
+
+    def _has_edge_supported_terrain_below(self, y0: int) -> bool:
+        snap = self._snapshot()
+        for y in range(max(1, y0 + 1), self.world_h):
+            if not (self._grounded(0, y - 1) or self._grounded(self.world_w - 1, y - 1)):
+                continue
+            for x in range(self.world_w):
+                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, y).has_work:
+                    return True
+        return False
+
+    def _find_and_enter_top_layer(self) -> Optional[Coord]:
+        """Finds the topmost enterable target layer and enters it.
+
+        When a world has sparse floating sky blocks above the main terrain
+        (e.g. a 1-tile sky pillar at y=18..23 where neither world edge has
+        ground support), ``enter_top_layer(y0)`` cannot enter at ``y0``. In
+        that case this helper sweeps whatever sky targets on ``y0`` are
+        reachable from the bot's footing, marks any unreachable sky leftovers
+        as ``blocked`` (so they are cleared from below as the sweep passes
+        under them), and advances to the next row until the main terrain
+        surface is entered.
+        """
+        for _ in range(self.world_h):
+            y0 = self._find_top_unblocked_row()
+            if y0 is None:
+                return None
+            edge_supported = (
+                y0 > 0
+                and (self._grounded(0, y0 - 1) or self._grounded(self.world_w - 1, y0 - 1))
+            )
+            if edge_supported or not self._has_edge_supported_terrain_below(y0):
+                entry = self.enter_top_layer(y0)
+                if entry is not None:
+                    return entry
+                if edge_supported:
+                    return None
+            self.log(
+                f"row {y0}: floating sky layer not enterable at edges — "
+                f"clearing reachable sky targets and advancing to next row"
+            )
+            self.sweep_row_remainder(y0, 0, 1)
+            snap = self._snapshot()
+            for x in range(self.world_w):
+                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, y0).has_work:
+                    self.blocked[(x, y0)] = "unreachable sky target"
+        return None
+
     def resume_sweep(self, old_row: int) -> Optional[Tuple[int, int]]:
         """Re-enters the sweep after a stuck/disconnect recovery.
 
@@ -1677,9 +2157,7 @@ class ClearWorldRunner:
         holds whitelist targets, never at the old depth.
         """
         self.load_world()
-        y0 = sweep.find_top_row(
-            self._snapshot(), self.targets, self.world_w, self.world_h, self.strength, self.coll
-        )
+        y0 = self._find_top_unblocked_row()
         if y0 is None:
             return None
         # Never resume below the topmost remaining work (never at the old
@@ -1687,12 +2165,26 @@ class ClearWorldRunner:
         # restarting at the topmost remaining row is both legal and cheapest.
         self.sweep_resumes += 1
         self.log(f"resuming sweep after recovery (attempt {self.sweep_resumes}) at topmost row {y0}")
-        entry = self.enter_top_layer(y0)
+        entry = self._find_and_enter_top_layer()
         if entry is None:
             return None
         row = entry[1]
         if self.row_legs_required == 2:
-            direction = 1 if sweep.nearest_edge_column(entry[0], self.world_w) == self.world_w - 1 else -1
+            snap = self._snapshot()
+            left_targets = sum(
+                1 for x in range(0, entry[0])
+                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, row).has_work
+            )
+            right_targets = sum(
+                1 for x in range(entry[0] + 1, self.world_w)
+                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, row).has_work
+            )
+            if left_targets > 0 and right_targets == 0:
+                direction = -1
+            elif right_targets > 0 and left_targets == 0:
+                direction = 1
+            else:
+                direction = 1 if sweep.nearest_edge_column(entry[0], self.world_w) == self.world_w - 1 else -1
         else:
             direction = 1 if entry[0] == 0 else -1
         self.log(
@@ -1739,7 +2231,7 @@ class ClearWorldRunner:
         # x=world_w-1). Prefers a world edge; when neither edge is reachable
         # (bot spawned inside the terrain, e.g. at a white door) the sweep
         # starts from the bot's own column and covers the row in two legs.
-        entry = self.enter_top_layer(y0)
+        entry = self._find_and_enter_top_layer()
         if entry is None:
             self.log("cannot start the sweep — running cleanup only")
             self.cleanup()
@@ -1747,8 +2239,21 @@ class ClearWorldRunner:
 
         row = entry[1]
         if self.row_legs_required == 2:
-            # Mid-world entry: sweep toward the nearer edge first.
-            direction = 1 if sweep.nearest_edge_column(entry[0], self.world_w) == self.world_w - 1 else -1
+            snap = self._snapshot()
+            left_targets = sum(
+                1 for x in range(0, entry[0])
+                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, row).has_work
+            )
+            right_targets = sum(
+                1 for x in range(entry[0] + 1, self.world_w)
+                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, row).has_work
+            )
+            if left_targets > 0 and right_targets == 0:
+                direction = -1
+            elif right_targets > 0 and left_targets == 0:
+                direction = 1
+            else:
+                direction = 1 if sweep.nearest_edge_column(entry[0], self.world_w) == self.world_w - 1 else -1
         else:
             direction = 1 if entry[0] == 0 else -1  # away from the entry edge
         self.last_direction = direction
@@ -1772,6 +2277,13 @@ class ClearWorldRunner:
                 status = self.sweep_row(row, direction)
                 if status == "stopped":
                     break
+                if status == "respawned":
+                    resumed = self.resume_sweep(row)
+                    if resumed is None:
+                        break
+                    row, direction = resumed
+                    self.last_direction = direction
+                    continue
                 if status == "abort":
                     self.log("row could not be finished on a world edge — running the cleanup pass")
                     break
@@ -1876,8 +2388,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--start", choices=["auto", "left", "right"], help="Start edge (default: auto)")
     p.add_argument("--walk-delay", type=int, help="ms per tile step (default: 180)")
     p.add_argument("--punch-delay", type=int, help="ms per punch, hold-button rate (default: 150)")
-    p.add_argument("--max-respawn", type=int, help="Max auto-respawns before giving up (default: 4)")
-    p.add_argument("--collect", action="store_true", help="Enable drop auto-collect (default: off)")
+    p.add_argument("--collect", action="store_true", help="Enable drop auto-collect (default: on)")
+    p.add_argument("--no-collect", action="store_true", help="Disable drop auto-collect")
+    p.add_argument("--collect-interval", type=int, help="ms between auto-collect ticks (default: 150)")
+    p.add_argument("--drop-threshold", type=int, help="Inventory item count to trigger drop next to white door (default: 200)")
+    p.add_argument("--no-drop", action="store_true", help="Disable auto-dropping maxed items next to white door")
     p.add_argument("--no-leave-on-mod", action="store_true", help="Do not auto-leave when a mod appears")
     p.add_argument("--takeover", action="store_true",
                    help="Take over the bot if another local instance holds it "

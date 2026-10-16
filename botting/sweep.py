@@ -136,16 +136,21 @@ def is_exposed(
     x: int,
     y: int,
     world_h: int,
+    blocked: Optional[Mapping[Tuple[int, int], str]] = None,
 ) -> bool:
     """True when (x, y) has punch work and no remaining target above it.
 
     Used by the cleanup pass to respect the layer order: an upper layer is
     always cleared before the layer below it, so a tile may only be picked for
-    cleanup when nothing in the same column above it still needs clearing.
+    cleanup when nothing in the same column above it still needs clearing
+    (ignoring floating sky targets in ``blocked`` that are out of upward punch
+    reach).
     """
     if not plan_for(grid, coll, targets, strength, x, y).has_work:
         return False
     for yy in range(max(0, y)):
+        if blocked is not None and blocked.get((x, yy)) == "unreachable sky target":
+            continue
         if plan_for(grid, coll, targets, strength, x, yy).has_work:
             return False
     return True

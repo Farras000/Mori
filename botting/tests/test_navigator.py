@@ -8,6 +8,7 @@ from botting.navigator import (
     move_reach,
     pick_stand,
     run_horizontal,
+    settle,
     walk_grounded,
 )
 from botting.tests.fake_mori import FakeMoriClient
@@ -165,6 +166,49 @@ class TestNavigator(unittest.TestCase):
         ok = run_horizontal(fake, (0, 20), (5, 20), self.coll_map, 10, 25, walk_ms=1)
         self.assertFalse(ok)
         self.assertEqual(fake.pos_tile(), (0, 20), "bot must not have moved into the chasm")
+
+    def test_move_bfs_refuses_climb_when_ceiling_blocks_headroom(self):
+        # Bot at (1, 21), 1-tile ledge at (2, 21) so target foothold is (2, 20).
+        # Put solid bedrock directly above the bot at (1, 20): diagonal climb
+        # from (1, 21) to (2, 20) must be blocked by the ceiling.
+        grid = {}
+        for x in range(5):
+            grid[(x, 22)] = (2, 0)
+            grid[(x, 20)] = (0, 0)
+            grid[(x, 21)] = (0, 0)
+        grid[(2, 21)] = (2, 0)
+        grid[(3, 21)] = (2, 0)
+        grid[(1, 20)] = (8, 0)  # solid ceiling above (1, 21)
+
+        self.assertIsNone(
+            bfs_move_path(grid, self.coll_map, (1, 21), (2, 20), 100, 60),
+            "must not climb diagonally through a solid ceiling directly overhead",
+        )
+
+    def test_settle_drops_directly_through_open_air(self):
+        # 10 layers of open air from y=5 to y=14.
+        # Bedrock at y=16, so standable foothold is (5, 15).
+        grid = {}
+        for y in range(5, 16):
+            grid[(5, y)] = (0, 0)
+        grid[(5, 16)] = (8, 0)  # Solid bedrock floor below y=15
+
+        fake = FakeMoriClient("TESTWORLD", 10, 25, grid, spawn=(5, 5))
+        # Bot starts floating at (5, 5)
+        ok = settle(fake, self.coll_map, 25, walk_ms=1)
+        self.assertTrue(ok)
+        self.assertEqual(fake.pos_tile(), (5, 15), "bot must land on solid foothold (5, 15)")
+        self.assertEqual(fake.violations, [], "must not violate rules during gravity fall")
+        # Every step in walks must be strictly single-tile (no teleports)
+        expected_steps = [(5, y) for y in range(6, 16)]
+        self.assertTrue(all(step in fake.walks for step in expected_steps), "must visit each tile during descent")
+
+    def test_fake_mori_catches_multi_tile_teleport(self):
+        grid = {(5, 5): (0, 0), (5, 10): (0, 0)}
+        fake = FakeMoriClient("TESTWORLD", 10, 25, grid, spawn=(5, 5))
+        fake.walk_to(5, 10)  # Multi-tile jump down
+        self.assertIn("teleport_walk (5,5)->(5,10)", fake.violations)
+
 
 
 if __name__ == "__main__":

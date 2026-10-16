@@ -71,6 +71,7 @@ class FakeMoriClient(MoriClient):
 
         self.punches: List[Tuple[int, int, int, int, int, int]] = []
         self.breaks: List[Tile] = []
+        self.walks: List[Tuple[int, int]] = []
         self.violations: List[str] = []
         self.respawns = 0
         self.script_stopped = False
@@ -78,6 +79,12 @@ class FakeMoriClient(MoriClient):
         self.disconnected = False
         self.bot_stopped = False
         self._dmg: Dict[Tile, int] = {}
+
+        self.drops: List[Tuple[int, int, Tuple[float, float], Optional[bool]]] = []
+        self.collect_interval: int = 500
+        self.collect_range: int = 3
+        self.collect_blacklist: List[int] = []
+        self.facing_left: Optional[bool] = None
 
     # ── settings / lifecycle (no-ops) ─────────────────────────────────────────
 
@@ -96,7 +103,38 @@ class FakeMoriClient(MoriClient):
 
     def set_auto_leave_on_mod(self, enabled: bool) -> None: ...
 
-    def set_direction(self, facing_left: bool) -> None: ...
+    def set_direction(self, facing_left: bool) -> None:
+        self.facing_left = bool(facing_left)
+        self._facing_left = bool(facing_left)
+
+    def set_collect_interval(self, ms: int) -> None:
+        self.collect_interval = int(ms)
+
+    def set_collect_range(self, tiles: int) -> None:
+        self.collect_range = int(tiles)
+
+    def set_collect_config(self, radius_tiles: int, blacklist: Iterable[int]) -> None:
+        self.collect_range = int(radius_tiles)
+        self.collect_blacklist = list(blacklist)
+
+    def fast_drop(self, item_id: int, count: int) -> None:
+        self.drops.append((int(item_id), int(count), self._pos or (0, 0), self.facing_left))
+        cur = self._inventory.get(int(item_id), 0)
+        self._inventory[int(item_id)] = max(0, cur - int(count))
+
+    def drop(self, item_id: int, count: int) -> None:
+        self.drops.append((int(item_id), int(count), self._pos or (0, 0), self.facing_left))
+        cur = self._inventory.get(int(item_id), 0)
+        self._inventory[int(item_id)] = max(0, cur - int(count))
+
+    def inventory_amounts(self) -> Dict[int, int]:
+        return dict(self._inventory)
+
+    def inventory_active_ids(self) -> Set[int]:
+        return set(self._inventory_active)
+
+    def wait_inventory_change(self, item_id: int, old_amount: int, timeout: float = 1.5) -> bool:
+        return self._inventory.get(int(item_id), 0) != old_amount
 
     def start_events(self) -> None: ...
 
@@ -157,12 +195,7 @@ class FakeMoriClient(MoriClient):
         if (x, y) != (bx, by):
             orthogonal = abs(dx) + abs(dy) == 1
             climb = dy == -1 and abs(dx) == 1  # vanilla auto-step up one tile
-            horizontal_run = (dy == 0 and abs(dx) > 1 and all(
-                is_tile_passable(self._grid.get((cx, by), (0, 0))[0], self.coll_map)
-                and self.is_foothold(cx, by)
-                for cx in range(min(bx, x) + 1, max(bx, x) + 1)
-            ))
-            if not (orthogonal or climb or horizontal_run):
+            if not (orthogonal or climb):
                 self.violations.append(f"teleport_walk ({bx},{by})->({x},{y})")
             if climb and not self.is_foothold(x, y):
                 self.violations.append(f"climb_without_foothold ({x},{y})")
@@ -170,6 +203,10 @@ class FakeMoriClient(MoriClient):
         if not is_tile_passable(fg, self.coll_map):
             self.violations.append(f"walk_into_solid ({x},{y}) fg={fg}")
         self._pos = (float(x), float(y))
+        self.walks.append((x, y))
+
+    def move_to(self, x: int, y: int) -> None:
+        self.walk_to(x, y)
 
     @property
     def coll_map(self) -> Dict[int, int]:

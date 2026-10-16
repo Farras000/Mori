@@ -291,5 +291,53 @@ class CleanupBehaviorTests(unittest.TestCase):
         )
 
 
+class CavePocketAndSkyTests(unittest.TestCase):
+    def test_cave_pocket_below_row_clears_across_and_continues_row(self):
+        # Row 4 is full dirt+bg (x=0..9). Row 5 is dirt+bg EXCEPT (4,5) which
+        # is a natural cave pocket (fg=0, bg=CAVE_BG). Row 6 is bedrock floor.
+        # Previously, stepping into (4,4) dropped the bot into (4,5) while
+        # (5,4) still held solid dirt, abandoning x=5..9 on row 4.
+        width, height = 10, 8
+        grid = {}
+        for x in range(width):
+            grid[(x, 4)] = (DIRT, CAVE_BG)
+            grid[(x, 5)] = (DIRT, CAVE_BG)
+            grid[(x, 6)] = (BEDROCK, 0)
+        grid[(4, 5)] = (0, CAVE_BG)  # cave pocket below row 4 at x=4
+
+        fake, runner = make_runner(width, height, grid, spawn=(2, 3))
+        rc = runner.run()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(fake.violations, [])
+        self.assertEqual(fake.remaining_targets(runner.targets), {})
+
+    def test_floating_sky_block_does_not_abort_sweep_or_poison_column(self):
+        # Main terrain is rows 5..6 (bedrock at row 7), plus an unreachable
+        # floating sky block at (3, 0). The runner must not abort the main
+        # sweep or leave column 3 of rows 5..6 uncleared.
+        width, height = 10, 9
+        grid = {}
+        for x in range(width):
+            grid[(x, 5)] = (DIRT, CAVE_BG)
+            grid[(x, 6)] = (DIRT, CAVE_BG)
+            grid[(x, 7)] = (BEDROCK, 0)
+        grid[(3, 0)] = (DIRT, 0)  # unreachable floating sky block
+
+        fake, runner = make_runner(width, height, grid, spawn=(2, 4))
+        rc = runner.run()
+
+        self.assertEqual(fake.violations, [])
+        # All main terrain tiles on rows 5 and 6 (including column 3!) are cleared
+        for y in (5, 6):
+            for x in range(width):
+                self.assertEqual(
+                    fake.tile(x, y), (0, 0), f"terrain tile ({x},{y}) must be cleared"
+                )
+        # Only the unreachable sky block (3, 0) remains
+        self.assertEqual(fake.remaining_targets(runner.targets), {(3, 0): (DIRT, 0)})
+        self.assertEqual(rc, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -71,6 +71,47 @@ class StandCandidatesPriorityTests(unittest.TestCase):
         # (5, 9) must be selected as fallback
         self.assertIn((5, 9), cands)
 
+    def test_stand_candidates_ranks_same_row_front_even_when_bot_is_above(self):
+        """When bot is at y=33 and target is at (45, 34), same-row in-front foothold
+        at (44, 34) must rank ahead of standing above at (43, 33) or (45, 33).
+        """
+        grid = {}
+        world_w, world_h = 60, 60
+        coll = {2: 1}  # dirt solid
+        for x in range(world_w):
+            grid[(x, 35)] = (2, 0)  # solid floor at y=35
+        # row 34 has air at 44, target at 45
+        grid[(44, 34)] = (0, 0)
+        grid[(45, 34)] = (2, 14)  # target block
+        grid[(43, 34)] = (2, 0)   # solid floor for (43, 33)
+        grid[(43, 33)] = (0, 0)   # air foothold above
+
+        # Bot is at (43, 33) - above the target row
+        cands = nav.stand_candidates(grid, coll, tx=45, ty=34, bx=43, by=33, world_w=world_w, world_h=world_h, direction=1)
+        self.assertIn((44, 34), cands)
+        # (44, 34) is on the same row, in front of the target: MUST be ranked first!
+        self.assertEqual(cands[0], (44, 34), "Same-row front foothold must be preferred over footholds above the target")
+
+    def test_stand_candidates_direction_priority(self):
+        """Sweeping left-to-right (dir=1) prefers (tx - 1, ty).
+        Sweeping right-to-left (dir=-1) prefers (tx + 1, ty).
+        """
+        grid = {}
+        world_w, world_h = 60, 60
+        coll = {2: 1}
+        for x in range(world_w):
+            grid[(x, 35)] = (2, 0)
+            grid[(x, 34)] = (0, 0)
+        grid[(45, 34)] = (2, 14)  # target block
+
+        # Sweep right: approaching (45, 34) from left
+        cands_right = nav.stand_candidates(grid, coll, tx=45, ty=34, bx=40, by=34, world_w=world_w, world_h=world_h, direction=1)
+        self.assertEqual(cands_right[0], (44, 34), "Left-to-right sweep must stand at (44, 34) in front of block")
+
+        # Sweep left: approaching (45, 34) from right
+        cands_left = nav.stand_candidates(grid, coll, tx=45, ty=34, bx=50, by=34, world_w=world_w, world_h=world_h, direction=-1)
+        self.assertEqual(cands_left[0], (46, 34), "Right-to-left sweep must stand at (46, 34) in front of block")
+
 
 class SettleDirectDropTests(unittest.TestCase):
     def test_settle_drops_step_by_step_to_landing_floor(self):

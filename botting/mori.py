@@ -90,11 +90,25 @@ class MoriClient:
         self._pos: Optional[Tuple[float, float]] = None
         self._status: str = ""
         self._world_gen: int = 0  # bumped whenever the world changes
+        self._facing_left: Optional[bool] = None
+
+        self._inventory: Dict[int, int] = {}
+        self._inventory_active: Set[int] = set()
+        self._inventory_size: int = 0
+        self._inventory_gen: int = 0
 
         self._stop = threading.Event()
         self._events_thread: Optional[threading.Thread] = None
 
         self.delays = {"walk_ms": 500, "place_ms": 500}
+
+    @property
+    def events_active(self) -> bool:
+        return (
+            self._events_thread is not None
+            and self._events_thread.is_alive()
+            and not self._stop.is_set()
+        )
 
     # ── logging ───────────────────────────────────────────────────────────────
 
@@ -228,6 +242,47 @@ class MoriClient:
             pb.SetBoolRequest(bot=self.bot_ref, enabled=bool(enabled)), metadata=self.metadata
         )
 
+    def set_collect_interval(self, ms: int) -> None:
+        """Sets the interval in ms between auto-collect ticks (Mori default 500)."""
+        self.stub.SetCollectInterval(
+            pb.SetUintRequest(bot=self.bot_ref, value=int(ms)), metadata=self.metadata
+        )
+
+    def set_collect_range(self, tiles: int) -> None:
+        """Sets auto-collect radius in tiles (1-5)."""
+        self.stub.SetCollectRange(
+            pb.SetUintRequest(bot=self.bot_ref, value=int(tiles)), metadata=self.metadata
+        )
+
+    def set_collect_config(self, radius_tiles: int, blacklist: Sequence[int]) -> None:
+        """Configures collect radius and excluded item IDs in a single RPC."""
+        self.stub.SetCollectConfig(
+            pb.SetCollectConfigRequest(
+                bot=self.bot_ref,
+                radius_tiles=int(radius_tiles),
+                blacklist=[int(x) for x in blacklist],
+            ),
+            metadata=self.metadata,
+        )
+
+    def fast_drop(self, item_id: int, count: int) -> None:
+        """Drops item_id in front of the bot instantly (single dialog_return packet)."""
+        self.stub.FastDrop(
+            pb.InventoryActionRequest(
+                bot=self.bot_ref, item_id=int(item_id), count=int(count)
+            ),
+            metadata=self.metadata,
+        )
+
+    def drop(self, item_id: int, count: int) -> None:
+        """Drops item_id using standard dialog callback flow."""
+        self.stub.Drop(
+            pb.InventoryActionRequest(
+                bot=self.bot_ref, item_id=int(item_id), count=int(count)
+            ),
+            metadata=self.metadata,
+        )
+
     # ── queries ───────────────────────────────────────────────────────────────
 
     def get_world(self):
@@ -258,6 +313,46 @@ class MoriClient:
         """Fetches the bot's inventory (InvSlot items with item_id, amount)."""
         return self.stub.GetInventory(self.bot_ref, metadata=self.metadata)
 
+    def inventory_amounts(self) -> Dict[int, int]:
+        """Returns snapshot of item_id -> amount from cache or live query."""
+        with self._lock:
+            if self.events_active and self._inventory:
+                return dict(self._inventory)
+        try:
+            inv = self.get_inventory()
+            out: Dict[int, int] = {}
+            active: Set[int] = set()
+            for item in getattr(inv, "items", []):
+                out[int(item.item_id)] = int(item.amount)
+                if getattr(item, "is_active", False):
+                    active.add(int(item.item_id))
+            with self._lock:
+                self._inventory = dict(out)
+                self._inventory_active = active
+                self._inventory_size = int(getattr(inv, "size", 0))
+            return out
+        except grpc.RpcError:
+            with self._lock:
+                return dict(self._inventory)
+
+    def inventory_active_ids(self) -> Set[int]:
+        """Returns the set of item IDs currently active/worn by the bot."""
+        with self._lock:
+            return set(self._inventory_active)
+
+    def wait_inventory_change(self, item_id: int, old_amount: int, timeout: float = 1.5) -> bool:
+        """Waits for the amount of item_id in inventory to change (e.g. after a drop)."""
+        deadline = time.time() + max(0.1, timeout)
+        with self._cond:
+            while time.time() < deadline:
+                cur = self._inventory.get(int(item_id), 0)
+                if cur != old_amount:
+                    return True
+                rem = max(0.005, deadline - time.time())
+                self._cond.wait(timeout=min(0.05, rem))
+        amounts = self.inventory_amounts()
+        return amounts.get(int(item_id), 0) != old_amount
+
     def is_in_world(self, name: str = "") -> bool:
         req = (
             pb.IsInWorldRequest(bot=self.bot_ref, name=name, has_name=True)
@@ -281,6 +376,8 @@ class MoriClient:
         The server paces consecutive punches by ``place_ms``; sending several
         of these back-to-back emulates holding the punch button.
         """
+        if dx != 0:
+            self._facing_left = int(dx) < 0
         self.stub.Hit(pb.TileActionRequest(bot=self.bot_ref, x=int(dx), y=int(dy)), metadata=self.metadata)
 
     def place(self, dx: int, dy: int, item_id: int) -> None:
@@ -293,11 +390,23 @@ class MoriClient:
         )
 
     def walk_to(self, x: int, y: int) -> None:
-        self.stub.WalkTo(pb.MoveToRequest(bot=self.bot_ref, x=int(x), y=int(y)), metadata=self.metadata)
+        """Direct single-tile step (uses MoveTo on the server to bypass server A*)."""
+        pos = self.pos_tile()
+        if pos is not None:
+            dx = int(x) - pos[0]
+            dy = int(y) - pos[1]
+            if (int(x), int(y)) != pos:
+                orthogonal = abs(dx) + abs(dy) == 1
+                climb = dy == -1 and abs(dx) == 1
+                if not (orthogonal or climb):
+                    print(f"[Mori] WARNING: Illegal multi-tile walk_to requested ({pos[0]},{pos[1]}) -> ({x},{y})")
+            if int(x) != pos[0]:
+                self._facing_left = int(x) < pos[0]
+        self.stub.MoveTo(pb.MoveToRequest(bot=self.bot_ref, x=int(x), y=int(y)), metadata=self.metadata)
 
     def move_to(self, x: int, y: int) -> None:
         """Direct single-tile move without pathfinding."""
-        self.stub.MoveTo(pb.MoveToRequest(bot=self.bot_ref, x=int(x), y=int(y)), metadata=self.metadata)
+        self.walk_to(x, y)
 
     def plant_footing(self) -> None:
         """Sends a standing state packet with +2.0px vector_y offset to eliminate visual floating."""
@@ -311,6 +420,8 @@ class MoriClient:
                 type=0,
                 vec_x=float(pos[0] * 32),
                 vec_y=float(pos[1] * 32 + 2),
+                int_x=-1,
+                int_y=-1,
                 flags=0x20,
             )
             self.stub.SendRaw(pb.SendRawRequest(bot=self.bot_ref, packet=pkt), metadata=self.metadata)
@@ -318,14 +429,20 @@ class MoriClient:
             pass
 
     def set_direction(self, facing_left: bool) -> None:
+        want = bool(facing_left)
+        if self._facing_left is not None and self._facing_left == want:
+            return
         self.stub.SetDirection(
-            pb.SetDirectionRequest(bot=self.bot_ref, facing_left=bool(facing_left)), metadata=self.metadata
+            pb.SetDirectionRequest(bot=self.bot_ref, facing_left=want), metadata=self.metadata
         )
+        self._facing_left = want
 
     def respawn(self) -> None:
+        self._facing_left = None
         self.stub.Respawn(self.bot_ref, metadata=self.metadata)
 
     def warp(self, name: str, door_id: str = "") -> None:
+        self._facing_left = None
         self.stub.Warp(
             pb.WarpRequest(bot=self.bot_ref, name=name, id=door_id), metadata=self.metadata
         )
@@ -413,43 +530,70 @@ class MoriClient:
     # ── waiting helpers ───────────────────────────────────────────────────────
 
     def wait_arrival(self, x: int, y: int, timeout: float = 1.5) -> bool:
-        """Waits until the bot's authoritative position reaches tile (x, y)."""
-        deadline = time.time() + max(0.1, timeout)
+        """Waits until the bot's authoritative position reaches tile (x, y).
+
+        Wakes immediately (<1ms) on ``bot_move`` events via ``self._cond``,
+        with periodic ``IsInTile`` RPC fallback.
+        """
+        tx, ty = int(x), int(y)
+        deadline = time.time() + max(0.05, timeout)
+        last_rpc = time.time() if self.events_active else 0.0
         while True:
             if self._stop.is_set():
                 return False
-            try:
-                if self.is_in_tile(x, y):
-                    with self._lock:
-                        self._pos = (float(x), float(y))
-                    return True
-            except grpc.RpcError:
-                pass
-            if time.time() >= deadline:
+            if self.events_active and self.pos_tile() == (tx, ty):
+                return True
+            now = time.time()
+            if not self.events_active or (now - last_rpc) >= 0.08:
+                last_rpc = now
+                try:
+                    if self.is_in_tile(tx, ty):
+                        with self._lock:
+                            self._pos = (float(tx), float(ty))
+                        return True
+                except grpc.RpcError:
+                    pass
+            rem = deadline - time.time()
+            if rem <= 0:
                 return False
-            time.sleep(0.08)
+            with self._cond:
+                if self.events_active and self._pos is not None:
+                    if (int(round(self._pos[0])), int(round(self._pos[1]))) == (tx, ty):
+                        return True
+                self._cond.wait(timeout=min(0.02, rem))
 
     def wait_tile_cleared(self, x: int, y: int, is_target, timeout: float = 2.0) -> bool:
         """Waits until tile (x, y) no longer contains a target, or timeout.
 
-        Uses the event-fed cache first and falls back to live GetTile polling.
+        Wakes immediately (<1ms) on ``tile_update`` events via ``self._cond``
+        and falls back to periodic live ``GetTile`` checks.
         """
-        deadline = time.time() + max(0.1, timeout)
+        tx, ty = int(x), int(y)
+        deadline = time.time() + max(0.05, timeout)
+        last_rpc = time.time() if self.events_active else 0.0
         while True:
             if self._stop.is_set():
                 return False
-            t = self.grid_get(x, y)
+            t = self.grid_get(tx, ty)
             if t is not None and not is_target(t):
                 return True
-            try:
-                lt = self.get_tile(x, y)
-            except grpc.RpcError:
-                lt = None
-            if lt is not None and not is_target(lt):
-                return True
-            if time.time() >= deadline:
+            now = time.time()
+            if t is None or not self.events_active or (now - last_rpc) >= 0.12:
+                last_rpc = now
+                try:
+                    lt = self.get_tile(tx, ty)
+                except grpc.RpcError:
+                    lt = None
+                if lt is not None and not is_target(lt):
+                    return True
+            rem = deadline - time.time()
+            if rem <= 0:
                 return False
-            time.sleep(0.10)
+            with self._cond:
+                t2 = self._grid.get((tx, ty))
+                if isinstance(t2, tuple) and not is_target(t2):
+                    return True
+                self._cond.wait(timeout=min(0.02, rem))
 
     def wait_world(self, name: str, timeout: float = 20.0) -> bool:
         deadline = time.time() + max(0.5, timeout)
@@ -524,9 +668,23 @@ class MoriClient:
             with self._cond:
                 self._status = ev.bot_status.status
                 self._cond.notify_all()
+        elif which == "inventory_update":
+            iu = ev.inventory_update
+            with self._cond:
+                self._inventory_size = int(getattr(iu, "inventory_size", 0))
+                self._inventory.clear()
+                self._inventory_active.clear()
+                for item in getattr(iu, "items", []):
+                    self._inventory[int(item.item_id)] = int(item.amount)
+                    if getattr(item, "is_active", False):
+                        self._inventory_active.add(int(item.item_id))
+                self._inventory_gen += 1
+                self._cond.notify_all()
         elif which == "world_loaded":
             wl = ev.world_loaded
             with self._cond:
+                if getattr(wl, "tiles", None):
+                    self._grid = {(t.x, t.y): (t.fg_item_id, t.bg_item_id) for t in wl.tiles}
                 self._world_name = wl.name
                 if wl.width:
                     self._world_w = wl.width

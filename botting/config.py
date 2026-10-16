@@ -96,8 +96,11 @@ class BotConfig:
     world: str = ""            # optional: warp to this world first
     door: str = ""             # optional door id for Warp
 
-    # Safety / recovery.
-    auto_collect: bool = False
+    # Safety / recovery / inventory.
+    auto_collect: bool = True
+    collect_interval_ms: int = 150
+    drop_threshold: int = 200
+    drop_enabled: bool = True
     leave_on_mod: bool = True
     max_respawn: int = 4
     max_punch_rounds: int = 3
@@ -158,6 +161,11 @@ class BotConfig:
         start_edge = os.environ.get("START_EDGE", "auto").lower()
         world = os.environ.get("WORLD", "")
 
+        collect_interval = int(os.environ.get("COLLECT_INTERVAL_MS", "150"))
+        drop_threshold = int(os.environ.get("DROP_THRESHOLD", "200"))
+        auto_collect = os.environ.get("AUTO_COLLECT", "1").lower() not in {"0", "false", "no"}
+        drop_enabled = os.environ.get("DROP_ENABLED", "1").lower() not in {"0", "false", "no"}
+
         if args:
             if getattr(args, "host", None):
                 host = args.host
@@ -175,10 +183,20 @@ class BotConfig:
                 walk_delay = args.walk_delay
             if getattr(args, "punch_delay", None):
                 punch_delay = args.punch_delay
+            if getattr(args, "collect_interval", None):
+                collect_interval = args.collect_interval
+            if getattr(args, "drop_threshold", None):
+                drop_threshold = args.drop_threshold
             if getattr(args, "blocks", None):
                 parsed = _parse_id_list(args.blocks)
                 if parsed:
                     target_ids = parsed
+            if getattr(args, "no_collect", False):
+                auto_collect = False
+            elif getattr(args, "collect", False):
+                auto_collect = True
+            if getattr(args, "no_drop", False):
+                drop_enabled = False
 
         if start_edge not in {"auto", "left", "right"}:
             start_edge = "auto"
@@ -194,7 +212,10 @@ class BotConfig:
             start_edge=start_edge,
             world=world,
             door=os.environ.get("DOOR", ""),
-            auto_collect=False if not args else bool(getattr(args, "collect", False)),
+            auto_collect=auto_collect,
+            collect_interval_ms=int(collect_interval),
+            drop_threshold=int(drop_threshold),
+            drop_enabled=drop_enabled,
             leave_on_mod=True if not args else not bool(getattr(args, "no_leave_on_mod", False)),
             max_respawn=int(getattr(args, "max_respawn", None) or 4) if args else 4,
             bot_id=bot_id,
