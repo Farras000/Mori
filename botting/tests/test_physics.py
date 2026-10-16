@@ -9,6 +9,7 @@ from botting.physics import (
     is_tile_passable,
     is_unbreakable_obstacle,
     is_within_punch_range,
+    plan_punch,
     relative_offset,
 )
 
@@ -118,6 +119,52 @@ class TestPhysics(unittest.TestCase):
         # World lock or Bedrock is NOT a target block
         self.assertFalse(is_target_block((242, 0), DEFAULT_TARGET_BLOCKS))
         self.assertFalse(is_target_block((8, 0), DEFAULT_TARGET_BLOCKS))
+
+
+class TestPunchPlanning(unittest.TestCase):
+    """Whitelist punch rules: only dirt/lava/rock/cave-bg are ever punched."""
+
+    strength = {2: 3, 4: 4, 10: 10, 14: 3}
+
+    def test_dirt_and_bg_hits(self):
+        plan = plan_punch(2, 14, DEFAULT_TARGET_BLOCKS, self.strength)
+        self.assertTrue(plan.allowed)
+        self.assertEqual(plan.hits, 6)  # dirt 3 + cave bg 3
+
+    def test_bg_only_hits(self):
+        plan = plan_punch(0, 14, DEFAULT_TARGET_BLOCKS, self.strength)
+        self.assertTrue(plan.allowed)
+        self.assertEqual(plan.hits, 3)
+
+    def test_rock_hits(self):
+        plan = plan_punch(10, 0, DEFAULT_TARGET_BLOCKS, self.strength)
+        self.assertTrue(plan.allowed)
+        self.assertEqual(plan.hits, 10)
+
+    def test_world_lock_never_punched(self):
+        plan = plan_punch(242, 14, DEFAULT_TARGET_BLOCKS, self.strength)
+        self.assertFalse(plan.allowed)
+        self.assertFalse(plan.has_work)
+        self.assertTrue(plan.reason.startswith("fg_protected"))
+
+    def test_bedrock_never_punched(self):
+        plan = plan_punch(8, 14, DEFAULT_TARGET_BLOCKS, self.strength)
+        self.assertFalse(plan.allowed)
+
+    def test_sign_never_punched(self):
+        plan = plan_punch(20, 14, DEFAULT_TARGET_BLOCKS, self.strength)
+        self.assertFalse(plan.allowed)
+        self.assertTrue(plan.reason.startswith("fg_protected"))
+
+    def test_clear_tile_has_no_work(self):
+        plan = plan_punch(0, 0, DEFAULT_TARGET_BLOCKS, self.strength)
+        self.assertFalse(plan.allowed)
+        self.assertEqual(plan.hits, 0)
+        self.assertEqual(plan.reason, "no_target")
+
+    def test_default_strength_fallback(self):
+        plan = plan_punch(2, 14, DEFAULT_TARGET_BLOCKS, strength_map={})
+        self.assertEqual(plan.hits, 6)  # falls back to DEFAULT_STRENGTH (3 + 3)
 
 
 if __name__ == "__main__":

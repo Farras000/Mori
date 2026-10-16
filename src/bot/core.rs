@@ -2077,7 +2077,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
         let facing_left = target_x < self.pos_x;
         self.pos_x = target_x;
-        self.pos_y = target_y;
+        self.pos_y = target_y + 2.0;
 
         {
             let mut s = self.state.write().unwrap();

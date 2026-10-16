@@ -1,7 +1,16 @@
-"""Unit tests for grounded BFS pathfinding and foothold selection."""
+"""Unit tests for grounded BFS pathfinding, move-graph routing and foothold selection."""
 
 import unittest
-from botting.navigator import bfs_grounded_path, pick_stand
+from botting.navigator import (
+    bfs_grounded_path,
+    bfs_move_path,
+    fall_landing,
+    move_reach,
+    pick_stand,
+    run_horizontal,
+    walk_grounded,
+)
+from botting.tests.fake_mori import FakeMoriClient
 
 
 class TestNavigator(unittest.TestCase):
@@ -60,6 +69,102 @@ class TestNavigator(unittest.TestCase):
         stand = pick_stand(grid, self.coll_map, 10, 20, 8, 19, 100, 60)
         self.assertIsNotNone(stand)
         self.assertEqual(stand, (9, 19))  # Closest foothold to bot at (8, 19)
+
+    # ── move graph (walk / fall / climb) ──────────────────────────────────────
+
+    def build_pit_grid(self):
+        """Top layer (row 21) with a live-RUKOALICANTE-shaped pit at x=3..5:
+        1-deep shoulders at x=3 and x=5, 2-deep middle at x=4.
+        """
+        grid = {}
+        for x in range(7):
+            for y in range(21, 24):
+                grid[(x, y)] = (2, 0)
+            grid[(x, 20)] = (0, 0)
+        grid[(3, 21)] = (0, 0)
+        grid[(5, 21)] = (0, 0)
+        grid[(4, 21)] = (0, 0)
+        grid[(4, 22)] = (0, 0)
+        return grid
+
+    def test_move_bfs_crosses_pit_where_grounded_bfs_cannot(self):
+        grid = self.build_pit_grid()
+
+        # Plain walking can never cross: the (3,20) step has no floor.
+        self.assertIsNone(
+            bfs_grounded_path(grid, self.coll_map, (2, 20), (6, 20), 100, 60)
+        )
+
+        path = bfs_move_path(grid, self.coll_map, (2, 20), (6, 20), 100, 60)
+        self.assertIsNotNone(path, "the pit must be crossable with fall + climb")
+        # Drop into the 1-deep shoulder, fall again into the 2-deep middle,
+        # then climb back out shoulder by shoulder — exactly the live shape.
+        self.assertEqual(
+            path, [(2, 20), (3, 21), (4, 22), (5, 21), (6, 20)]
+        )
+
+    def test_fall_landing_scans_down_the_column(self):
+        grid = self.build_pit_grid()
+        self.assertEqual(fall_landing(grid, self.coll_map, 4, 20, 100, 60), (4, 22))
+        self.assertEqual(fall_landing(grid, self.coll_map, 5, 20, 100, 60), (5, 21))
+        # Solid ground: the tile itself is standable.
+        self.assertEqual(fall_landing(grid, self.coll_map, 0, 20, 100, 60), (0, 20))
+
+    def test_move_bfs_climbs_a_one_tile_ledge(self):
+        grid = {}
+        for x in range(5):
+            grid[(x, 22)] = (2, 0)
+            grid[(x, 20)] = (0, 0)
+            grid[(x, 21)] = (0, 0)
+        grid[(2, 21)] = (2, 0)  # 1-tile-high ledge: its top row is 20
+        grid[(3, 21)] = (2, 0)
+
+        # (2, 20) is a foothold on the ledge but not orthogonally adjacent to
+        # (1, 21): only the vanilla auto-step up can make the connection.
+        self.assertIsNone(bfs_grounded_path(grid, self.coll_map, (1, 21), (2, 20), 100, 60))
+        self.assertEqual(
+            bfs_move_path(grid, self.coll_map, (1, 21), (2, 20), 100, 60),
+            [(1, 21), (2, 20)],
+        )
+
+    def test_move_reach_uses_falls_and_climbs(self):
+        grid = self.build_pit_grid()
+        fake = FakeMoriClient("TESTWORLD", 7, 25, grid, spawn=(1, 20))
+        reach = move_reach(fake, fake.coll_map, 7, 25)
+        # Walk left along the top row, and reach the pit floor via fall+climb.
+        self.assertIn((0, 20), reach)
+        self.assertIn((2, 20), reach)
+        self.assertIn((4, 22), reach)
+        self.assertIn((6, 20), reach)
+
+    def test_run_horizontal_smooth_stride(self):
+        # Continuous platform at y=20 with dirt at y=21
+        grid = {}
+        for x in range(10):
+            grid[(x, 20)] = (0, 0)
+            grid[(x, 21)] = (2, 0)
+        fake = FakeMoriClient("TESTWORLD", 10, 25, grid, spawn=(0, 20))
+
+        # Run 5 tiles to the right in a single continuous stride
+        ok = run_horizontal(fake, (0, 20), (5, 20), self.coll_map, 10, 25, walk_ms=1)
+        self.assertTrue(ok)
+        self.assertEqual(fake.pos_tile(), (5, 20))
+        self.assertEqual(fake.violations, [], "must not violate any movement rules during horizontal run")
+
+    def test_run_horizontal_refuses_chasm(self):
+        # Gap at x=3: air below
+        grid = {}
+        for x in [0, 1, 2, 4, 5]:
+            grid[(x, 20)] = (0, 0)
+            grid[(x, 21)] = (2, 0)
+        grid[(3, 20)] = (0, 0)
+        grid[(3, 21)] = (0, 0)
+        fake = FakeMoriClient("TESTWORLD", 10, 25, grid, spawn=(0, 20))
+
+        # Run across chasm must refuse
+        ok = run_horizontal(fake, (0, 20), (5, 20), self.coll_map, 10, 25, walk_ms=1)
+        self.assertFalse(ok)
+        self.assertEqual(fake.pos_tile(), (0, 20), "bot must not have moved into the chasm")
 
 
 if __name__ == "__main__":
