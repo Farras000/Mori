@@ -1,7 +1,7 @@
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { moriWs, type TileData } from './ws'
-import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord } from './api'
+import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo } from './api'
 import { api } from './api'
 
 export interface TrackInfo {
@@ -35,6 +35,7 @@ export interface LiveBot {
   collect_radius_tiles: number
   collect_blacklist: number[]
   auto_reconnect: boolean
+  proxy: ProxyInfo | null
 }
 
 export function makeBot(id: number, username: string): LiveBot {
@@ -52,6 +53,7 @@ export function makeBot(id: number, username: string): LiveBot {
     collect_radius_tiles: 3,
     collect_blacklist: [],
     auto_reconnect: true,
+    proxy: null,
   }
 }
 
@@ -130,6 +132,16 @@ export function useMoriStore() {
 
       ['BotDelays', (d: { bot_id: number; place_ms: number; walk_ms: number; twofa_secs: number; server_overload_secs: number; too_many_logins_secs: number; maintenance_secs: number }) =>
         setBots((m) => patchBot(m, d.bot_id, { delays: { place_ms: d.place_ms, walk_ms: d.walk_ms, twofa_secs: d.twofa_secs, server_overload_secs: d.server_overload_secs, too_many_logins_secs: d.too_many_logins_secs, maintenance_secs: d.maintenance_secs } }))],
+
+      ['BotProxy', (d: { bot_id: number; proxy_host: string | null; proxy_port: number | null; proxy_username?: string | null; proxy_password?: string | null }) =>
+        setBots((m) => patchBot(m, d.bot_id, {
+          proxy: d.proxy_host && d.proxy_port ? {
+            host: d.proxy_host,
+            port: d.proxy_port,
+            ...(d.proxy_username ? { username: d.proxy_username } : {}),
+            ...(d.proxy_password ? { password: d.proxy_password } : {}),
+          } : null,
+        }))],
 
       ['BotTrackInfo', (d: { bot_id: number; level: number; grow_id: number; install_date: number; global_playtime: number; awesomeness: number }) =>
         setBots((m) => patchBot(m, d.bot_id, {

@@ -34,7 +34,7 @@ import {
 import { parseGTColors } from "@/lib/gt-colors";
 import { Minimap } from "@/components/minimap";
 import { cn } from "@/lib/utils";
-import type { BotStatus } from "@/lib/api";
+import type { BotStatus, ProxyInfo } from "@/lib/api";
 
 const STATUS_DOT: Record<BotStatus, string> = {
   connecting: "bg-yellow-500",
@@ -87,6 +87,7 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
           collect_radius_tiles: s.collect_radius_tiles,
           collect_blacklist: s.collect_blacklist,
           auto_reconnect: s.auto_reconnect,
+          proxy: s.proxy ?? null,
         });
       });
     })
@@ -193,6 +194,8 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
             delays={bot.delays}
             autoCollect={bot.auto_collect}
             autoReconnect={bot.auto_reconnect}
+            proxy={bot.proxy}
+            botStatus={bot.status}
           />
         </TabsContent>
       </Tabs>
@@ -608,11 +611,40 @@ function ScriptTab({ botId }: { botId: number }) {
 
 // ── Config tab ──────────────────────────────────────────────────────────────
 
+function formatProxy(p: ProxyInfo | null | undefined): string {
+  if (!p) return "";
+  const base = `${p.host}:${p.port}`;
+  if (p.username) return p.password ? `${base}:${p.username}:${p.password}` : `${base}:${p.username}`;
+  return base;
+}
+
+function parseProxyStr(raw: string):
+  | { empty: true }
+  | { empty: false; body: { proxy_host: string; proxy_port: number; proxy_username?: string; proxy_password?: string } }
+  | { error: string } {
+  const s = raw.trim();
+  if (!s) return { empty: true };
+  const parts = s.split(":");
+  if (parts.length < 2 || !parts[0].trim()) return { error: "Want host:port[:user[:pass]]" };
+  const port = parseInt(parts[1].trim(), 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return { error: "Port must be 1–65535" };
+  const body: { proxy_host: string; proxy_port: number; proxy_username?: string; proxy_password?: string } = {
+    proxy_host: parts[0].trim(),
+    proxy_port: port,
+  };
+  if (parts[2]?.trim()) body.proxy_username = parts[2].trim();
+  const pass = parts.slice(3).join(":").trim();
+  if (pass) body.proxy_password = pass;
+  return { empty: false, body };
+}
+
 function ConfigTab({
   botId,
   delays,
   autoCollect,
   autoReconnect,
+  proxy,
+  botStatus,
 }: {
   botId: number;
   delays: {
@@ -625,6 +657,8 @@ function ConfigTab({
   };
   autoCollect: boolean;
   autoReconnect: boolean;
+  proxy: ProxyInfo | null;
+  botStatus: BotStatus;
 }) {
   const [placeMs, setPlaceMs] = useState(String(delays.place_ms));
   const [walkMs, setWalkMs] = useState(String(delays.walk_ms));
@@ -678,6 +712,107 @@ function ConfigTab({
       setTimeout(() => setStatus(""), 2000);
     } catch {
       setStatus("Error");
+    }
+  }
+
+  // ── Proxy (disconnect-first) ──
+  const [proxyStr, setProxyStr] = useState(() => formatProxy(proxy));
+  const [proxyStatus, setProxyStatus] = useState("");
+  const [proxyBusy, setProxyBusy] = useState(false);
+  const [proxyTesting, setProxyTesting] = useState(false);
+
+  useEffect(() => {
+    setProxyStr(formatProxy(proxy));
+  }, [proxy?.host, proxy?.port, proxy?.username, proxy?.password]);
+
+  const needsDisconnect = botStatus !== "disconnected";
+
+  async function waitForDisconnected(timeoutMs = 10000) {
+    const start = Date.now();
+    for (;;) {
+      try {
+        const s = await api.getBotState(botId);
+        if (s.status === "disconnected") return true;
+      } catch {
+        // keep polling
+      }
+      if (Date.now() - start > timeoutMs) return false;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  async function saveProxy() {
+    const parsed = parseProxyStr(proxyStr);
+    if ("error" in parsed) {
+      setProxyStatus(parsed.error);
+      return;
+    }
+    setProxyBusy(true);
+    setProxyStatus("");
+    try {
+      // Guarantee: bot must be offline before the proxy is swapped so the
+      // old UDP-via-proxy socket is torn down first.
+      if (needsDisconnect) {
+        setProxyStatus("Disconnecting…");
+        await api.sendCmd(botId, { type: "disconnect" });
+        const offline = await waitForDisconnected();
+        if (!offline) {
+          setProxyStatus("Disconnect timed out — try again");
+          return;
+        }
+      }
+      if (parsed.empty) {
+        await api.sendCmd(botId, { type: "set_proxy" });
+      } else {
+        await api.sendCmd(botId, { type: "set_proxy", ...parsed.body });
+      }
+      const next: ProxyInfo | null = parsed.empty
+        ? null
+        : {
+            host: parsed.body.proxy_host,
+            port: parsed.body.proxy_port,
+            ...(parsed.body.proxy_username ? { username: parsed.body.proxy_username } : {}),
+            ...(parsed.body.proxy_password ? { password: parsed.body.proxy_password } : {}),
+          };
+      setBots((m) => {
+        const bot = m.get(botId);
+        if (!bot) return m;
+        return new Map(m).set(botId, { ...bot, proxy: next });
+      });
+      setProxyStatus("Saved — reconnect to apply");
+      setTimeout(() => setProxyStatus(""), 4000);
+    } catch {
+      setProxyStatus("Error");
+    } finally {
+      setProxyBusy(false);
+    }
+  }
+
+  async function testProxy() {
+    const parsed = parseProxyStr(proxyStr);
+    if ("error" in parsed) {
+      setProxyStatus(parsed.error);
+      return;
+    }
+    if (parsed.empty) {
+      setProxyStatus("Enter a proxy to test");
+      return;
+    }
+    setProxyTesting(true);
+    setProxyStatus("Testing…");
+    try {
+      const r = await api.testProxy({
+        proxy_host: parsed.body.proxy_host,
+        proxy_port: parsed.body.proxy_port,
+        ...(parsed.body.proxy_username ? { proxy_username: parsed.body.proxy_username } : {}),
+        ...(parsed.body.proxy_password ? { proxy_password: parsed.body.proxy_password } : {}),
+      });
+      const failed = [r.socks5, r.server_data, r.enet].find((c) => !c.ok);
+      setProxyStatus(failed ? `Failed: ${failed.error ?? "check failed"}` : "All checks passed");
+    } catch {
+      setProxyStatus("Test failed");
+    } finally {
+      setProxyTesting(false);
     }
   }
 
@@ -838,6 +973,42 @@ function ConfigTab({
           Auto-reconnect on disconnect
         </span>
       </label>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Proxy
+      </p>
+      <div className="flex flex-col gap-2">
+        <span className="text-xs text-muted-foreground">
+          Current: {proxy ? formatProxy(proxy) : "direct (no proxy)"}
+        </span>
+        <Input
+          placeholder="host:port:user:pass — empty = direct"
+          value={proxyStr}
+          onChange={(e) => setProxyStr(e.target.value)}
+          className="h-7 text-xs font-mono"
+          spellCheck={false}
+        />
+        {needsDisconnect && (
+          <p className="text-[11px] text-amber-500 leading-snug">
+            Bot is {botStatus} — saving will disconnect it first. Reconnect afterwards to use the new proxy.
+          </p>
+        )}
+        <div className="flex items-center gap-2">
+          <Button size="sm" className="text-xs" onClick={saveProxy} disabled={proxyBusy}>
+            {proxyBusy ? "Saving…" : needsDisconnect ? "Disconnect & Save" : "Save proxy"}
+          </Button>
+          <Button size="sm" variant="outline" className="text-xs" onClick={testProxy} disabled={proxyTesting || proxyBusy}>
+            {proxyTesting ? "Testing…" : "Test"}
+          </Button>
+          {!needsDisconnect && (
+            <Button size="sm" variant="outline" className="text-xs" onClick={() => api.sendCmd(botId, { type: "reconnect" })}>
+              Reconnect
+            </Button>
+          )}
+          {proxyStatus && (
+            <span className="text-xs text-muted-foreground">{proxyStatus}</span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

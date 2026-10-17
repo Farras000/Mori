@@ -1,15 +1,28 @@
 services:
   mori:
     build: .
+    env_file:
+      - .env
     restart: unless-stopped
     ports:
       - "3003:3000"
       - "50051:50051"
     volumes:
+      # Persists data/user.json + data/google_oauth_tokens.jsonl (0600).
       - mori-data:/app/data
+    extra_hosts:
+      # Lets the container reach a CloakBrowser manager running on the host
+      # via http://host.docker.internal:8080/...
+      - "host.docker.internal:host-gateway"
     environment:
       - MORI_GRPC_TOKEN=${MORI_GRPC_TOKEN:-}
       - MORI_GRPC_ADDR=${MORI_GRPC_ADDR:-0.0.0.0:50051}
+      # Google OAuth browser leg: CloakBrowser profile CDP base URL.
+      # Unset/empty = manual callback/token endpoints only (no CDP watch).
+      # Example: http://host.docker.internal:8080/api/profiles/<profile-id>/cdp
+      - CLOAKBROWSER_CDP_HTTP=${CLOAKBROWSER_CDP_HTTP:-}
+      # Optional WS host rewrite when the manager advertises container-internal URLs.
+      - CLOAKBROWSER_WS_HOST=${CLOAKBROWSER_WS_HOST:-}
 
 volumes:
   mori-data:

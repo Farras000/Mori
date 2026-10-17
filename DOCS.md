@@ -227,11 +227,12 @@ Returns the full state of a bot.
     "awesomeness": 0
   },
   "auto_collect": true,
-  "auto_reconnect": true
+  "auto_reconnect": true,
+  "proxy": { "host": "127.0.0.1", "port": 1080, "username": "user", "password": "pass" }
 }
 ```
 
-`track_info` is `null` until the server sends account data after login.
+`track_info` is `null` until the server sends account data after login. `proxy` is `null` for a direct connection; `username`/`password` are omitted when unset.
 
 | Status | Meaning |
 |--------|---------|
@@ -335,6 +336,12 @@ Disconnect the bot from the current server. Manual disconnects stay offline unti
 Force a reconnect. Clears any manual-disconnect latch. If the bot is currently connected, it disconnects first and reconnects via the normal disconnect handler. If already disconnected, reconnects immediately.
 ```json
 { "type": "reconnect" }
+```
+
+#### `set_proxy`
+Change the bot's SOCKS5 proxy. Takes effect on the next reconnect — the bot is disconnected first so the old UDP-via-proxy socket is torn down. Omit all fields (or send an empty host) to go direct.
+```json
+{ "type": "set_proxy", "proxy_host": "127.0.0.1", "proxy_port": 1080, "proxy_username": "user", "proxy_password": "pass" }
 ```
 
 #### `accept_access`

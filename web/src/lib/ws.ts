@@ -20,6 +20,7 @@ export type WsEventMap = {
   BotPing: { bot_id: number; ping_ms: number }
   BotAutoCollect: { bot_id: number; enabled: boolean }
   BotDelays: { bot_id: number; place_ms: number; walk_ms: number; twofa_secs: number; server_overload_secs: number; too_many_logins_secs: number; maintenance_secs: number }
+  BotProxy: { bot_id: number; proxy_host: string | null; proxy_port: number | null; proxy_username?: string | null; proxy_password?: string | null }
   BotTrackInfo: {
     bot_id: number
     level: number

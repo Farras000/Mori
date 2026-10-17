@@ -1,11 +1,11 @@
 use crate::astar::{self, find_path};
 use crate::bot_state::{
-    BotCommand, BotDelays, BotState, BotStatus, CmdReceiver, InvSlot, PlayerInfo, TileInfo,
-    WorldObjectInfo,
+    BotCommand, BotDelays, BotState, BotStatus, CmdReceiver, InvSlot, PlayerInfo, ProxyInfo,
+    TileInfo, WorldObjectInfo,
 };
 use crate::constants::{FHASH, GAME_VER, PROTOCOL};
 use crate::cursor::Cursor;
-use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, random_mac};
+use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, resolve_mac};
 use crate::events::{WsEvent, WsInvItem, WsObject, WsTile, WsTx};
 use crate::inventory::Inventory;
 use crate::items::ItemsDat;
@@ -240,6 +240,7 @@ impl Bot {
         items_dat: Arc<ItemsDat>,
         bot_id: u32,
         ws_tx: Option<WsTx>,
+        mac_override: Option<&str>,
     ) -> Self {
         let log_state = Arc::clone(&state);
         let log_ws_tx = ws_tx.clone();
@@ -262,7 +263,7 @@ impl Bot {
         };
         let creds = fetch_credentials(username, password, proxy.as_ref(), &mut log_fn);
 
-        let mac = random_mac();
+        let mac = resolve_mac(mac_override);
         let hash = hash_string(&format!("{}RT", mac));
         let hash2 = hash_string(&format!("{}RT", random_hex(16)));
         let wk = random_hex(32);
@@ -337,6 +338,7 @@ impl Bot {
             s.mac = bot.mac.clone();
             s.collect_radius_tiles = bot.collect_radius_tiles;
             s.collect_blacklist = sorted_blacklist_vec(&bot.collect_blacklist);
+            s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
         }
         bot.host.connect(creds.addr, 2, 0);
         bot
@@ -501,6 +503,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             s.mac = bot.mac.clone();
             s.collect_radius_tiles = bot.collect_radius_tiles;
             s.collect_blacklist = sorted_blacklist_vec(&bot.collect_blacklist);
+            s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
         }
         bot.host.connect(addr, 2, 0);
         bot
@@ -2874,6 +2877,36 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 let mut st = self.state.write().unwrap();
                 st.collect_radius_tiles = self.collect_radius_tiles;
                 st.collect_blacklist = sorted_blacklist_vec(&self.collect_blacklist);
+            }
+            BotCommand::SetProxy { proxy } => {
+                // Proxy only takes effect on the next (re)connect: the live
+                // UDP-via-proxy socket is bound to the old proxy. Disconnect
+                // first so the old control connection is torn down.
+                if self.peer_id.is_some() {
+                    self.disconnect();
+                }
+                self.proxy = proxy.clone();
+                let info = proxy.as_ref().map(ProxyInfo::from_config);
+                self.state.write().unwrap().proxy = info.clone();
+                let (host, port, username, password) = match &info {
+                    Some(i) => (
+                        Some(i.host.clone()),
+                        Some(i.port),
+                        i.username.clone(),
+                        i.password.clone(),
+                    ),
+                    None => (None, None, None, None),
+                };
+                self.emit(WsEvent::BotProxy {
+                    bot_id: self.bot_id,
+                    proxy_host: host,
+                    proxy_port: port,
+                    proxy_username: username,
+                    proxy_password: password,
+                });
+                self.log_console(format!(
+                    "[Bot] Proxy updated — reconnect to apply"
+                ));
             }
             BotCommand::AcceptAccess => self.accept_access(),
         }

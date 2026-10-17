@@ -39,7 +39,7 @@ impl BotManager {
         Self { next_id: 0, bots: HashMap::new(), items_dat: Arc::new(ItemsDat::load()), ws_tx }
     }
 
-    pub fn spawn(&mut self, username: String, password: String, proxy: Option<Socks5Config>) -> u32 {
+    pub fn spawn(&mut self, username: String, password: String, proxy: Option<Socks5Config>, mac: Option<String>) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -61,7 +61,7 @@ impl BotManager {
 
         std::thread::spawn(move || {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut bot = crate::bot::Bot::new(&uname, &pass, proxy, state_clone, cmd_rx, items_dat, id, Some(ws_tx_clone));
+                let mut bot = crate::bot::Bot::new(&uname, &pass, proxy, state_clone, cmd_rx, items_dat, id, Some(ws_tx_clone), mac.as_deref());
                 bot.run(stop_clone);
             })) {
                 Ok(_)  => println!("[Bot:{id}] Stopped."),
