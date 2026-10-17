@@ -85,6 +85,7 @@ class FakeMoriClient(MoriClient):
         self.collect_range: int = 3
         self.collect_blacklist: List[int] = []
         self.facing_left: Optional[bool] = None
+        self.fall_steps: List[Tuple[int, int]] = []
 
     # ── settings / lifecycle (no-ops) ─────────────────────────────────────────
 
@@ -207,6 +208,22 @@ class FakeMoriClient(MoriClient):
 
     def move_to(self, x: int, y: int) -> None:
         self.walk_to(x, y)
+
+    def fall_step(self, x: int, y: int) -> None:
+        x, y = int(x), int(y)
+        pos = self.pos_tile() or (0, 0)
+        bx, by = pos
+        if x != bx or y != by + 1:
+            self.violations.append(f"illegal_fall_step ({bx},{by})->({x},{y})")
+        fg, _bg = self._grid.get((x, y), (0, 0))
+        if not is_tile_passable(fg, self.coll_map):
+            self.violations.append(f"fall_into_solid ({x},{y}) fg={fg}")
+        self._pos = (float(x), float(y))
+        self.walks.append((x, y))
+        self.fall_steps.append((x, y))
+
+    def send_raw(self, pkt: Any) -> None:
+        pass
 
     @property
     def coll_map(self) -> Dict[int, int]:

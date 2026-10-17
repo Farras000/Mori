@@ -106,6 +106,10 @@ class BotConfig:
     max_punch_rounds: int = 3
     max_hits_per_tile: int = 80
 
+    # Auto-break background mode.
+    autobreak: bool = False
+    log_file: Optional[str] = None
+
     bot_id: Optional[int] = None
 
     @property
@@ -165,6 +169,8 @@ class BotConfig:
         drop_threshold = int(os.environ.get("DROP_THRESHOLD", "200"))
         auto_collect = os.environ.get("AUTO_COLLECT", "1").lower() not in {"0", "false", "no"}
         drop_enabled = os.environ.get("DROP_ENABLED", "1").lower() not in {"0", "false", "no"}
+        autobreak = os.environ.get("AUTOBREAK", "0").lower() in {"1", "true", "yes"}
+        log_file = os.environ.get("LOG_FILE", "")
 
         if args:
             if getattr(args, "host", None):
@@ -197,6 +203,10 @@ class BotConfig:
                 auto_collect = True
             if getattr(args, "no_drop", False):
                 drop_enabled = False
+            if getattr(args, "autobreak", False):
+                autobreak = True
+            if getattr(args, "log_file", None):
+                log_file = args.log_file
 
         if start_edge not in {"auto", "left", "right"}:
             start_edge = "auto"
@@ -218,6 +228,8 @@ class BotConfig:
             drop_enabled=drop_enabled,
             leave_on_mod=True if not args else not bool(getattr(args, "no_leave_on_mod", False)),
             max_respawn=int(getattr(args, "max_respawn", None) or 4) if args else 4,
+            autobreak=autobreak,
+            log_file=log_file or None,
             bot_id=bot_id,
         )
 

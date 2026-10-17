@@ -212,12 +212,12 @@ def relative_offset(from_x: int, from_y: int, to_x: int, to_y: int) -> Tuple[int
     return to_x - from_x, to_y - from_y
 
 
-def is_within_punch_range(dx: int, dy: int, max_range: int = 3, max_diag: int = 4) -> bool:
-    """Vanilla-ish punch reach:
+def is_within_punch_range(dx: int, dy: int, max_range: int = 2, max_diag: int = 3) -> bool:
+    """Vanilla Growtopia punch reach:
 
-    - |dx| <= 3 and |dy| <= 3 tiles
-    - Manhattan distance <= 4
-    - Standing inside the target tile is rejected.
+    - |dx| <= max_range and |dy| <= max_range (default 2 tiles)
+    - Manhattan distance <= max_diag (default 3 tiles, e.g. dx=2, dy=1 or dx=1, dy=2)
+    - Standing inside the target tile is rejected (dx != 0 or dy != 0).
     """
     if dx == 0 and dy == 0:
         return False

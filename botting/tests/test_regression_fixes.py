@@ -10,11 +10,20 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import os
 import unittest
 
 from botting import navigator as nav
+from botting import runlock
 from botting import sweep
-from botting.clear_world import ClearWorldRunner
+from botting.clear_world import (
+    ClearWorldRunner,
+    build_arg_parser,
+    check_status,
+    request_bot_stop,
+)
 from botting.config import BotConfig
 from botting.tests.fake_mori import FakeMoriClient
 
@@ -339,5 +348,113 @@ class CavePocketAndSkyTests(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
+class AntiBanAndReentryTests(unittest.TestCase):
+    def test_settle_air_descent_calls_fall_step(self):
+        """Settle in mid-air must call fall_step on intermediate air tiles instead of walk_to."""
+        width, height = 10, 20
+        grid = {}
+        for x in range(width):
+            grid[(x, 15)] = (DIRT, 0)  # solid floor at y=15
+
+        fake = FakeMoriClient("TEST", width, height, grid, spawn=(5, 10))
+        fake._pos = (5.0, 10.0)
+
+        ok = nav.settle(fake, fake.coll_map, height, walk_ms=0)
+        self.assertTrue(ok)
+        self.assertEqual(fake.pos_tile(), (5, 14))
+        self.assertEqual(fake.violations, [])
+        # intermediate air tiles before landing foothold (5, 14) used fall_step
+        self.assertEqual(fake.fall_steps, [(5, 11), (5, 12), (5, 13)])
+        # final landing on foothold (5, 14) used walk_to
+        self.assertIn((5, 14), fake.walks)
+
+    def test_find_and_enter_top_layer_when_upper_layers_cleared(self):
+        """When upper layers (rows 0..34) are cleared and bot stands at White Door (y=23),
+        row 35 must be entered cleanly without bypassing enter_top_layer."""
+        width, height = 100, 60
+        grid = {}
+        # White Door at (81, 23)
+        grid[(81, 23)] = (6, 0)
+        # Row 35..36 has dirt from x=10 to x=90 (x=0 and x=99 are cleared/air)
+        for y in (35, 36):
+            for x in range(10, 91):
+                grid[(x, y)] = (DIRT, CAVE_BG)
+        # Bedrock floor at bottom
+        for x in range(width):
+            grid[(x, 54)] = (BEDROCK, 0)
+
+        fake, runner = make_runner(width, height, grid, spawn=(81, 23))
+        entry = runner._find_and_enter_top_layer()
+
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry[1], 35)
+        # Bot should have walked/fallen into row 35, NOT stayed at row 23
+        pos = runner._pos()
+        self.assertIsNotNone(pos)
+        self.assertEqual(pos[1], 35)
+        # Row 35 targets must not be falsely marked as unreachable sky targets
+        unreachable_sky = [
+            coord for coord, reason in runner.blocked.items()
+            if reason == "unreachable sky target" and coord[1] == 35
+        ]
+        self.assertEqual(unreachable_sky, [])
+
+
+class AutoBreakCliTests(unittest.TestCase):
+    def test_cli_parser_autobreak_flags(self):
+        parser = build_arg_parser()
+        args = parser.parse_args(["--autobreak", "--tail", "--log-file", "test.log"])
+        self.assertTrue(args.autobreak)
+        self.assertTrue(args.tail)
+        self.assertEqual(args.log_file, "test.log")
+
+        args2 = parser.parse_args(["--auto-break", "--follow"])
+        self.assertTrue(args2.autobreak)
+        self.assertTrue(args2.tail)
+
+    def test_config_autobreak_from_args(self):
+        parser = build_arg_parser()
+        args = parser.parse_args(["--autobreak", "--log-file", "custom.log"])
+        cfg = BotConfig.from_env_and_args(args)
+        self.assertTrue(cfg.autobreak)
+        self.assertEqual(cfg.log_file, "custom.log")
+
+    def test_config_autobreak_from_env(self):
+        orig_auto = os.environ.get("AUTOBREAK")
+        orig_log = os.environ.get("LOG_FILE")
+        try:
+            os.environ["AUTOBREAK"] = "1"
+            os.environ["LOG_FILE"] = "from_env.log"
+            cfg = BotConfig.from_env_and_args()
+            self.assertTrue(cfg.autobreak)
+            self.assertEqual(cfg.log_file, "from_env.log")
+        finally:
+            if orig_auto is not None:
+                os.environ["AUTOBREAK"] = orig_auto
+            else:
+                os.environ.pop("AUTOBREAK", None)
+            if orig_log is not None:
+                os.environ["LOG_FILE"] = orig_log
+            else:
+                os.environ.pop("LOG_FILE", None)
+
+    def test_check_status_no_active_bot(self):
+        cfg = BotConfig(bot_id=999999)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = check_status(cfg)
+        self.assertEqual(rc, 1)
+        self.assertIn("No active runlock found for bot ID 999999", out.getvalue())
+
+    def test_request_bot_stop_no_bot(self):
+        cfg = BotConfig(bot_id=999999)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = request_bot_stop(cfg)
+        self.assertEqual(rc, 1)
+        self.assertIn("No active runlock found for bot ID 999999", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -216,10 +216,18 @@ def settle(client: MoriClient, coll: Mapping[int, int], world_h: int, walk_ms: i
             client.plant_footing()
             return True
 
-        # Descend strictly 1 tile at a time to prevent server anticheat rubberbanding / teleportation
+        # Descend strictly 1 tile at a time to prevent server anticheat rubberbanding / teleportation.
+        # Intermediate air tiles use fall_step (falling flags: NO STANDING / WALK) to avoid server
+        # fly-hack / air-walk detection. Only the final solid landing uses walk_to + plant_footing.
         for ny in range(by + 1, landing_y + 1):
+            if _should_stop(getattr(client, "bot_id", None)):
+                return False
+            is_landing = (ny == landing_y)
             try:
-                client.walk_to(bx, ny)
+                if is_landing or not hasattr(client, "fall_step"):
+                    client.walk_to(bx, ny)
+                else:
+                    client.fall_step(bx, ny)
             except grpc.RpcError:
                 return False
             # Fast event-driven arrival check per tile

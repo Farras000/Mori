@@ -408,6 +408,31 @@ class MoriClient:
         """Direct single-tile move without pathfinding."""
         self.walk_to(x, y)
 
+    def send_raw(self, pkt: pb.GameUpdatePacket) -> None:
+        """Sends a raw GameUpdatePacket directly to the game server via gRPC."""
+        if self.stub is None or self.bot_ref is None:
+            return
+        self.stub.SendRaw(pb.SendRawRequest(bot=self.bot_ref, packet=pkt), metadata=self.metadata)
+
+    def fall_step(self, x: int, y: int) -> None:
+        """Sends a mid-air falling state packet (no STANDING or WALK flag) to mimic natural gravity."""
+        if self.stub is None or self.bot_ref is None:
+            return
+        facing_flag = 0x10 if getattr(self, "_facing_left", False) else 0x00
+        try:
+            pkt = pb.GameUpdatePacket(
+                type=0,
+                vec_x=float(x * 32),
+                vec_y=float(y * 32),
+                int_x=-1,
+                int_y=-1,
+                flags=facing_flag,  # Falling state (0x00 or 0x10): NO STANDING (0x20), NO WALK (0x01)
+            )
+            self.send_raw(pkt)
+            self._pos_tile = (int(x), int(y))
+        except Exception:
+            pass
+
     def plant_footing(self) -> None:
         """Sends a standing state packet with +2.0px vector_y offset to eliminate visual floating."""
         if self.stub is None or self.bot_ref is None:
@@ -424,7 +449,7 @@ class MoriClient:
                 int_y=-1,
                 flags=0x20,
             )
-            self.stub.SendRaw(pb.SendRawRequest(bot=self.bot_ref, packet=pkt), metadata=self.metadata)
+            self.send_raw(pkt)
         except Exception:
             pass
 

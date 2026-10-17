@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import subprocess
 import sys
 import time
 from typing import Dict, List, Optional, Set, Tuple
@@ -393,17 +394,11 @@ class ClearWorldRunner:
                 pass
 
     def _execute_drop(self, item_id: int, count: int) -> bool:
-        """Drops item_id using fast_drop with fallback to standard drop dialog."""
+        """Drops item_id using standard drop dialog (anti-ban / exploit compliant)."""
         old_cnt = self.client.inventory_amounts().get(item_id, count)
         try:
-            self.client.fast_drop(item_id, count)
-        except (grpc.RpcError, AttributeError) as e:
-            self.log(f"fast_drop failed: {e}")
-        if self.client.wait_inventory_change(item_id, old_cnt, timeout=0.25):
-            return True
-        try:
             self.client.drop(item_id, count)
-            if self.client.wait_inventory_change(item_id, old_cnt, timeout=1.5):
+            if self.client.wait_inventory_change(item_id, old_cnt, timeout=2.0):
                 return True
         except (grpc.RpcError, AttributeError) as e:
             self.log(f"drop failed: {e}")
@@ -484,7 +479,7 @@ class ClearWorldRunner:
                     break
                 self.log(f"dropping {count}x item id {item_id} at {spot.item_tile}")
                 self._execute_drop(item_id, count)
-                time.sleep(0.15)
+                time.sleep(0.5)
 
             # Walk back to original position
             self.log(f"returning to sweep position ({bx},{by})")
@@ -554,7 +549,7 @@ class ClearWorldRunner:
                         break
                     self.log(f"dropping {count}x item id {item_id} at {spot.item_tile}")
                     self._execute_drop(item_id, count)
-                    time.sleep(0.15)
+                    time.sleep(0.5)
             else:
                 self.log(f"warning: no valid drop spot found beside white door at {self.door_coord}")
 
@@ -1285,9 +1280,9 @@ class ClearWorldRunner:
             return
         cx = bx if col is None else col
 
-        # Topmost first: within the 3-tile reach the highest leftover of the
+        # Topmost first: within the reach the highest leftover of the
         # column is finished before the one below it (layer order).
-        for dy in (3, 2, 1):
+        for dy in (2, 1):
             ty = by - dy
             if ty < 0 or ty >= row:
                 continue
@@ -2101,27 +2096,15 @@ class ClearWorldRunner:
                     return y
         return None
 
-    def _has_edge_supported_terrain_below(self, y0: int) -> bool:
-        snap = self._snapshot()
-        for y in range(max(1, y0 + 1), self.world_h):
-            if not (self._grounded(0, y - 1) or self._grounded(self.world_w - 1, y - 1)):
-                continue
-            for x in range(self.world_w):
-                if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, y).has_work:
-                    return True
-        return False
-
     def _find_and_enter_top_layer(self) -> Optional[Coord]:
         """Finds the topmost enterable target layer and enters it.
 
-        When a world has sparse floating sky blocks above the main terrain
-        (e.g. a 1-tile sky pillar at y=18..23 where neither world edge has
-        ground support), ``enter_top_layer(y0)`` cannot enter at ``y0``. In
-        that case this helper sweeps whatever sky targets on ``y0`` are
-        reachable from the bot's footing, marks any unreachable sky leftovers
-        as ``blocked`` (so they are cleared from below as the sweep passes
-        under them), and advances to the next row until the main terrain
-        surface is entered.
+        Always tries to enter row y0 via enter_top_layer(y0) first (which tries
+        both world edges, then start_mid_world). If enter_top_layer cannot
+        enter (e.g. sparse floating sky blocks without mid-world access), it
+        sweeps reachable sky targets on y0 ONLY if the bot is actually standing
+        on or adjacent to y0 (|by - y0| <= 2), marks unreachable targets as
+        blocked, and advances to the next row until an enterable layer is reached.
         """
         for _ in range(self.world_h):
             y0 = self._find_top_unblocked_row()
@@ -2131,17 +2114,19 @@ class ClearWorldRunner:
                 y0 > 0
                 and (self._grounded(0, y0 - 1) or self._grounded(self.world_w - 1, y0 - 1))
             )
-            if edge_supported or not self._has_edge_supported_terrain_below(y0):
-                entry = self.enter_top_layer(y0)
-                if entry is not None:
-                    return entry
-                if edge_supported:
-                    return None
+            entry = self.enter_top_layer(y0)
+            if entry is not None:
+                return entry
+            if edge_supported:
+                return None
+
             self.log(
                 f"row {y0}: floating sky layer not enterable at edges — "
                 f"clearing reachable sky targets and advancing to next row"
             )
-            self.sweep_row_remainder(y0, 0, 1)
+            pos = self._pos()
+            if pos is not None and abs(pos[1] - y0) <= 2:
+                self.sweep_row_remainder(y0, 0, 1)
             snap = self._snapshot()
             for x in range(self.world_w):
                 if sweep.plan_for(snap, self.coll, self.targets, self.strength, x, y0).has_work:
@@ -2397,13 +2382,277 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--takeover", action="store_true",
                    help="Take over the bot if another local instance holds it "
                         "(asks it to stop first, waits, then proceeds)")
+    p.add_argument(
+        "--autobreak", "--auto-break",
+        action="store_true",
+        dest="autobreak",
+        help="Run auto-break in the background (detached process) so it keeps running even after closing the terminal",
+    )
+    p.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Custom log file path for background mode (default: clear_world.log)",
+    )
+    p.add_argument(
+        "--tail", "--follow",
+        action="store_true",
+        dest="tail",
+        help="Follow log output in terminal after launching in background (closing terminal won't stop bot)",
+    )
+    p.add_argument(
+        "--status",
+        action="store_true",
+        help="Check the running status and recent logs of the background bot",
+    )
+    p.add_argument(
+        "--stop",
+        action="store_true",
+        help="Request the running bot to stop gracefully",
+    )
+    p.add_argument(
+        "--_worker",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     return p
+
+
+def check_status(cfg: BotConfig) -> int:
+    active_found = False
+    rdir = runlock.run_dir()
+    if os.path.isdir(rdir):
+        for fname in os.listdir(rdir):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                bot_id = int(fname[:-5])
+            except ValueError:
+                continue
+            if cfg.bot_id is not None and bot_id != cfg.bot_id:
+                continue
+            lock = runlock.read_lock(bot_id)
+            if not lock:
+                continue
+            pid = lock.get("pid", 0)
+            alive = runlock.is_pid_alive(pid)
+            started_raw = lock.get("started")
+            try:
+                started_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(started_raw)))
+            except Exception:
+                started_str = str(started_raw)
+            if alive:
+                status_str = "ACTIVE (running)"
+                active_found = True
+            else:
+                status_str = "CLEANED (stale lock from terminated process)"
+                runlock.discard(bot_id)
+            print(f"[ClearWorld] Bot ID: {bot_id} | Script: {lock.get('script')} | Status: {status_str}")
+            print(f"            PID: {pid} | Started: {started_str}")
+
+    if not active_found and cfg.bot_id is not None:
+        print(f"[ClearWorld] No active runlock found for bot ID {cfg.bot_id}.")
+    elif not active_found:
+        print("[ClearWorld] No active clear_world bots found running.")
+
+    log_path = os.path.abspath(cfg.log_file or "clear_world.log")
+    if os.path.isfile(log_path):
+        print(f"\n[ClearWorld] Last 15 lines of {log_path}:")
+        print("-" * 60)
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+                for line in lines[-15:]:
+                    print(line, end="")
+        except Exception as e:
+            print(f"(Could not read log file: {e})")
+        print("-" * 60)
+    return 0 if active_found else 1
+
+
+def request_bot_stop(cfg: BotConfig) -> int:
+    target_bot_id = cfg.bot_id
+    rdir = runlock.run_dir()
+    if target_bot_id is None and os.path.isdir(rdir):
+        for fname in os.listdir(rdir):
+            if fname.endswith(".json"):
+                try:
+                    target_bot_id = int(fname[:-5])
+                    break
+                except ValueError:
+                    pass
+    if target_bot_id is None:
+        print("[ClearWorld] No running bot found in runlock to stop.", file=sys.stderr)
+        return 1
+
+    lock = runlock.read_lock(target_bot_id)
+    if not lock:
+        print(f"[ClearWorld] No active runlock found for bot ID {target_bot_id}.", file=sys.stderr)
+        return 1
+
+    pid = lock.get("pid", 0)
+    if not runlock.is_pid_alive(pid):
+        runlock.discard(target_bot_id)
+        print(f"[ClearWorld] Cleaned up stale lock for bot ID {target_bot_id} (process {pid} was already terminated).")
+        return 0
+
+    print(f"[ClearWorld] Requesting bot ID {target_bot_id} (PID {pid}) to stop ...")
+    request_stop(target_bot_id)
+
+    for _ in range(12):
+        time.sleep(0.5)
+        if not runlock.read_lock(target_bot_id):
+            print(f"[ClearWorld] Bot ID {target_bot_id} stopped cleanly.")
+            return 0
+        if pid and not runlock.is_pid_alive(pid):
+            runlock.discard(target_bot_id)
+            print(f"[ClearWorld] Process {pid} terminated and lock released.")
+            return 0
+
+    print(
+        f"[ClearWorld] Bot ID {target_bot_id} did not stop within 6s. "
+        f"You can force-stop with: python stop_all.py --bot-id {target_bot_id}",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
     cfg = BotConfig.from_env_and_args(args)
 
+    if args.status:
+        sys.exit(check_status(cfg))
+
+    if args.stop:
+        sys.exit(request_bot_stop(cfg))
+
+    # Handle --autobreak background detachment
+    if args.autobreak and not args._worker:
+        # Pre-flight check with Mori server
+        print(f"[ClearWorld] connecting to Mori at {cfg.grpc_addr} ...")
+        client = MoriClient(cfg.grpc_addr, cfg.token)
+        try:
+            client.connect()
+            client.select_bot(cfg.bot_id)
+        except NoBotsError as e:
+            print(f"[ClearWorld] {e}", file=sys.stderr)
+            sys.exit(1)
+        except BotNotFoundError as e:
+            print(f"[ClearWorld] {e}", file=sys.stderr)
+            sys.exit(1)
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.UNAUTHENTICATED:
+                print(
+                    "[ClearWorld] server requires auth — set MORI_GRPC_TOKEN or pass --token",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"[ClearWorld] cannot reach Mori: {e.code()} {e.details()}", file=sys.stderr)
+            sys.exit(1)
+
+        bot_id = client.bot_id
+        username = client.username
+
+        # Check if already running
+        lock = runlock.read_lock(bot_id)
+        if lock and runlock.is_pid_alive(lock.get("pid", 0)):
+            if not args.takeover:
+                print(
+                    f"[ClearWorld] bot id {bot_id} is already running under PID {lock.get('pid')} "
+                    f"({lock.get('script')}) — pass --takeover to replace it or run with --stop",
+                    file=sys.stderr,
+                )
+                client.close()
+                sys.exit(1)
+
+        client.close()
+
+        # Prepare log file
+        log_path = os.path.abspath(args.log_file or "clear_world.log")
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        log_f = open(log_path, "a", encoding="utf-8")
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_f.write(
+            f"\n{'='*70}\n[ClearWorld] Auto-break background session started at {now_str}\n"
+            f"[ClearWorld] Bot: {username!r} (ID: {bot_id})\n{'='*70}\n"
+        )
+        log_f.flush()
+
+        # Build worker command
+        worker_cmd = [sys.executable, "-u", os.path.abspath(__file__), "--_worker"]
+        for arg in sys.argv[1:]:
+            if arg in ("--autobreak", "--auto-break", "--tail", "--follow"):
+                continue
+            worker_cmd.append(arg)
+        if "--bot-id" not in sys.argv:
+            worker_cmd.extend(["--bot-id", str(bot_id)])
+
+        worker_env = dict(os.environ)
+        worker_env["PYTHONUNBUFFERED"] = "1"
+
+        if sys.platform == "win32":
+            creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            worker = subprocess.Popen(
+                worker_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                creationflags=creationflags,
+                close_fds=True,
+                cwd=os.getcwd(),
+                env=worker_env,
+            )
+        else:
+            worker = subprocess.Popen(
+                worker_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+                cwd=os.getcwd(),
+                env=worker_env,
+            )
+
+        print("=" * 70)
+        print("[ClearWorld] Auto-break background mode enabled (--autobreak)")
+        print(f"[ClearWorld] Bot: {username!r} (ID: {bot_id})")
+        print(f"[ClearWorld] Background worker launched (PID: {worker.pid})")
+        print(f"[ClearWorld] Logging to: {log_path}")
+        print()
+        print("[ClearWorld] >> TERMINAL INI DAPAT DITUTUP SEKARANG <<")
+        print("[ClearWorld] Bot akan tetap lanjut berjalan di background meskipun terminal dimatikan.")
+        print()
+        print("[ClearWorld] Untuk memantau log:")
+        print(f"  PowerShell : Get-Content -Path \"{log_path}\" -Wait")
+        print(f"  CMD        : type \"{log_path}\"")
+        print(f"  CLI        : python clear_world.py --status --bot-id {bot_id}")
+        print("[ClearWorld] Untuk menghentikan bot:")
+        print(f"  CLI        : python clear_world.py --stop --bot-id {bot_id}")
+        print("  Atau       : python stop_all.py")
+        print("=" * 70)
+
+        if getattr(args, "tail", False):
+            print("\n[ClearWorld] Tailing log output (Press Ctrl+C to detach viewer without stopping bot):")
+            print("-" * 70)
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(0, os.SEEK_END)
+                    while True:
+                        line = f.readline()
+                        if line:
+                            sys.stdout.write(line)
+                            sys.stdout.flush()
+                        else:
+                            time.sleep(0.1)
+            except KeyboardInterrupt:
+                print("\n[ClearWorld] Log viewer detached. Background bot is still running!")
+        sys.exit(0)
+
+    # Worker / Foreground Execution
     print(f"[ClearWorld] connecting to Mori at {cfg.grpc_addr} ...")
     client = MoriClient(cfg.grpc_addr, cfg.token)
     try:

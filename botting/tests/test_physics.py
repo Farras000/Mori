@@ -80,19 +80,27 @@ class TestPhysics(unittest.TestCase):
         self.assertTrue(is_within_punch_range(-1, 0))
         self.assertTrue(is_within_punch_range(0, -1))
 
-        # Diagonal adjacent: dx=1, dy=1 (diag=2 <= 4)
+        # Diagonal adjacent: dx=1, dy=1 (diag=2 <= 3)
         self.assertTrue(is_within_punch_range(1, 1))
 
-        # Max range 3 tiles horizontally/vertically
-        self.assertTrue(is_within_punch_range(3, 0))
-        self.assertTrue(is_within_punch_range(0, 3))
-        self.assertTrue(is_within_punch_range(2, 2))  # diag=4 <= 4
+        # Max vanilla range: 2 tiles horizontally/vertically (diag <= 3)
+        self.assertTrue(is_within_punch_range(2, 0))
+        self.assertTrue(is_within_punch_range(0, 2))
+        self.assertTrue(is_within_punch_range(2, 1))
+
+        # Vanilla illegal reach (> 2 tiles or corner diag > 3)
+        self.assertFalse(is_within_punch_range(3, 0))
+        self.assertFalse(is_within_punch_range(0, 3))
+        self.assertFalse(is_within_punch_range(2, 2))
+
+        # Extended range allowed when explicit parameters given (e.g. Rayman)
+        self.assertTrue(is_within_punch_range(3, 0, max_range=3, max_diag=4))
+        self.assertTrue(is_within_punch_range(0, 3, max_range=3, max_diag=4))
+        self.assertTrue(is_within_punch_range(2, 2, max_range=3, max_diag=4))
 
         # Impossible range > 3 or diag > 4 (would trigger server anomaly detection)
-        self.assertFalse(is_within_punch_range(4, 0))
-        self.assertFalse(is_within_punch_range(0, 4))
-        self.assertFalse(is_within_punch_range(3, 2))  # diag=5 > 4
-        self.assertFalse(is_within_punch_range(3, 3))  # diag=6 > 4
+        self.assertFalse(is_within_punch_range(4, 0, max_range=3, max_diag=4))
+        self.assertFalse(is_within_punch_range(0, 4, max_range=3, max_diag=4))
 
         # Standing in exact same tile: rejected
         self.assertFalse(is_within_punch_range(0, 0))
