@@ -590,6 +590,82 @@ async fn oauth_google_spawn(
     Ok(Json(serde_json::json!({ "id": bot_id, "oauth_id": id })))
 }
 
+/// GET /oauth/google/lookup?state=… — session lookup for the browser
+/// extension: which Mori session does this OAuth `state` belong to?
+///
+/// Returns the id plus the `clientData` the extension has to post to
+/// `checktoken` from inside the login page.
+async fn oauth_google_lookup(
+    State(s): State<AppState>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let state = q.get("state").cloned().unwrap_or_default();
+    let Some((id, client_data)) = s.oauth.lookup_by_state(&state) else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no active session for this state" })),
+        ));
+    };
+    Ok(Json(serde_json::json!({
+        "id": id,
+        "client_data": client_data,
+        "checktoken_url": crate::google_oauth::checktoken_url(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct OAuthLandingRequest {
+    #[serde(default)]
+    token: String,
+    #[serde(default)]
+    account_type: String,
+    #[serde(default)]
+    error: String,
+}
+
+/// POST /oauth/google/:id/landing — the browser extension reports the result
+/// of the in-page `checktoken` POST (same origin, same session cookie).
+async fn oauth_google_landing(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<OAuthLandingRequest>,
+) -> ApiResult<OAuthSessionView> {
+    if req.token.trim().is_empty() {
+        let reason = if req.error.trim().is_empty() {
+            "extension reported no token".to_string()
+        } else {
+            format!("extension reported: {}", req.error.trim())
+        };
+        return Err(api_err(reason));
+    }
+    s.oauth
+        .report_landing(&id, &req.token, &req.account_type)
+        .map(Json)
+        .map_err(api_err)
+}
+
+/// POST /oauth/google/:id/open — open the authorize URL in the user's default
+/// browser (started by the OS: no automation flags, so Google accepts it).
+async fn oauth_google_open(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    s.oauth.open_in_system_browser(&id).map_err(api_err)?;
+    Ok(Json(serde_json::json!({ "opened": true })))
+}
+
+/// POST /oauth/google/:id/open-bare — open the authorize URL in a **bare**
+/// Chrome: no DevTools port, no automation flags, a completely ordinary
+/// browser. The sign-in is finished by hand; the result comes back through
+/// the helper extension or a pasted token.
+async fn oauth_google_open_bare(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let profile = s.oauth.open_in_bare_browser(&id).map_err(api_err)?;
+    Ok(Json(serde_json::json!({ "opened": true, "profile": profile })))
+}
+
 /// GET /oauth/browser/status — CloakBrowser provider health.
 async fn oauth_browser_status() -> Json<crate::remote_view::BrowserStatus> {
     Json(crate::remote_view::browser_status().await)
@@ -757,6 +833,10 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
         .route("/oauth/google/{id}/token", post(oauth_google_token))
         .route("/oauth/google/{id}/refresh", post(oauth_google_refresh))
         .route("/oauth/google/{id}/spawn", post(oauth_google_spawn))
+        .route("/oauth/google/{id}/open", post(oauth_google_open))
+        .route("/oauth/google/{id}/open-bare", post(oauth_google_open_bare))
+        .route("/oauth/google/{id}/landing", post(oauth_google_landing))
+        .route("/oauth/google/lookup", get(oauth_google_lookup))
         .route("/oauth/google/{id}/view", get(oauth_google_view))
         .route("/oauth/browser/status", get(oauth_browser_status))
         .route("/growtopia-cdn/{*path}", get(growtopia_cdn))

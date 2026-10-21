@@ -300,6 +300,10 @@ export interface BrowserStatus {
   reachable: boolean;
   page_ws_found: boolean;
   detail: string;
+  /** Which provider is used: "cloak", "local-chrome" or "none". */
+  provider: string;
+  browser_path: string | null;
+  profile_dir: string | null;
 }
 
 export const api = {
@@ -351,6 +355,10 @@ export const api = {
     req<OAuthSession>("POST", `/oauth/google/${id}/refresh`, {}),
   oauthGoogleSpawn: (id: string, body: OAuthProxy) =>
     req<{ id: number; oauth_id: string }>("POST", `/oauth/google/${id}/spawn`, body),
+  oauthGoogleOpen: (id: string) =>
+    req<{ opened: boolean }>("POST", `/oauth/google/${id}/open`),
+  oauthGoogleOpenBare: (id: string) =>
+    req<{ opened: boolean; profile: string }>("POST", `/oauth/google/${id}/open-bare`),
   oauthBrowserStatus: () =>
     req<BrowserStatus>("GET", "/oauth/browser/status"),
 };

@@ -14,19 +14,37 @@ from typing import Optional, Set
 
 
 def load_dotenv(path: Optional[str] = None) -> None:
-    """Minimal, robust .env parser without external dependencies."""
+    """Minimal, robust .env parser without external dependencies.
+    Searches current directory and all ancestor directories until .env is found.
+    """
     candidates = []
     if path:
         candidates.append(path)
     else:
-        cwd = os.getcwd()
-        candidates.append(os.path.join(cwd, ".env"))
-        here = os.path.dirname(os.path.abspath(__file__))
-        candidates.append(os.path.join(here, ".env"))
-        root = os.path.dirname(here)
-        candidates.append(os.path.join(root, ".env"))
+        # Walk up from current working directory
+        cur = os.path.abspath(os.getcwd())
+        while True:
+            candidates.append(os.path.join(cur, ".env"))
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
 
+        # Walk up from current file directory
+        here = os.path.dirname(os.path.abspath(__file__))
+        cur = here
+        while True:
+            candidates.append(os.path.join(cur, ".env"))
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+
+    seen = set()
     for p in candidates:
+        if p in seen:
+            continue
+        seen.add(p)
         if os.path.isfile(p):
             try:
                 with open(p, "r", encoding="utf-8") as f:
@@ -128,12 +146,13 @@ class BotConfig:
     def from_env_and_args(cls, args: Optional[argparse.Namespace] = None) -> "BotConfig":
         load_dotenv()
 
-        env_addr = os.environ.get("MORI_GRPC_ADDR", "")
-        host, grpc_port = "192.168.193.66", 50051
+        env_addr = os.environ.get("MORI_GRPC_ADDR", "").strip()
+        host = ""
+        grpc_port: Optional[int] = None
         if env_addr:
             if env_addr.count(":") >= 1:
                 h, _, p = env_addr.rpartition(":")
-                host = h if h and h != "0.0.0.0" else "127.0.0.1"
+                host = h.strip()
                 try:
                     grpc_port = int(p)
                 except ValueError:
@@ -141,15 +160,12 @@ class BotConfig:
             else:
                 host = env_addr
         else:
-            # Aliases used by the repo .env
-            host = os.environ.get("MORI_HOST", "127.0.0.1") or "127.0.0.1"
-            if host == "0.0.0.0":
-                host = "127.0.0.1"
-            port_env = os.environ.get("MORI_GRPC_PORT", "50051")
+            host = os.environ.get("MORI_HOST", "").strip()
+            port_env = os.environ.get("MORI_GRPC_PORT", "").strip()
             if port_env.isdigit():
                 grpc_port = int(port_env)
 
-        token = os.environ.get("MORI_GRPC_TOKEN", "")
+        token = os.environ.get("MORI_GRPC_TOKEN", "").strip()
         bot_id_env = os.environ.get("BOT_ID", "")
         bot_id = int(bot_id_env) if bot_id_env.isdigit() else None
 
@@ -210,6 +226,19 @@ class BotConfig:
 
         if start_edge not in {"auto", "left", "right"}:
             start_edge = "auto"
+
+        if not host:
+            raise ValueError(
+                "Kredensial host gRPC (MORI_GRPC_ADDR atau MORI_HOST) wajib diset di .env tanpa fallback."
+            )
+        if grpc_port is None:
+            raise ValueError(
+                "Kredensial port gRPC (MORI_GRPC_PORT atau port pada MORI_GRPC_ADDR) wajib diset di .env tanpa fallback."
+            )
+        if not token:
+            raise ValueError(
+                "Kredensial auth token (MORI_GRPC_TOKEN) wajib diset di .env tanpa fallback."
+            )
 
         return cls(
             host=host,

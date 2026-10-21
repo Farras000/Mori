@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Mori login helper",
+  "version": "1.0.0",
+  "description": "Hands the Growtopia Google sign-in result to the Mori backend (local only).",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://login.growtopiagame.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://login.growtopiagame.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "options_page": "options.html"
+}

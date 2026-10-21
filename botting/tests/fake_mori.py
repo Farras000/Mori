@@ -54,7 +54,7 @@ class FakeMoriClient(MoriClient):
         grid: Dict[Tile, Tile],
         spawn: Tile = (0, 0),
     ) -> None:
-        super().__init__(addr="fake", token="", verbose=False)
+        super().__init__(addr="fake", token="fake_token", verbose=False)
         self.bot_id = 1
         self.username = "fake"
         self._world_w = int(width)

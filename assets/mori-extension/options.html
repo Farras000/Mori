@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Mori login helper</title>
+    <style>
+      body { font: 13px/1.5 system-ui, sans-serif; margin: 16px; max-width: 460px; }
+      label { display: block; margin: 10px 0 4px; font-weight: 600; }
+      input { width: 100%; padding: 6px 8px; box-sizing: border-box; font-family: inherit; }
+      button { margin-top: 14px; padding: 7px 14px; font: inherit; cursor: pointer; }
+      #status { margin-top: 12px; min-height: 1.4em; }
+      .ok { color: #128a3e; }
+      .err { color: #c02626; }
+      code { background: #eee; padding: 1px 4px; }
+    </style>
+  </head>
+  <body>
+    <h3>Mori login helper</h3>
+    <p>
+      Hands the Growtopia Google sign-in result to the local Mori backend.
+      Set the backend address and the Mori API token once.
+    </p>
+
+    <label for="base">Mori backend</label>
+    <input id="base" type="text" placeholder="http://127.0.0.1:3000" />
+
+    <label for="token">Mori API token</label>
+    <input id="token" type="text" placeholder="Bearer token from the Mori dashboard" />
+
+    <button id="save">Save</button>
+    <div id="status"></div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

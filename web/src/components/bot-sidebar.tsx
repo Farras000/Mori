@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy, Check, RefreshCw } from 'lucide-react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { botsAtom, selectedBotIdAtom } from '@/lib/store'
-import { api, type BotStatus, type OAuthProxy, type OAuthSession, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
+import { authStore } from '@/lib/auth'
+import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
 import { GoogleBrowserModal } from '@/components/GoogleBrowserModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -264,8 +265,10 @@ function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; 
   const [callbackUrl, setCallbackUrl] = useState('')
   const [manualToken, setManualToken] = useState('')
   const [copied, setCopied] = useState(false)
-  const [cloakDetail, setCloakDetail] = useState('')
+  const [copiedToken, setCopiedToken] = useState(false)
+  const [browser, setBrowser] = useState<BrowserStatus | null>(null)
   const [browserOpen, setBrowserOpen] = useState(false)
+  const browserRef = useRef(false)
 
   const status = session?.status.status
   const terminal = status === 'validated' || status === 'failed'
@@ -276,7 +279,7 @@ function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; 
   }, [status])
 
   useEffect(() => {
-    api.oauthBrowserStatus().then((b) => setCloakDetail(b.detail)).catch(() => {})
+    api.oauthBrowserStatus().then(setBrowser).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -286,6 +289,12 @@ function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; 
         const s = await api.oauthGoogleStatus(session.id)
         setSession(s)
         setError('')
+        // A failure usually means the browser provider is the problem -
+        // refresh its status once so the reason is visible.
+        if (s.status.status === 'failed' && !browserRef.current) {
+          browserRef.current = true
+          api.oauthBrowserStatus().then(setBrowser).catch(() => {})
+        }
       } catch {
         // keep polling; transient failures are normal behind throttles
       }
@@ -311,6 +320,21 @@ function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; 
     setManualToken('')
   }
 
+  async function copyApiToken() {
+    const token = authStore.getToken()
+    if (!token) {
+      setError('No API token - log in again')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(token)
+      setCopiedToken(true)
+      setTimeout(() => setCopiedToken(false), 1500)
+    } catch {
+      setError('Copy failed')
+    }
+  }
+
   async function copyCookies() {
     if (!session) return
     try {
@@ -331,7 +355,17 @@ function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; 
           Mints a login session and opens a dedicated login tab. Complete Google login
           inside the in-app browser, then Spawn.
         </p>
-        {cloakDetail && <p className="text-[10px] text-muted-foreground leading-snug">Browser: {cloakDetail}</p>}
+        {browser && (
+          <p className="text-[10px] text-muted-foreground leading-snug">
+            Browser: {browser.provider === 'local-chrome' ? 'local Chrome' : browser.provider}
+            {browser.browser_path ? ` - ${browser.browser_path}` : ''}
+          </p>
+        )}
+        {browser && browser.provider === 'none' && (
+          <p className="text-[10px] text-destructive leading-snug">
+            {browser.detail}
+          </p>
+        )}
         {!macValid && (
           <p className="text-[10px] text-destructive leading-snug">Set a valid MAC above first — XX:XX:XX:XX:XX:XX</p>
         )}
@@ -340,6 +374,18 @@ function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; 
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Start Google login'}
         </Button>
         {error && <p className="text-[10px] text-destructive text-center">{error}</p>}
+
+        <div className="mt-1 flex flex-col gap-1 rounded-md border border-border/60 p-2">
+          <p className="text-[10px] font-medium">Google says &quot;may not be secure&quot;?</p>
+          <p className="text-[10px] text-muted-foreground leading-snug">
+            Install the helper extension once: chrome://extensions → Developer mode → Load
+            unpacked → pick <code>assets/mori-extension</code> in the Mori folder. Then paste the
+            API token into the extension options.
+          </p>
+          <Button size="sm" variant="outline" className="w-full text-xs" onClick={copyApiToken}>
+            {copiedToken ? 'API token copied' : 'Copy API token for the extension'}
+          </Button>
+        </div>
       </div>
     )
   }
@@ -352,15 +398,33 @@ function GoogleOAuthForm({ mac, macValid, getProxy, onSpawned }: { mac: string; 
       </p>
 
       {!terminal && (
-        session.viewer_live ? (
-          <Button size="sm" className="w-full text-xs" onClick={() => setBrowserOpen(true)}>
-            Open browser
+        <>
+          {session.viewer_live ? (
+            <Button size="sm" className="w-full text-xs" onClick={() => setBrowserOpen(true)}>
+              Open browser
+            </Button>
+          ) : browser?.provider === 'none' ? (
+            <p className="text-[10px] text-destructive leading-snug">
+              {browser.detail}
+            </p>
+          ) : (
+            <p className="text-[10px] text-muted-foreground leading-snug">
+              Preparing login tab… (starting the browser if needed)
+            </p>
+          )}
+          <Button size="sm" variant="outline" className="w-full text-xs" disabled={loading}
+            onClick={() => run(() => api.oauthGoogleOpen(session.id), () => {})}>
+            Open in my browser
           </Button>
-        ) : (
+          <Button size="sm" variant="outline" className="w-full text-xs" disabled={loading}
+            onClick={() => run(() => api.oauthGoogleOpenBare(session.id), () => {})}>
+            Open in a clean Chrome
+          </Button>
           <p className="text-[10px] text-muted-foreground leading-snug">
-            Preparing login tab… it appears here when ready.
+            Both use a browser with no automation at all, so Google never complains. The result
+            comes back through the Mori helper extension, or paste the token below.
           </p>
-        )
+        </>
       )}
 
       {status === 'failed' && (

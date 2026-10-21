@@ -308,19 +308,41 @@ def main() -> None:
     args = build_arg_parser().parse_args()
     should_kill_local = not args.no_kill_local
 
-    host = args.host or os.environ.get("MORI_HOST", "192.168.193.66") or "192.168.193.66"
-    env_addr = os.environ.get("MORI_GRPC_ADDR", "")
+    host = (args.host or "").strip() or os.environ.get("MORI_HOST", "").strip()
+    env_addr = os.environ.get("MORI_GRPC_ADDR", "").strip()
     port = args.port
-    if port is None:
-        if env_addr and ":" in env_addr:
-            try:
-                port = int(env_addr.rpartition(":")[2])
-            except ValueError:
-                port = 50051
+
+    if not host and env_addr:
+        if ":" in env_addr:
+            host = env_addr.rpartition(":")[0]
+            if port is None:
+                try:
+                    port = int(env_addr.rpartition(":")[2])
+                except ValueError:
+                    pass
         else:
-            port_env = os.environ.get("MORI_GRPC_PORT", "50051")
-            port = int(port_env) if port_env.isdigit() else 50051
-    token = args.token or os.environ.get("MORI_GRPC_TOKEN", "")
+            host = env_addr
+
+    if port is None:
+        port_env = os.environ.get("MORI_GRPC_PORT", "").strip()
+        if port_env.isdigit():
+            port = int(port_env)
+
+    token = (args.token or "").strip() or os.environ.get("MORI_GRPC_TOKEN", "").strip()
+
+    if not host or port is None:
+        print(
+            "[StopAll] error: Kredensial host/port gRPC (MORI_GRPC_ADDR atau MORI_HOST/MORI_GRPC_PORT) wajib diset di .env atau via CLI args (tanpa fallback).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not token:
+        print(
+            "[StopAll] error: Kredensial auth token (MORI_GRPC_TOKEN) wajib diset di .env atau via --token (tanpa fallback).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     addr = f"{host}:{port}"
 
     print(f"[StopAll] connecting to Mori at {addr} ...")

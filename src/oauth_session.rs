@@ -25,10 +25,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::bot::Socks5Config;
 use crate::google_oauth::{
-    MintedSession, OAuthError, SeedCookie, ValidatedBundle, mint_with_backoff, step_callback,
-    step_checktoken,
+    MintedSession, OAuthError, SeedCookie, ValidatedBundle, import_cookies, mint_with_backoff,
+    step_callback, step_checktoken,
 };
-use crate::remote_view::{self, CloakConfig, RemoteViewer, ViewerMsg};
+use crate::remote_view::{self, RemoteViewer, ViewerMsg};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -66,6 +66,9 @@ struct PendingOAuth {
     agent: ureq::Agent,
     proxy_url: Option<String>,
     authorize_url: String,
+    /// OAuth `state` of the authorize URL — the handle the browser extension
+    /// uses to find the session it belongs to.
+    state: String,
     seed_cookies: Vec<SeedCookie>,
     desc_raw: String,
     rid: String,
@@ -259,7 +262,7 @@ impl OAuthStore {
         .await
         .map_err(|e| format!("mint task failed: {e}"))?
         .map_err(|e| match e {
-            OAuthError::Retryable(m) => format!("dashboard throttled after retries: {m}"),
+            OAuthError::Retryable(m) => format!("login mint failed after 3 attempts: {m}"),
             OAuthError::Fatal(m) => m,
         })?;
 
@@ -269,6 +272,7 @@ impl OAuthStore {
             agent: minted.agent,
             proxy_url: proxy_url.clone(),
             authorize_url: minted.authorize.url.clone(),
+            state: minted.authorize.state.clone(),
             seed_cookies: minted.seed_cookies,
             desc_raw: minted.desc.raw,
             rid: minted.desc.rid,
@@ -282,14 +286,15 @@ impl OAuthStore {
         self.inner.lock().map_err(|_| "store lock poisoned".to_string())?.insert(id.clone(), pending);
         self.evict_old();
 
-        // Background CDP leg (primary path). Manual endpoints remain usable regardless.
-        if CloakConfig::from_env().is_some() {
-            self.set_status(&id, OAuthStatus::Watching);
-            let store = self.clone();
-            tokio::spawn(async move {
-                run_browser_leg(store, id, watch_timeout_secs).await;
-            });
-        }
+        // Background browser leg (primary path). A CDP provider is resolved
+        // inside the leg: the external CloakBrowser manager when it answers,
+        // otherwise the local Chrome/Edge that Mori launches itself. The
+        // manual endpoints stay usable regardless.
+        self.set_status(&id, OAuthStatus::Watching);
+        let store = self.clone();
+        tokio::spawn(async move {
+            run_browser_leg(store, id, watch_timeout_secs).await;
+        });
         self.get(&view.id).ok_or_else(|| "session vanished".to_string())
     }
 
@@ -416,6 +421,94 @@ impl OAuthStore {
         self.inner.lock().ok()?.get(id)?.validated.as_ref().map(|v| v.ltoken_string())
     }
 
+    /// Find the session that owns an OAuth `state`.
+    ///
+    /// The browser extension sees the landing page (with the `state` in its
+    /// URL) and asks which Mori session it belongs to.
+    pub fn lookup_by_state(&self, state: &str) -> Option<(String, String)> {
+        if state.is_empty() {
+            return None;
+        }
+        let inner = self.inner.lock().ok()?;
+        let (id, desc_raw) = inner
+            .iter()
+            .find(|(_, p)| !p.state.is_empty() && p.state == state)
+            .map(|(k, p)| (k.clone(), p.desc_raw.clone()))?;
+        Some((id, desc_raw))
+    }
+
+    /// Accept a landing token reported by the browser extension.
+    ///
+    /// The extension ran the `checktoken` POST inside the login page, so the
+    /// server already accepted it on the right session; the reported token is
+    /// the session token. The bundle is completed with the `rid`/`mac`/`wk`
+    /// of the descriptor this session was minted with.
+    pub fn report_landing(
+        &self,
+        id: &str,
+        token: &str,
+        account_type: &str,
+    ) -> Result<OAuthSessionView, String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err("token required".to_string());
+        }
+        let (rid, mac, wk) = {
+            let inner = self.inner.lock().map_err(|_| "store lock poisoned".to_string())?;
+            let p = inner
+                .get(id)
+                .ok_or_else(|| "unknown oauth session".to_string())?;
+            if matches!(p.status, OAuthStatus::Validated { .. }) {
+                return Err("session already validated".to_string());
+            }
+            (p.rid.clone(), p.mac.clone(), p.wk.clone())
+        };
+        let bundle = ValidatedBundle {
+            token: token.to_string(),
+            account_type: if account_type.is_empty() {
+                "google".to_string()
+            } else {
+                account_type.to_string()
+            },
+            rid,
+            mac,
+            wk,
+        };
+        self.store_validated(id, bundle);
+        self.get(id).ok_or_else(|| "session vanished".to_string())
+    }
+
+    /// Open the authorize URL in the user's default browser.
+    ///
+    /// That browser is started by the OS, so it carries no automation flags
+    /// and Google accepts the sign-in. The result comes back through the
+    /// browser extension or a manual token paste.
+    pub fn open_in_system_browser(&self, id: &str) -> Result<(), String> {
+        let url = self.authorize_url(id)?;
+        crate::sysbrowser::open_default_browser(&url).map_err(|e| e.to_string())
+    }
+
+    /// Open the authorize URL in a **bare** Chrome: a completely ordinary
+    /// browser, launched by Mori but without a DevTools port and without any
+    /// automation flag (so Google cannot tell it apart from a human's
+    /// browser). Mori cannot drive it — the sign-in is finished by hand and
+    /// the result comes back through the helper extension or a pasted token.
+    pub fn open_in_bare_browser(&self, id: &str) -> Result<String, String> {
+        let url = self.authorize_url(id)?;
+        let profile =
+            crate::local_browser::open_bare_browser(&url).map_err(|e| e.to_string())?;
+        Ok(profile.display().to_string())
+    }
+
+    /// The authorize URL of a session.
+    fn authorize_url(&self, id: &str) -> Result<String, String> {
+        let inner = self.inner.lock().map_err(|_| "store lock poisoned".to_string())?;
+        let p = inner
+            .get(id)
+            .ok_or_else(|| "unknown oauth session".to_string())?;
+        Ok(p.authorize_url.clone())
+    }
+
     /// Fresh same-jar agent for out-of-band callback fetch attempts.
     /// (Kept for symmetry with the demo's `--callback` mode; the primary
     /// manual path is `submit_callback_url`.)
@@ -432,16 +525,25 @@ async fn run_browser_leg(store: OAuthStore, id: String, watch_timeout_secs: u64)
     let fail = |reason: String| {
         store.fail(&id, reason);
     };
-    let Some(cfg) = CloakConfig::from_env() else {
-        fail("CLOAKBROWSER_CDP_HTTP not set".to_string());
-        return;
+    // A usable CDP provider: the external CloakBrowser manager when it
+    // answers, otherwise the local Chrome/Edge Mori launches itself. When
+    // neither is available the session stays on the manual endpoints.
+    let provider = match remote_view::resolve_provider().await {
+        Ok(p) => p,
+        Err(e) => {
+            store.set_status(&id, OAuthStatus::WaitingBrowser);
+            println!(
+                "[oauth:{id}] no browser provider ({e}) - use the manual callback/token fields"
+            );
+            return;
+        }
     };
     let view = match store.get(&id) {
         Some(v) => v,
         None => return,
     };
 
-    let viewer = match RemoteViewer::open(&cfg, &view.seed_cookies, &view.authorize_url).await {
+    let viewer = match RemoteViewer::open(&provider, &view.seed_cookies, &view.authorize_url).await {
         Ok(v) => v,
         Err(e) => {
             fail(format!("viewer open failed: {e}"));
@@ -449,7 +551,10 @@ async fn run_browser_leg(store: OAuthStore, id: String, watch_timeout_secs: u64)
         }
     };
     store.attach_viewer(&id, viewer.clone());
-    println!("[oauth:{id}] login tab ready — open it from the Google tab (Open browser)");
+    println!(
+        "[oauth:{id}] login tab ready ({}: {}) - open it from the Google tab (Open browser)",
+        provider.source, provider.detail
+    );
 
     let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let print_id = id.clone();
@@ -458,17 +563,29 @@ async fn run_browser_leg(store: OAuthStore, id: String, watch_timeout_secs: u64)
             println!("[oauth:{print_id}] {msg}");
         }
     });
-    let token = remote_view::watch_for_token(&viewer, watch_timeout_secs, &log_tx).await;
-    let Some(landing) = token else {
-        fail("no success token seen before timeout — state likely spent, restart with fresh mint".to_string());
+    let outcome = remote_view::watch_for_token(&viewer, watch_timeout_secs, &log_tx).await;
+    if outcome.rejected {
+        fail(
+            "Google rejected this browser context (/v3/signin/rejected - \"This browser or app \
+             may not be secure\"). Close every Chrome window that is still open (the stealth flag \
+             is a launch flag, so an old instance still carries the automation marker), then \
+             Start again. If it keeps happening use \"Open in my browser\" (no automation at all) \
+             or \"Open in a clean Chrome\"."
+                .to_string(),
+        );
         return;
-    };
+    }
+    if outcome.token.is_none() && outcome.callback_url.is_none() {
+        fail("no success token seen before timeout - state likely spent, restart with fresh mint".to_string());
+        return;
+    }
 
-    // Validate on the mint agent (single jar). The cloak tab saw the callback
-    // in its own profile; if the server rejects (jar split), the operator can
-    // paste the /google/callback URL via the callback endpoint, which replays
-    // the callback fetch on this same jar.
-    let (agent, _proxy, _auth, desc) = match store.checkout_for_exchange(&id) {
+    // Validate on the mint agent (single jar). The browser completed the
+    // callback in its own cookie store, so the landing token has to be
+    // validated on a jar that holds the same session cookies; when the server
+    // rejects it, the browser's cookies are copied over and the validation is
+    // retried (jar split).
+    let (agent, _proxy, authorize_url, desc) = match store.checkout_for_exchange(&id) {
         Ok(v) => v,
         Err(e) => {
             fail(e);
@@ -476,8 +593,42 @@ async fn run_browser_leg(store: OAuthStore, id: String, watch_timeout_secs: u64)
         }
     };
     store.set_status(&id, OAuthStatus::Validating);
+
+    // Browser-side cookies (for the jar-split retry).
+    let browser_cookies = viewer
+        .cookies_for(&["https://login.growtopiagame.com/"])
+        .await;
+    let browser_token = outcome.token.clone();
+    let callback_url = outcome.callback_url.clone();
+
     let result = tokio::task::spawn_blocking(move || {
-        step_checktoken(&agent, &landing, &desc).map_err(|e| e.to_string())
+        // 1. Landing token rendered by the browser (the normal case).
+        // 2. Only when the browser produced no token: replay the callback URL
+        //    on Mori's own jar. The Google `code` is single-use, so this must
+        //    not run after the browser already exchanged it.
+        let landing = match &browser_token {
+            Some(t) => t.clone(),
+            None => {
+                let cb = callback_url
+                    .as_ref()
+                    .ok_or_else(|| "no landing token and no callback URL".to_string())?;
+                step_callback(&agent, cb, &authorize_url).map_err(|e| e.to_string())?
+            }
+        };
+        match step_checktoken(&agent, &landing, &desc) {
+            Ok(bundle) => Ok(bundle),
+            Err(first) => {
+                // Jar split: copy the browser's cookies into our jar and retry
+                // with the same landing token.
+                if browser_cookies.is_empty() {
+                    return Err(first.to_string());
+                }
+                import_cookies(&agent, &browser_cookies);
+                step_checktoken(&agent, &landing, &desc).map_err(|e| {
+                    format!("{e} (after syncing {} browser cookie(s): {first})", browser_cookies.len())
+                })
+            }
+        }
     })
     .await;
     match result {
@@ -486,7 +637,7 @@ async fn run_browser_leg(store: OAuthStore, id: String, watch_timeout_secs: u64)
             store.store_validated(&id, bundle);
         }
         Ok(Err(e)) => fail(format!(
-            "{e} — paste the /google/callback URL via the callback endpoint to retry on the same jar"
+            "{e} - paste the /google/callback URL via the callback endpoint to retry on the same jar"
         )),
         Err(e) => fail(format!("exchange task failed: {e}")),
     }
@@ -526,5 +677,66 @@ fn persist_validated(bundle: &ValidatedBundle) {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending(state: &str) -> PendingOAuth {
+        PendingOAuth {
+            created_at: 0,
+            agent: ureq::Agent::new_with_config(ureq::config::Config::builder().build()),
+            proxy_url: None,
+            authorize_url: format!("https://accounts.google.com/o/oauth2/auth?state={state}"),
+            state: state.to_string(),
+            seed_cookies: Vec::new(),
+            desc_raw: "klv|1".to_string(),
+            rid: "RID".to_string(),
+            mac: "MAC".to_string(),
+            wk: "WK".to_string(),
+            status: OAuthStatus::WaitingBrowser,
+            validated: None,
+            viewer: None,
+        }
+    }
+
+    fn store_with(id: &str, state: &str) -> OAuthStore {
+        let store = OAuthStore::new();
+        store
+            .inner
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), pending(state));
+        store
+    }
+
+    #[test]
+    fn lookup_by_state_finds_the_session() {
+        let store = store_with("sess-1", "abc+def");
+        // The extension sends the decoded state (URLSearchParams decodes %2B).
+        let (found, client_data) = store.lookup_by_state("abc+def").expect("session");
+        assert_eq!(found, "sess-1");
+        assert_eq!(client_data, "klv|1");
+        assert!(store.lookup_by_state("other").is_none());
+        assert!(store.lookup_by_state("").is_none());
+    }
+
+    #[test]
+    fn report_landing_completes_the_bundle() {
+        let store = store_with("sess-2", "x");
+        let view = store.report_landing("sess-2", "TOKEN", "google").expect("validated");
+        assert!(matches!(view.status, OAuthStatus::Validated { .. }));
+        assert_eq!(view.ltoken.as_deref(), Some("TOKEN|RID|MAC|WK"));
+        // A second report is rejected (the session is already terminal).
+        assert!(store.report_landing("sess-2", "TOKEN2", "google").is_err());
+    }
+
+    #[test]
+    fn report_landing_needs_a_token() {
+        let store = store_with("sess-3", "y");
+        assert!(store.report_landing("sess-3", "  ", "google").is_err());
+        assert!(store.report_landing("unknown", "T", "google").is_err());
     }
 }

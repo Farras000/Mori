@@ -62,12 +62,33 @@ class MoriClient:
 
     def __init__(
         self,
-        addr: str = "localhost:50051",
-        token: str = "",
+        addr: Optional[str] = None,
+        token: Optional[str] = None,
         verbose: bool = True,
     ) -> None:
+        if not addr:
+            from botting.config import load_dotenv
+            load_dotenv()
+            addr = os.environ.get("MORI_GRPC_ADDR", "").strip()
+            if not addr:
+                h = os.environ.get("MORI_HOST", "").strip()
+                p = os.environ.get("MORI_GRPC_PORT", "").strip()
+                if h and p:
+                    addr = f"{h}:{p}"
+                elif h:
+                    addr = h
+        if not addr:
+            raise ValueError("Kredensial MORI_GRPC_ADDR (atau MORI_HOST) wajib diset di .env tanpa fallback.")
+
+        if token is None or not str(token).strip():
+            from botting.config import load_dotenv
+            load_dotenv()
+            token = os.environ.get("MORI_GRPC_TOKEN", "").strip()
+        if not token:
+            raise ValueError("Kredensial MORI_GRPC_TOKEN wajib diset di .env tanpa fallback.")
+
         self.addr = addr
-        self.token = (token or "").strip()
+        self.token = str(token).strip()
         self.verbose = verbose
 
         self.channel: Optional[grpc.Channel] = None
@@ -472,11 +493,18 @@ class MoriClient:
             pb.WarpRequest(bot=self.bot_ref, name=name, id=door_id), metadata=self.metadata
         )
 
-    def say(self, text: str) -> None:
-        self.stub.Say(pb.SayRequest(bot=self.bot_ref, text=text), metadata=self.metadata)
+    def run_script(self, content: str) -> None:
+        """Sends a Lua script to Mori to be executed in the server's embedded Lua runner."""
+        if not self.stub:
+            raise MoriError("Not connected")
+        self.stub.RunScript(
+            pb.RunScriptRequest(bot=self.bot_ref, content=str(content)), metadata=self.metadata
+        )
 
     def stop_script(self) -> None:
         """Stops the bot's embedded Lua script; no-op when none is running."""
+        if not self.stub:
+            raise MoriError("Not connected")
         self.stub.StopScript(self.bot_ref, metadata=self.metadata)
 
     def leave_world(self) -> None:

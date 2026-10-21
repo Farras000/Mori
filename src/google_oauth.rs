@@ -30,9 +30,28 @@ pub const OAUTH_GAME_VERSION: &str = crate::constants::GAME_VER;
 pub const OAUTH_PROTOCOL_U32: u32 = crate::constants::PROTOCOL;
 const OAUTH_FHASH: i32 = -716928004;
 
-const SERVER_DATA_URL: &str = "https://www.growtopia1.com/growtopia/server_data.php";
-const DASHBOARD_URL: &str = "https://login.growtopiagame.com/player/login/dashboard?valKey=40db4045f2d8c572efe8c4a060605726";
-const CHECKTOKEN_URL: &str = "https://login.growtopiagame.com/player/growid/checktoken?valKey=40db4045f2d8c572efe8c4a060605726";
+const SERVER_DATA_PATH: &str = "/growtopia/server_data.php";
+
+/// `server_data.php` hosts. `growtopia1.com` is the primary one the game
+/// uses; `growtopia2.com` serves the identical payload and is the fallback
+/// when the primary is blocked (Akamai answers 403 "Access Denied" to
+/// datacenter / rate-limited IPs). Mirrors the legacy bot path
+/// (`src/bot/auth.rs`), which already flips between the two.
+pub const SERVER_DATA_HOSTS: [&str; 2] = ["www.growtopia1.com", "www.growtopia2.com"];
+
+pub const LOGIN_HOST: &str = "login.growtopiagame.com";
+const DASHBOARD_PATH: &str = "/player/login/dashboard?valKey=40db4045f2d8c572efe8c4a060605726";
+const CHECKTOKEN_PATH: &str = "/player/growid/checktoken?valKey=40db4045f2d8c572efe8c4a060605726";
+
+fn dashboard_url() -> String {
+    format!("https://{LOGIN_HOST}{DASHBOARD_PATH}")
+}
+
+/// The `checktoken` endpoint (form POST). Also used by the browser extension,
+/// which runs the same POST inside the login page (same session cookie).
+pub fn checktoken_url() -> String {
+    format!("https://{LOGIN_HOST}{CHECKTOKEN_PATH}")
+}
 
 pub const CLIENT_UA: &str = "UbiServices_SDK_2022.Release.9_PC64_ansi_static";
 pub const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
@@ -66,6 +85,24 @@ pub type OAuthResult<T> = std::result::Result<T, OAuthError>;
 
 fn err_fatal(e: impl ToString) -> OAuthError {
     OAuthError::Fatal(e.to_string())
+}
+
+/// Map an HTTP/transport failure of the mint leg onto `Retryable`.
+///
+/// Everything in the mint phase is worth another try on a different
+/// host/transport: a 403 from Akamai, a 429, a 5xx or a dead proxy all mean
+/// "try the next candidate", not "give up". The final message keeps the
+/// reason so the UI can explain what happened.
+fn err_retry(ctx: &str, e: impl ToString) -> OAuthError {
+    let msg = e.to_string();
+    let hint = if msg.contains("http status: 403") {
+        " (blocked by the edge - Akamai refuses this IP)"
+    } else if msg.contains("http status: 429") {
+        " (rate limited)"
+    } else {
+        ""
+    };
+    OAuthError::Retryable(format!("{ctx}: {msg}{hint}"))
 }
 
 /// Game client percent-encoding: ASCII alnum passes through, space is deleted,
@@ -144,24 +181,30 @@ pub fn new_oauth_agent(proxy_url: Option<&str>) -> OAuthResult<ureq::Agent> {
 }
 
 /// Step 1: `server_data.php` → `meta` (same in-game pair as the descriptor).
-pub fn step_server_data(agent: &ureq::Agent) -> OAuthResult<String> {
+/// `host` picks one of [`SERVER_DATA_HOSTS`].
+pub fn step_server_data(agent: &ureq::Agent, host: &str) -> OAuthResult<String> {
+    let url = format!("https://{host}{SERVER_DATA_PATH}");
     let body = format!(
         "version={}&platform=0&protocol={}",
         OAUTH_GAME_VERSION, OAUTH_PROTOCOL_U32
     );
-    let body = agent
-        .post(SERVER_DATA_URL)
+    let mut resp = agent
+        .post(&url)
         .header("User-Agent", CLIENT_UA)
         .header("Accept", "*/*")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .send(body)
-        .map_err(err_fatal)?
+        .map_err(|e| err_retry(&format!("server_data {host}"), e))?;
+    let body = resp
         .body_mut()
         .read_to_string()
-        .map_err(err_fatal)?;
+        .map_err(|e| err_retry(&format!("server_data {host} body"), e))?;
     let data = ServerData::parse_from_response(&body).map_err(err_fatal)?;
     if data.meta.is_empty() {
-        return Err(err_fatal("no meta| in server_data.php response"));
+        return Err(err_retry(
+            &format!("server_data {host}"),
+            "no meta| in response",
+        ));
     }
     Ok(data.meta)
 }
@@ -176,24 +219,25 @@ pub fn step_dashboard(
 ) -> OAuthResult<(OAuthDescriptor, String)> {
     let desc = build_descriptor(meta, mac);
     let encoded = client_percent_encode(&desc.raw);
+    let dashboard = dashboard_url();
     let html = agent
-        .post(DASHBOARD_URL)
+        .post(&dashboard)
         .header("User-Agent", BROWSER_UA)
         .header("sec-ch-ua", SEC_CH_UA)
         .header("sec-ch-ua-mobile", "?0")
         .header("sec-ch-ua-platform", "\"Windows\"")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Origin", "null")
-        .header("Referer", DASHBOARD_URL)
+        .header("Referer", &dashboard)
         .header(
             "Accept",
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         )
         .send(encoded)
-        .map_err(err_fatal)?
+        .map_err(|e| err_retry("dashboard POST", e))?
         .body_mut()
         .read_to_string()
-        .map_err(err_fatal)?;
+        .map_err(|e| err_retry("dashboard body", e))?;
 
     if html.trim_start().starts_with('{') {
         let msg = serde_json::from_str::<serde_json::Value>(&html)
@@ -237,9 +281,9 @@ pub fn step_google_redirect(
         .save_redirect_history(true)
         .build()
         .header("User-Agent", BROWSER_UA)
-        .header("Referer", DASHBOARD_URL)
+        .header("Referer", dashboard_url())
         .call()
-        .map_err(err_fatal)?;
+        .map_err(|e| err_retry("google/redirect", e))?;
     let history = resp.get_redirect_history().unwrap_or(&[]);
     let auth_url = history
         .iter()
@@ -357,12 +401,12 @@ pub fn step_checktoken(
         return Err(err_fatal("landing token is empty"));
     }
     let body = agent
-        .post(CHECKTOKEN_URL)
+        .post(checktoken_url())
         .header("User-Agent", BROWSER_UA)
         .header("Accept", "application/json")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Origin", "null")
-        .header("Referer", DASHBOARD_URL)
+        .header("Referer", dashboard_url())
         .send_form([
             ("refreshToken", landing_token),
             ("clientData", desc.raw.as_str()),
@@ -417,6 +461,26 @@ pub fn export_seed_cookies(agent: &ureq::Agent) -> Vec<SeedCookie> {
         .collect()
 }
 
+/// Copy cookies from the browser's own store into the agent's jar.
+///
+/// The browser (like the game's WebView2) keeps its own cookie store, while
+/// the validation POST runs on Mori's jar. When the Google callback completes
+/// inside the browser, the landing session cookie has to exist in that jar
+/// too — otherwise the server sees a split session and rejects it (the
+/// "jar split" from report 07 §3).
+pub fn import_cookies(agent: &ureq::Agent, cookies: &[(String, String)]) {
+    let Ok(uri) = "https://login.growtopiagame.com/".parse::<ureq::http::Uri>() else {
+        return;
+    };
+    let mut jar = agent.cookie_jar_lock();
+    for (name, value) in cookies {
+        let raw = format!("{name}={value}");
+        if let Ok(c) = ureq::Cookie::parse(raw, &uri) {
+            let _ = jar.insert(c, &uri);
+        }
+    }
+}
+
 /// Full mint with throttle backoff: fresh `meta` + fresh `rid` per attempt,
 /// sleeps 10/30/60 s between attempts (blocking — call inside `spawn_blocking`).
 pub struct MintedSession {
@@ -428,46 +492,117 @@ pub struct MintedSession {
     pub seed_cookies: Vec<SeedCookie>,
 }
 
+/// Where a mint attempt is made: which transport and which `server_data` host.
+#[derive(Debug, Clone)]
+pub struct MintCandidate {
+    /// SOCKS5 proxy URL, or `None` for a direct connection.
+    pub proxy: Option<String>,
+    /// `server_data.php` host.
+    pub host: String,
+}
+
+impl MintCandidate {
+    pub fn label(&self) -> String {
+        format!(
+            "{} via {}",
+            self.host,
+            self.proxy.as_deref().unwrap_or("direct")
+        )
+    }
+}
+
+/// Candidate order for the mint leg.
+///
+/// The proxy comes first (the login should come from the same IP as the bot),
+/// then the mirror host, then the direct transport. Akamai blocks
+/// datacenter/VPN IPs on `growtopia1.com` with `403 Access Denied`; when
+/// that happens the next candidate is a different host and/or a direct
+/// connection, so the login keeps working.
+pub fn mint_candidates(proxy_url: Option<&str>) -> Vec<MintCandidate> {
+    let mut out = Vec::new();
+    if let Some(p) = proxy_url.filter(|p| !p.is_empty()) {
+        for host in SERVER_DATA_HOSTS {
+            out.push(MintCandidate {
+                proxy: Some(p.to_string()),
+                host: host.to_string(),
+            });
+        }
+    }
+    for host in SERVER_DATA_HOSTS {
+        out.push(MintCandidate {
+            proxy: None,
+            host: host.to_string(),
+        });
+    }
+    out
+}
+
+/// One full mint attempt on a single agent (= single cookie jar).
+fn mint_once(
+    agent: &ureq::Agent,
+    cand: &MintCandidate,
+    mac: Option<&str>,
+) -> OAuthResult<MintedSession> {
+    let meta = step_server_data(agent, &cand.host)?;
+    // Demo spacing (~1.5 s) between mint calls - be kind to the throttle.
+    std::thread::sleep(Duration::from_millis(1500));
+    let (desc, google_href) = step_dashboard(agent, &meta, mac)?;
+    std::thread::sleep(Duration::from_millis(1500));
+    let authorize = step_google_redirect(agent, &google_href)?;
+    let seed_cookies = export_seed_cookies(agent);
+    Ok(MintedSession {
+        agent: agent.clone(),
+        meta,
+        desc,
+        google_href,
+        authorize,
+        seed_cookies,
+    })
+}
+
+/// Mint with backoff, rotating through host/transport candidates.
+///
+/// `max_attempts` bounds the number of `server_data.php` requests (the edge
+/// rate-limits those), not the number of hosts tried: the candidate list is
+/// walked in order and a fresh `meta` + `rid` is minted every time.
 pub fn mint_with_backoff(
     proxy_url: Option<&str>,
     max_attempts: usize,
     mac: Option<&str>,
 ) -> OAuthResult<MintedSession> {
-    let backoff = [10, 30, 60];
-    let mut last_err = OAuthError::Fatal("no attempts made".to_string());
-    for attempt in 0..max_attempts.max(1) {
-        let agent = new_oauth_agent(proxy_url)?;
-        let mac_owned = mac.map(str::to_string);
-        let outcome = (|| -> OAuthResult<MintedSession> {
-            let meta = step_server_data(&agent)?;
-            // Demo spacing (~1.5 s) between mint calls — be kind to the throttle.
-            std::thread::sleep(Duration::from_millis(1500));
-            let (desc, google_href) = step_dashboard(&agent, &meta, mac_owned.as_deref())?;
-            std::thread::sleep(Duration::from_millis(1500));
-            let authorize = step_google_redirect(&agent, &google_href)?;
-            let seed_cookies = export_seed_cookies(&agent);
-            Ok(MintedSession {
-                agent,
-                meta,
-                desc,
-                google_href,
-                authorize,
-                seed_cookies,
-            })
-        })();
-        match outcome {
+    let backoff = [10u64, 30, 60];
+    let candidates = mint_candidates(proxy_url);
+    let max_attempts = max_attempts.max(1);
+    let mut reasons: Vec<String> = Vec::new();
+    let mut idx = 0usize;
+
+    for attempt in 0..max_attempts {
+        let cand = &candidates[idx % candidates.len()];
+        idx += 1;
+        let agent = match new_oauth_agent(cand.proxy.as_deref()) {
+            Ok(a) => a,
+            Err(e) => {
+                reasons.push(format!("[{}] {e}", cand.label()));
+                continue;
+            }
+        };
+        match mint_once(&agent, cand, mac) {
             Ok(m) => return Ok(m),
-            Err(OAuthError::Retryable(msg)) => {
-                last_err = OAuthError::Retryable(msg);
-                if attempt + 1 < max_attempts.max(1) {
+            Err(e) => {
+                reasons.push(format!("[{}] {e}", cand.label()));
+                if attempt + 1 < max_attempts {
                     let wait = backoff.get(attempt).copied().unwrap_or(60);
                     std::thread::sleep(Duration::from_secs(wait));
                 }
             }
-            Err(fatal) => return Err(fatal),
         }
     }
-    Err(last_err)
+    let detail = if reasons.is_empty() {
+        "no mint attempt ran".to_string()
+    } else {
+        reasons.join(" | ")
+    };
+    Err(OAuthError::Retryable(detail))
 }
 
 #[cfg(test)]
@@ -538,5 +673,46 @@ mod tests {
     #[test]
     fn authorize_url_rejects_embedded_host() {
         assert!(parse_authorize_url("https://login.growtopiagame.com/google/callback?code=1").is_err());
+    }
+
+    #[test]
+    fn server_data_hosts_cover_both_mirrors() {
+        // The primary host is Akamai-fronted and answers 403 for some IPs;
+        // the mirror must always be tried too.
+        assert_eq!(SERVER_DATA_HOSTS[0], "www.growtopia1.com");
+        assert_eq!(SERVER_DATA_HOSTS[1], "www.growtopia2.com");
+    }
+
+    #[test]
+    fn candidates_prefer_proxy_then_mirror_then_direct() {
+        let c = mint_candidates(Some("socks5://127.0.0.1:1080"));
+        let labels: Vec<String> = c.iter().map(|x| x.label()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "www.growtopia1.com via socks5://127.0.0.1:1080".to_string(),
+                "www.growtopia2.com via socks5://127.0.0.1:1080".to_string(),
+                "www.growtopia1.com via direct".to_string(),
+                "www.growtopia2.com via direct".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn candidates_without_proxy_are_direct_only() {
+        let c = mint_candidates(None);
+        assert_eq!(c.len(), 2);
+        assert!(c.iter().all(|x| x.proxy.is_none()));
+        assert_eq!(c[0].host, "www.growtopia1.com");
+        assert_eq!(c[1].host, "www.growtopia2.com");
+    }
+
+    #[test]
+    fn blocked_hosts_map_to_retryable() {
+        let e = err_retry("server_data www.growtopia1.com", "http status: 403");
+        assert!(matches!(e, OAuthError::Retryable(_)));
+        let msg = e.to_string();
+        assert!(msg.contains("403"), "{msg}");
+        assert!(msg.contains("Akamai"), "{msg}");
     }
 }

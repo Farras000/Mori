@@ -21,9 +21,27 @@ pb, rpc = gen.pb, gen.rpc
 
 
 def main() -> None:
-    addr = os.environ.get("MORI_GRPC_ADDR", "localhost:50051")
-    token = os.environ.get("MORI_GRPC_TOKEN", "")
-    metadata = [("authorization", f"Bearer {token}")] if token else []
+    try:
+        from botting.config import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+    addr = os.environ.get("MORI_GRPC_ADDR", "").strip()
+    if not addr:
+        h = os.environ.get("MORI_HOST", "").strip()
+        p = os.environ.get("MORI_GRPC_PORT", "").strip()
+        if h and p:
+            addr = f"{h}:{p}"
+        elif h:
+            addr = h
+    if not addr:
+        raise ValueError("Kredensial MORI_GRPC_ADDR (atau MORI_HOST) wajib diset di .env tanpa fallback.")
+
+    token = os.environ.get("MORI_GRPC_TOKEN", "").strip()
+    if not token:
+        raise ValueError("Kredensial MORI_GRPC_TOKEN wajib diset di .env tanpa fallback.")
+
+    metadata = [("authorization", f"Bearer {token}")]
 
     stub = rpc.MoriStub(grpc.insecure_channel(addr))
 
