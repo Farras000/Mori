@@ -1,6 +1,6 @@
 import { authStore } from "./auth";
 
-const BASE = import.meta.env.DEV ? 'http://localhost:3005' : window.location.origin;
+const BASE = import.meta.env.DEV ? 'http://localhost:3000' : window.location.origin;
 
 async function req<T>(
   method: string,
