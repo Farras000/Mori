@@ -1584,7 +1584,7 @@ mod tests {
         println!("base_weather : {}", world.base_weather);
         println!("cur_weather  : {}", world.current_weather);
 
-        assert_eq!(world.version, 0x19);
+        assert_eq!(world.version, 0x1B);
         assert_eq!(
             world.tile_map.tiles.len() as u32,
             world.tile_map.width * world.tile_map.height

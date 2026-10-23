@@ -25,7 +25,7 @@ use ureq::ResponseExt;
 use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, resolve_mac};
 use crate::server_data::ServerData;
 
-/// OAuth descriptor uses Mori's in-game pair (`constants.rs`: 5.59/225).
+/// OAuth descriptor uses Mori's in-game pair (`constants.rs`: 5.61/225).
 pub const OAUTH_GAME_VERSION: &str = crate::constants::GAME_VER;
 pub const OAUTH_PROTOCOL_U32: u32 = crate::constants::PROTOCOL;
 const OAUTH_FHASH: i32 = -716928004;
@@ -623,8 +623,14 @@ mod tests {
         for field in ["klv|", "rid|", "wk|", "mac|", "meta|testmeta", "hash|-1431569110"] {
             assert!(d.raw.contains(field), "missing {field}");
         }
-        assert!(d.raw.contains("protocol|225\n"), "want mori protocol 225");
-        assert!(d.raw.contains("game_version|5.59\n"), "want mori game version");
+        assert!(
+            d.raw.contains(&format!("protocol|{OAUTH_PROTOCOL_U32}\n")),
+            "want mori protocol {OAUTH_PROTOCOL_U32}"
+        );
+        assert!(
+            d.raw.contains(&format!("game_version|{OAUTH_GAME_VERSION}\n")),
+            "want mori game version {OAUTH_GAME_VERSION}"
+        );
         assert_eq!(d.rid.len(), 32);
         assert_eq!(d.wk.len(), 32);
         assert_eq!(d.hash, -1431569110);

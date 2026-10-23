@@ -172,7 +172,7 @@ The extension only talks to `127.0.0.1` and `login.growtopiagame.com`.
 2. **Dashboard POST** with a WebView2 Chrome UA, the game's custom
    percent-encoding table (`client_percent_encode`, byte-exact vs the client),
    and a **fresh `meta` + `rid` per attempt**. In-game `(game_version,
-   protocol)` comes from `src/constants.rs` (currently `5.59/225`) — single
+   protocol)` comes from `src/constants.rs` (currently `5.61/225`) — single
    source of truth, also used for the OAuth descriptor.
 3. **`google/redirect?token=`** href → follows the 302 to
    `accounts.google.com/o/oauth2/auth` and parses the authorize params

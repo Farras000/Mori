@@ -978,13 +978,13 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
         .with_state(state)
         .fallback_service(ServeDir::new(&dist).fallback(ServeFile::new(dist.join("index.html"))));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Dashboard  http://localhost:3000");
-    println!("WebSocket  ws://localhost:3000/ws");
-    println!("API        http://localhost:3000/bots");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3005").await.unwrap();
+    println!("Dashboard  http://localhost:3005");
+    println!("WebSocket  ws://localhost:3005/ws");
+    println!("API        http://localhost:3005/bots");
     // LAN address, so a phone on the same network can open the dashboard.
     for ip in lan_addresses() {
-        println!("LAN        http://{ip}:3000");
+        println!("LAN        http://{ip}:3005");
     }
     axum::serve(listener, app).await.unwrap();
 }

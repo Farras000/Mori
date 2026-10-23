@@ -3,7 +3,7 @@ import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { botsAtom, selectedBotIdAtom } from '@/lib/store'
 import { authStore } from '@/lib/auth'
-import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type SavedBot, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
+import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type ProxyInfo, type SavedBot, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
 import { GoogleBrowserModal } from '@/components/GoogleBrowserModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,9 +37,45 @@ const STATUS_LABEL: Record<BotStatus, string> = {
 
 export function BotSidebar({ onClose }: { onClose?: () => void }) {
   const [showForm, setShowForm] = useState(false)
+  const [width, setWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return 208
+    const saved = localStorage.getItem('mori:sidebar-width')
+    return saved ? Math.min(Math.max(parseInt(saved, 10), 160), 340) : 208
+  })
+  const widthRef = useRef(width)
+  widthRef.current = width
+  const isResizing = useRef(false)
+
+  const MIN_WIDTH = 160
+  const MAX_WIDTH = 340
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return
+      const next = Math.min(Math.max(e.clientX, MIN_WIDTH), MAX_WIDTH)
+      setWidth(next)
+    }
+    const onMouseUp = () => {
+      if (!isResizing.current) return
+      isResizing.current = false
+      localStorage.setItem('mori:sidebar-width', String(widthRef.current))
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
 
   return (
-    <aside className="w-52 h-full shrink-0 flex flex-col bg-card border-r border-border">
+    <aside
+      className="relative h-full shrink-0 flex flex-col bg-card border-r border-border"
+      style={{ width }}
+    >
       {/* Add bot / close row */}
       <div className="shrink-0 p-2 border-b border-border flex gap-1.5">
         <Button
@@ -69,6 +105,16 @@ export function BotSidebar({ onClose }: { onClose?: () => void }) {
         <BotList />
         <SavedBots />
       </ScrollArea>
+
+      {/* Resize handle (drag to resize sidebar width) */}
+      <div
+        className="absolute top-0 right-0 h-full w-2 cursor-ew-resize bg-transparent hover:bg-primary/20 transition-colors"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          isResizing.current = true
+          document.body.style.cursor = 'ew-resize'
+        }}
+      />
     </aside>
   )
 }
@@ -689,7 +735,7 @@ function BotItem({
   selected,
   onSelect,
 }: {
-  bot: { id: number; username: string; status: BotStatus; world_name: string; gems: number }
+  bot: { id: number; username: string; status: BotStatus; world_name: string; gems: number; proxy: ProxyInfo | null }
   selected: boolean
   onSelect: () => void
 }) {
@@ -716,6 +762,25 @@ function BotItem({
       )}
     >
       <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', STATUS_COLOR[bot.status])} />
+      <span
+        className={cn(
+          'text-[9px] font-medium px-1.5 py-0.5 rounded shrink-0 border',
+          bot.proxy
+            ? bot.status === 'connected' || bot.status === 'in_game'
+              ? 'bg-green-500/20 text-green-500 border-green-500/40'
+              : 'bg-red-500/20 text-red-500 border-red-500/40'
+            : 'bg-muted text-muted-foreground border-border',
+        )}
+        title={
+          bot.proxy
+            ? bot.status === 'connected' || bot.status === 'in_game'
+              ? 'Proxy terhubung'
+              : 'Proxy tidak terhubung'
+            : 'Tanpa proxy (koneksi langsung)'
+        }
+      >
+        {bot.proxy ? 'Proxy' : 'Direct'}
+      </span>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium truncate leading-tight">{bot.username}</p>
         {bot.world_name ? (
