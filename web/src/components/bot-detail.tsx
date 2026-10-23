@@ -24,6 +24,14 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Table,
   TableHeader,
   TableBody,
@@ -1094,6 +1102,10 @@ function InventoryTable({
   inventory: import("@/lib/api").InventoryItem[];
   itemLabel: (id: number) => string;
 }) {
+  const [trashTarget, setTrashTarget] = useState<import("@/lib/api").InventoryItem | null>(null);
+  const [emptyOpen, setEmptyOpen] = useState(false);
+  const [error, setError] = useState("");
+
   async function cmd(type: string, item_id: number, count?: number) {
     await api.sendCmd(botId, {
       type,
@@ -1102,69 +1114,230 @@ function InventoryTable({
     } as never);
   }
 
+  async function trashEverything() {
+    // One command per stack - the backend trashes a single item id + count.
+    // A failing stack must not stop the others, so the sends are settled
+    // individually.
+    const stacks = inventory.filter((i) => i.amount > 0);
+    const results = await Promise.allSettled(
+      stacks.map((i) => cmd("trash", i.item_id, i.amount)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      setError(`${failed} of ${stacks.length} stacks could not be trashed`);
+    }
+    setEmptyOpen(false);
+  }
+
   return (
-    <ScrollArea className="max-h-72 rounded border border-border">
-      <Table className="text-xs">
-        <TableHeader className="sticky top-0 bg-card">
-          <TableRow className="border-b border-border">
-            <TableHead>Item</TableHead>
-            <TableHead>Amt</TableHead>
-            <TableHead>Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {inventory.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={3}
-                className="py-2 text-center text-muted-foreground"
-              >
-                Empty
-              </TableCell>
+    <div className="flex flex-col gap-1.5">
+      {inventory.length > 0 && (
+        <div className="flex justify-end">
+          <Btn variant="danger" onClick={() => setEmptyOpen(true)}>
+            Trash all items
+          </Btn>
+        </div>
+      )}
+      <ScrollArea className="max-h-72 rounded border border-border">
+        <Table className="text-xs">
+          <TableHeader className="sticky top-0 bg-card">
+            <TableRow className="border-b border-border">
+              <TableHead>Item</TableHead>
+              <TableHead>Amt</TableHead>
+              <TableHead>Actions</TableHead>
             </TableRow>
-          ) : (
-            [...inventory]
-              .sort((a, b) => b.amount - a.amount)
-              .map((i) => (
-                <TableRow key={i.item_id}>
-                  <TableCell>
-                    {i.is_active && (
-                      <span className="text-primary mr-1">●</span>
-                    )}
-                    {itemLabel(i.item_id)}
-                  </TableCell>
-                  <TableCell>{i.amount}</TableCell>
-                  <TableCell className="px-2 py-1">
-                    <div className="flex gap-1 flex-wrap">
-                      {i.action_type === 20 &&
-                        (i.is_active ? (
-                          <Btn
-                            onClick={() => cmd("unwear", i.item_id)}
-                            variant="active"
-                          >
-                            Unwear
-                          </Btn>
-                        ) : (
-                          <Btn onClick={() => cmd("wear", i.item_id)}>Wear</Btn>
-                        ))}
-                      <Btn onClick={() => cmd("drop", i.item_id, 1)}>Drop</Btn>
-                      <Btn onClick={() => cmd("drop", i.item_id, i.amount)}>
-                        Drop All
-                      </Btn>
-                      <Btn
-                        onClick={() => cmd("trash", i.item_id, 1)}
-                        variant="danger"
-                      >
-                        Trash
-                      </Btn>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-          )}
-        </TableBody>
-      </Table>
-    </ScrollArea>
+          </TableHeader>
+          <TableBody>
+            {inventory.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={3}
+                  className="py-2 text-center text-muted-foreground"
+                >
+                  Empty
+                </TableCell>
+              </TableRow>
+            ) : (
+              [...inventory]
+                .sort((a, b) => b.amount - a.amount)
+                .map((i) => (
+                  <TableRow key={i.item_id}>
+                    <TableCell>
+                      {i.is_active && (
+                        <span className="text-primary mr-1">●</span>
+                      )}
+                      {itemLabel(i.item_id)}
+                    </TableCell>
+                    <TableCell>{i.amount}</TableCell>
+                    <TableCell className="px-2 py-1">
+                      <div className="flex gap-1 flex-wrap">
+                        {i.action_type === 20 &&
+                          (i.is_active ? (
+                            <Btn
+                              onClick={() => cmd("unwear", i.item_id)}
+                              variant="active"
+                            >
+                              Unwear
+                            </Btn>
+                          ) : (
+                            <Btn onClick={() => cmd("wear", i.item_id)}>Wear</Btn>
+                          ))}
+                        <Btn onClick={() => cmd("drop", i.item_id, 1)}>Drop</Btn>
+                        <Btn onClick={() => cmd("drop", i.item_id, i.amount)}>
+                          Drop All
+                        </Btn>
+                        <Btn
+                          onClick={() => cmd("trash", i.item_id, i.amount)}
+                          variant="danger"
+                        >
+                          Trash All
+                        </Btn>
+                        <Btn
+                          onClick={() => setTrashTarget(i)}
+                          variant="danger"
+                        >
+                          Trash…
+                        </Btn>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+            )}
+          </TableBody>
+        </Table>
+      </ScrollArea>
+
+      {trashTarget && (
+        <TrashAmountDialog
+          botId={botId}
+          item={trashTarget}
+          itemLabel={itemLabel}
+          onClose={() => setTrashTarget(null)}
+        />
+      )}
+      {emptyOpen && (
+        <EmptyInventoryDialog
+          inventory={inventory}
+          itemLabel={itemLabel}
+          onConfirm={trashEverything}
+          onClose={() => setEmptyOpen(false)}
+        />
+      )}
+      {error && <p className="text-[10px] text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/** Trash a chosen amount of one stack. */
+function TrashAmountDialog({
+  botId,
+  item,
+  itemLabel,
+  onClose,
+}: {
+  botId: number;
+  item: import("@/lib/api").InventoryItem;
+  itemLabel: (id: number) => string;
+  onClose: () => void;
+}) {
+  const [amount, setAmount] = useState("1");
+  const [error, setError] = useState("");
+  const max = item.amount;
+
+  async function send() {
+    const n = Math.max(1, Math.min(max, Math.trunc(Number(amount)) || 1));
+    setError("");
+    try {
+      await api.sendCmd(botId, {
+        type: "trash",
+        item_id: item.item_id,
+        count: n,
+      } as never);
+      onClose();
+    } catch {
+      setError("Trash failed - is the bot connected?");
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-xs">
+        <DialogHeader>
+          <DialogTitle className="text-sm">
+            Trash {itemLabel(item.item_id)}
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            {max} in the inventory - how many should be destroyed?
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="number"
+            min={1}
+            max={max}
+            value={amount}
+            autoFocus
+            onChange={(e) => setAmount(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") send();
+            }}
+            className="h-7 text-xs"
+          />
+          <Btn onClick={() => setAmount(String(max))}>Max ({max})</Btn>
+        </div>
+        {error && <p className="text-[10px] text-destructive">{error}</p>}
+        <DialogFooter>
+          <Button size="sm" variant="outline" className="text-xs" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="destructive" className="text-xs" onClick={send}>
+            Trash
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Empty the whole inventory (destructive - asks first). */
+function EmptyInventoryDialog({
+  inventory,
+  itemLabel,
+  onConfirm,
+  onClose,
+}: {
+  inventory: import("@/lib/api").InventoryItem[];
+  itemLabel: (id: number) => string;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-xs">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Trash the whole inventory?</DialogTitle>
+          <DialogDescription className="text-xs">
+            {inventory.length} stacks will be destroyed. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="max-h-40 overflow-y-auto rounded border border-border divide-y divide-border text-[10px]">
+          {inventory.map((i) => (
+            <li key={i.item_id} className="px-2 py-1 flex justify-between gap-2">
+              <span className="truncate">{itemLabel(i.item_id)}</span>
+              <span className="text-muted-foreground">× {i.amount}</span>
+            </li>
+          ))}
+        </ul>
+        <DialogFooter>
+          <Button size="sm" variant="outline" className="text-xs" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="destructive" className="text-xs" onClick={onConfirm}>
+            Trash everything
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

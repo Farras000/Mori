@@ -61,7 +61,8 @@ Returns a session token valid until the server restarts or the user logs out.
 
 ### POST `/auth/logout`
 
-Invalidates the current session token.
+Invalidates the session token of the caller. Other devices (a phone next to
+the PC) keep their own session - up to 16 sessions can be active at once.
 
 **Response**
 | Status | Meaning |
@@ -151,12 +152,127 @@ Spawns a new bot using a pre-existing ltoken instead of username/password. The t
 
 ### DELETE `/bots/{id}`
 
-Stops and removes a bot.
+Stops a bot. The bot's **saved configuration is kept** (`data/bots.json`), so
+it can be brought back with `POST /bots/saved/{id}/spawn` - no re-login
+needed. Use `DELETE /bots/saved/{id}` to forget it for good.
+
+The server log names the caller:
+
+```
+[Bot:0] stopped by: ui (DELETE /bots/0)
+[Bot:0] stopped by: gRPC StopBot
+```
 
 | Status | Meaning |
 |--------|---------|
 | `204` | Stopped successfully |
 | `404` | Bot not found |
+
+---
+
+### GET `/bots/saved`
+
+Lists the stored bot configurations (`data/bots.json`). Every spawned bot is
+remembered with its credentials, MAC, proxy, delays and collect flags, so a
+server restart does not cost a re-login.
+
+**Response**
+```json
+{
+  "bots": [
+    {
+      "id": 0,
+      "label": "yancorok53",
+      "kind": "legacy",
+      "mac": "02:11:22:33:44:55",
+      "proxy": { "host": "1.2.3.4", "port": 1080, "username": "user" },
+      "delays": { "place_ms": 180, "walk_ms": 200, "twofa_secs": 120,
+                  "server_overload_secs": 30, "too_many_logins_secs": 5,
+                  "maintenance_secs": 600 },
+      "auto_collect": true,
+      "collect_radius_tiles": 3,
+      "ignore_gems": false,
+      "ignore_essences": false,
+      "auto_leave_on_mod": false,
+      "auto_ban": false,
+      "collect_path_check": true,
+      "auto_reconnect": true,
+      "auto_spawn": false,
+      "saved_at": 1792608447,
+      "running": true
+    }
+  ]
+}
+```
+
+The password is never returned - only the label. `running` tells whether the
+bot is live right now.
+
+---
+
+### POST `/bots/saved/{id}/spawn`
+
+Starts a stored bot with its saved id, credentials, proxy and settings - no
+retyping needed.
+
+**Response**
+```json
+{ "id": 0 }
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Bot started |
+| `404` | No stored bot with that id |
+| `409` | That bot is already running |
+
+---
+
+### POST `/bots/saved/{id}/restart`
+
+Restarts a stored bot: the running bot (if any) is stopped, and after a short
+grace period (1.5 s, so the same account is not logged in twice) it is started
+again from its stored configuration - same id, same credentials, proxy and
+settings.
+
+**Response**
+```json
+{ "id": 0 }
+```
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Bot restarted |
+| `404` | No stored bot with that id |
+
+---
+
+### PATCH `/bots/saved/{id}`
+
+Updates a stored bot.
+
+**Request**
+```json
+{ "auto_spawn": true }
+```
+
+`auto_spawn` starts the bot automatically when the server starts.
+
+**Response**
+```json
+{ "ok": true }
+```
+
+---
+
+### DELETE `/bots/saved/{id}`
+
+Forgets a stored bot (the running bot is not stopped). Use it when the
+credentials should be dropped from disk.
+
+| Status | Meaning |
+|--------|---------|
+| `204` | Forgotten |
 
 ---
 

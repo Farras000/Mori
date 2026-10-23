@@ -536,7 +536,7 @@ impl Mori for MoriService {
             .manager
             .lock()
             .map_err(|_| Status::internal("manager lock poisoned"))?
-            .stop(id);
+            .stop(id, "gRPC StopBot");
         if ok {
             Ok(Response::new(mori::Empty {}))
         } else {

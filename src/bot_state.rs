@@ -90,7 +90,7 @@ pub struct TrackInfo {
     pub awesomeness:     u32,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BotDelays {
     pub place_ms:             u64,
     pub walk_ms:              u64,

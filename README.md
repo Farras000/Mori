@@ -35,6 +35,8 @@ Most Growtopia companion tools are Windows-only. Mori changes that. It's a cross
 | ✅ | World map with textures | Textured world map rendering |
 | ✅ | Bot terminal view | Real-time bot log output |
 | ✅ | Item image preview | Item icons in the database |
+| ✅ | Phone friendly | Open the dashboard from a phone on the same network |
+| ✅ | Saved bots | Login, proxy and delays survive a server restart |
 
 ### Bot Actions
 | | Feature | Description |
@@ -46,6 +48,7 @@ Most Growtopia companion tools are Windows-only. Mori changes that. It's a cross
 | ✅ | Drop / trash item | Inventory management actions |
 | ✅ | Auto collect | Pick up dropped items automatically |
 | ✅ | Auto reconnect | Reconnects on disconnect |
+| ✅ | Inventory trash | Trash a stack, a chosen amount, or the whole inventory |
 
 ### Scripting
 | | Feature | Description |
@@ -95,6 +98,45 @@ cargo build --release
 ```
 
 Then open your browser at `http://localhost:3000` to access the web interface.
+
+### Open the dashboard on your phone
+
+The server listens on all interfaces and prints its LAN address on startup:
+
+```
+Dashboard  http://localhost:3000
+LAN        http://192.168.2.178:3000
+```
+
+Open the `LAN` URL on a phone that is on the same network and log in with the
+Mori password. PC and phone can be logged in at the same time - each device
+gets its own session.
+
+Windows blocks incoming connections by default, so allow the port once
+(elevated PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\open_firewall.ps1
+```
+
+Remove the rule again with `scripts\open_firewall.ps1 -Remove`.
+
+> The dashboard is plain HTTP: the API token travels unencrypted over the
+> local network. Only use it on a network you trust.
+
+### Bots survive a restart
+
+Every spawned bot is remembered in `data/bots.json` (git-ignored, `0600`):
+credentials, MAC, proxy, delays and the collect flags. After a server
+restart the bots show up under **Saved** in the sidebar - press **Spawn**
+(no retyping) or tick **auto** to have them start by themselves.
+
+Stopping a bot keeps its saved configuration (a mis-click costs one
+**Spawn**); use **Forget** to drop the credentials from disk. The server log
+names whoever stopped a bot: `[Bot:0] stopped by: ui (DELETE /bots/0)`.
+
+> `data/bots.json` contains live credentials in plain text. Treat it like a
+> password file and never commit it.
 
 ## Contributors
 

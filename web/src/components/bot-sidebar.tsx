@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy, Check, RefreshCw } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy, Check, RefreshCw, Power, RotateCcw } from 'lucide-react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { botsAtom, selectedBotIdAtom } from '@/lib/store'
 import { authStore } from '@/lib/auth'
-import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
+import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type SavedBot, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
 import { GoogleBrowserModal } from '@/components/GoogleBrowserModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -67,8 +67,156 @@ export function BotSidebar({ onClose }: { onClose?: () => void }) {
       {/* Bot list */}
       <ScrollArea className="flex-1">
         <BotList />
+        <SavedBots />
       </ScrollArea>
     </aside>
+  )
+}
+
+// ── Saved bots (data/bots.json) ──────────────────────────────────────────────
+// Every spawned bot is remembered with its credentials, proxy and delays, so a
+// server restart only costs one "Spawn" click instead of a full re-login.
+
+function SavedBots() {
+  const [bots, setBots] = useState<SavedBot[]>([])
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState<number | null>(null)
+  const [error, setError] = useState('')
+
+  async function refresh() {
+    try {
+      const res = await api.getSavedBots()
+      setBots(res.bots)
+    } catch {
+      // ignore - the panel is optional
+    }
+  }
+
+  useEffect(() => {
+    refresh()
+    const t = setInterval(refresh, 5000)
+    return () => clearInterval(t)
+  }, [])
+
+  if (bots.length === 0) return null
+
+  async function spawn(id: number) {
+    setBusy(id)
+    setError('')
+    try {
+      await api.spawnSavedBot(id)
+      await refresh()
+    } catch (e) {
+      setError('Spawn failed - is the bot already running?')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function restart(id: number) {
+    setBusy(id)
+    setError('')
+    try {
+      await api.restartSavedBot(id)
+      await refresh()
+    } catch {
+      setError('Restart failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function toggleAuto(id: number, auto: boolean) {
+    setBusy(id)
+    try {
+      await api.patchSavedBot(id, { auto_spawn: auto })
+      await refresh()
+    } catch {
+      setError('Update failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function forget(id: number) {
+    setBusy(id)
+    try {
+      await api.deleteSavedBot(id)
+      await refresh()
+    } catch {
+      setError('Delete failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="border-t border-border">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-1 px-2 py-1.5 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+      >
+        {open ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
+        Saved ({bots.length})
+      </button>
+      {open && (
+        <div className="px-2 pb-2 flex flex-col gap-1">
+          {error && <p className="text-[10px] text-destructive">{error}</p>}
+          {bots.map((b) => (
+            <div key={b.id} className="rounded border border-border/60 p-1.5 flex flex-col gap-1">
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] font-medium truncate flex-1" title={b.label}>
+                  {b.label || `bot ${b.id}`}
+                </span>
+                {b.running && <span className="text-[9px] text-emerald-500">running</span>}
+              </div>
+              <p className="text-[9px] text-muted-foreground truncate">
+                {b.kind} - delay {b.delays.place_ms}/{b.delays.walk_ms} ms
+                {b.proxy ? ` - proxy ${b.proxy.host}:${b.proxy.port}` : ''}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="outline" className="h-6 px-1.5 text-[10px] flex-1"
+                  disabled={busy === b.id || b.running}
+                  onClick={() => spawn(b.id)}>
+                  {busy === b.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'Spawn'}
+                </Button>
+                <button
+                  type="button"
+                  title={b.running ? 'Restart the bot (same id and settings)' : 'Start the bot'}
+                  disabled={busy === b.id}
+                  onClick={() => (b.running ? restart(b.id) : spawn(b.id))}
+                  className="text-muted-foreground hover:text-foreground disabled:opacity-50 p-0.5"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" />
+                </button>
+                <button
+                  type="button"
+                  title={b.auto_spawn ? 'Auto-start on: click to disable' : 'Auto-start on restart: click to enable'}
+                  onClick={() => toggleAuto(b.id, !b.auto_spawn)}
+                  className={cn(
+                    'text-[9px] px-1 py-0.5 rounded border',
+                    b.auto_spawn
+                      ? 'text-emerald-500 border-emerald-500/40'
+                      : 'text-muted-foreground border-border',
+                  )}
+                >
+                  auto
+                </button>
+                <button
+                  type="button"
+                  title="Forget this bot"
+                  onClick={() => forget(b.id)}
+                  className="text-muted-foreground hover:text-destructive p-0.5"
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -243,6 +391,10 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Spawn'}
         </Button>
       )}
+      <p className="text-[9px] text-muted-foreground leading-snug">
+        The bot and its settings are saved automatically - after a server restart you only
+        press Spawn again, no re-login needed.
+      </p>
       {error && <p className="text-[10px] text-destructive text-center">{error}</p>}
     </form>
   )
@@ -544,10 +696,10 @@ function BotItem({
   const setBots = useSetAtom(botsAtom)
   const setSelectedId = useSetAtom(selectedBotIdAtom)
 
-  async function handleDelete(e: React.MouseEvent) {
+  async function handleStop(e: React.MouseEvent) {
     e.stopPropagation()
     try {
-      await api.deleteBot(bot.id)
+      await api.stopBot(bot.id)
       setBots((m) => { const n = new Map(m); n.delete(bot.id); return n })
       setSelectedId((id) => (id === bot.id ? null : id))
     } catch {
@@ -573,10 +725,11 @@ function BotItem({
         )}
       </div>
       <button
-        onClick={handleDelete}
+        onClick={handleStop}
+        title="Stop bot - the saved settings are kept, press Spawn again to bring it back"
         className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:text-destructive transition-all shrink-0"
       >
-        <Trash2 className="w-3 h-3" />
+        <Power className="w-3 h-3" />
       </button>
     </div>
   )

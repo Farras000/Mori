@@ -1,6 +1,7 @@
 mod astar;
 mod auth;
 mod bot;
+mod bot_store;
 mod constants;
 mod cursor;
 mod google_oauth;
@@ -34,6 +35,9 @@ use bot_manager::BotManager;
 async fn main() {
     let (ws_tx, _) = tokio::sync::broadcast::channel(256);
     let mgr = Arc::new(Mutex::new(BotManager::new(ws_tx.clone())));
+    // Bring back the bots that were flagged for auto-start, with the settings
+    // they had before the restart (data/bots.json).
+    mgr.lock().unwrap().restore_saved();
     let grpc_handle = tokio::spawn(grpc::serve(mgr.clone(), ws_tx.clone()));
     tokio::select! {
         _ = web::serve(mgr, ws_tx) => {},

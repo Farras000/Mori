@@ -306,6 +306,34 @@ export interface BrowserStatus {
   profile_dir: string | null;
 }
 
+/** A stored bot configuration (data/bots.json) - never contains secrets. */
+export interface SavedBot {
+  id: number;
+  label: string;
+  kind: 'legacy' | 'ltoken';
+  mac: string | null;
+  proxy: { host: string; port: number; username: string | null } | null;
+  delays: {
+    place_ms: number;
+    walk_ms: number;
+    twofa_secs: number;
+    server_overload_secs: number;
+    too_many_logins_secs: number;
+    maintenance_secs: number;
+  };
+  auto_collect: boolean;
+  collect_radius_tiles: number;
+  ignore_gems: boolean;
+  ignore_essences: boolean;
+  auto_leave_on_mod: boolean;
+  auto_ban: boolean;
+  collect_path_check: boolean;
+  auto_reconnect: boolean;
+  auto_spawn: boolean;
+  saved_at: number;
+  running: boolean;
+}
+
 export const api = {
   authStatus: () =>
     fetch(`${BASE}/auth/status`).then((r) => r.json()) as Promise<{
@@ -328,7 +356,7 @@ export const api = {
   spawnBot: (body: SpawnBotBody) => req<{ id: number }>("POST", "/bots", body),
   spawnLtokenBot: (body: SpawnLtokenBody) =>
     req<{ id: number }>("POST", "/bots/ltoken", body),
-  deleteBot: (id: number) => req<void>("DELETE", `/bots/${id}`),
+  stopBot: (id: number) => req<void>("DELETE", `/bots/${id}`),
   getBotState: (id: number) => req<BotState>("GET", `/bots/${id}/state`),
   sendCmd: (id: number, cmd: BotCmd) =>
     req<void>("POST", `/bots/${id}/cmd`, cmd),
@@ -361,6 +389,16 @@ export const api = {
     req<{ opened: boolean; profile: string }>("POST", `/oauth/google/${id}/open-bare`),
   oauthBrowserStatus: () =>
     req<BrowserStatus>("GET", "/oauth/browser/status"),
+  getSavedBots: () =>
+    req<{ bots: SavedBot[] }>("GET", "/bots/saved"),
+  spawnSavedBot: (id: number) =>
+    req<{ id: number }>("POST", `/bots/saved/${id}/spawn`),
+  restartSavedBot: (id: number) =>
+    req<{ id: number }>("POST", `/bots/saved/${id}/restart`),
+  patchSavedBot: (id: number, body: { auto_spawn?: boolean }) =>
+    req<{ ok: boolean }>("PATCH", `/bots/saved/${id}`, body),
+  deleteSavedBot: (id: number) =>
+    req<void>("DELETE", `/bots/saved/${id}`),
 };
 
 export const external_api = {

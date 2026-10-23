@@ -5,6 +5,7 @@ use argon2::{
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{Arc, RwLock},
 };
@@ -52,8 +53,13 @@ struct AuthInner {
     /// None means not yet set up.
     password_hash: Option<String>,
     /// Active session token (single-user, single-session).
-    session_token: Option<String>,
+    /// Active session tokens. A set (not a single token), so a phone and the
+    /// PC can be logged in at the same time without kicking each other out.
+    sessions: HashSet<String>,
 }
+
+/// How many devices may be logged in at the same time (PC + phone + …).
+const MAX_SESSIONS: usize = 16;
 
 impl AuthState {
     pub fn new() -> Self {
@@ -61,7 +67,7 @@ impl AuthState {
         Self {
             inner: Arc::new(RwLock::new(AuthInner {
                 password_hash,
-                session_token: None,
+                sessions: HashSet::new(),
             })),
         }
     }
@@ -83,7 +89,7 @@ impl AuthState {
 
         let mut inner = self.inner.write().unwrap();
         inner.password_hash = Some(hash);
-        inner.session_token = None;
+        inner.sessions.clear();
         Ok(())
     }
 
@@ -99,22 +105,58 @@ impl AuthState {
         drop(inner);
 
         let token = Uuid::new_v4().to_string();
-        self.inner.write().unwrap().session_token = Some(token.clone());
+        let mut inner = self.inner.write().unwrap();
+        // Keep the cap: drop the oldest session when it is reached.
+        if inner.sessions.len() >= MAX_SESSIONS
+            && let Some(old) = inner.sessions.iter().next().cloned()
+        {
+            inner.sessions.remove(&old);
+        }
+        inner.sessions.insert(token.clone());
         Some(token)
     }
 
-    /// Returns true when the given token matches the active session.
+    /// Returns true when the given token matches an active session.
     pub fn validate_token(&self, token: &str) -> bool {
-        self.inner
-            .read()
-            .unwrap()
-            .session_token
-            .as_deref()
-            .map(|t| t == token)
-            .unwrap_or(false)
+        self.inner.read().unwrap().sessions.contains(token)
     }
 
-    pub fn logout(&self) {
-        self.inner.write().unwrap().session_token = None;
+    /// Drop one session (the caller's own) - or all of them when no token is
+    /// given.
+    pub fn logout(&self, token: Option<&str>) {
+        let mut inner = self.inner.write().unwrap();
+        match token {
+            Some(t) => {
+                inner.sessions.remove(t);
+            }
+            None => inner.sessions.clear(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sessions_are_independent() {
+        let auth = AuthState::new();
+        let a = "token-a".to_string();
+        let b = "token-b".to_string();
+        {
+            let mut inner = auth.inner.write().unwrap();
+            inner.sessions.insert(a.clone());
+            inner.sessions.insert(b.clone());
+        }
+        assert!(auth.validate_token(&a));
+        assert!(auth.validate_token(&b));
+
+        // Logging out on one device keeps the other one alive.
+        auth.logout(Some(&a));
+        assert!(!auth.validate_token(&a));
+        assert!(auth.validate_token(&b));
+
+        auth.logout(None);
+        assert!(!auth.validate_token(&b));
     }
 }

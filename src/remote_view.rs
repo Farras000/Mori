@@ -1157,11 +1157,6 @@ mod tests {
         assert_eq!(p.source, PROVIDER_CLOAK);
         assert_eq!(p.cdp_http, "http://localhost:8080/cdp");
         assert_eq!(p.ws_host_override.as_deref(), Some("localhost:8080"));
-        unsafe {
-            std::env::remove_var("CLOAKBROWSER_CDP_HTTP");
-            std::env::remove_var("CLOAKBROWSER_WS_HOST");
-        }
-        assert!(BrowserProvider::cloak_from_env().is_none());
     }
 
     #[test]

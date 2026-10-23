@@ -6,7 +6,7 @@ use axum::{
     http::{StatusCode, Method},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -48,6 +48,24 @@ fn proxy_from_parts(
 }
 
 // ── Auth middleware ────────────────────────────────────────────────────────────
+
+/// Local IPv4 addresses (for "open this on your phone" hints).
+///
+/// Uses the standard trick: connect a UDP socket "outwards" (no traffic is
+/// sent) and ask the OS which local address it would use.
+fn lan_addresses() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        let _ = sock.connect("8.8.8.8:80");
+        if let Ok(addr) = sock.local_addr()
+            && !addr.ip().is_loopback()
+            && addr.ip().is_ipv4()
+        {
+            out.push(addr.ip().to_string());
+        }
+    }
+    out
+}
 
 /// Extract the Bearer token from the `Authorization` header.
 fn extract_bearer(req: &Request) -> Option<String> {
@@ -147,15 +165,120 @@ async fn auth_login(
 }
 
 /// POST /auth/logout
-async fn auth_logout(State(s): State<AppState>) -> StatusCode {
-    s.auth.logout();
+async fn auth_logout(State(s): State<AppState>, headers: axum::http::HeaderMap) -> StatusCode {
+    // Only the caller's own session is dropped - a phone stays logged in.
+    let token = headers
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "));
+    s.auth.logout(token);
     StatusCode::NO_CONTENT
 }
 
 // ── Bot handlers ───────────────────────────────────────────────────────────────
 
 async fn list_bots(State(s): State<AppState>) -> Json<Vec<BotInfo>> {
-    Json(s.manager.lock().unwrap().list())
+    let mgr = s.manager.lock().unwrap();
+    // Keep the stored configuration in sync with the live bots (delays,
+    // proxy, collect flags - whatever changed through the UI, gRPC or Lua).
+    mgr.sync_configs();
+    Json(mgr.list())
+}
+
+// ── Saved bot configurations (data/bots.json) ─────────────────────────────────
+
+/// POST /bots/saved/{id}/restart — stop the running bot (if any) and start
+/// it again from its stored configuration (same id, same settings).
+async fn restart_saved_bot(
+    State(s): State<AppState>,
+    Path(id): Path<u32>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    {
+        let mut mgr = s.manager.lock().unwrap();
+        if mgr.store.get(id).is_none() {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        if mgr.bots.contains_key(&id) {
+            let reason = format!("restart (POST /bots/saved/{id}/restart)");
+            mgr.stop(id, &reason);
+        }
+    }
+    // Give the old connection a moment to close: logging the same account in
+    // twice at once is what triggers Growtopia's "too many logins".
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    let mut mgr = s.manager.lock().unwrap();
+    let Some(cfg) = mgr.store.get(id) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let bot_id = mgr.spawn_saved(&cfg);
+    Ok(Json(serde_json::json!({ "id": bot_id })))
+}
+
+/// GET /bots/saved — stored bot configurations (without the secrets).
+async fn list_saved_bots(State(s): State<AppState>) -> Json<serde_json::Value> {
+    let mgr = s.manager.lock().unwrap();
+    let running: Vec<u32> = mgr.bots.keys().copied().collect();
+    let items: Vec<serde_json::Value> = mgr
+        .store
+        .list()
+        .iter()
+        .map(|c| {
+            let mut v = c.public();
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("running".to_string(), serde_json::json!(running.contains(&c.id)));
+            }
+            v
+        })
+        .collect();
+    Json(serde_json::json!({ "bots": items }))
+}
+
+/// POST /bots/saved/{id}/spawn — start a stored bot (same id, same settings).
+async fn spawn_saved_bot(
+    State(s): State<AppState>,
+    Path(id): Path<u32>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut mgr = s.manager.lock().unwrap();
+    let Some(cfg) = mgr.store.get(id) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    if mgr.bots.contains_key(&id) {
+        return Err(StatusCode::CONFLICT);
+    }
+    let bot_id = mgr.spawn_saved(&cfg);
+    Ok(Json(serde_json::json!({ "id": bot_id })))
+}
+
+#[derive(Deserialize)]
+struct SavedBotPatch {
+    #[serde(default)]
+    auto_spawn: Option<bool>,
+}
+
+/// PATCH /bots/saved/{id} — toggle auto-start.
+async fn patch_saved_bot(
+    State(s): State<AppState>,
+    Path(id): Path<u32>,
+    Json(req): Json<SavedBotPatch>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mgr = s.manager.lock().unwrap();
+    if mgr.store.get(id).is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    if let Some(auto) = req.auto_spawn {
+        mgr.store.update(id, |c| c.auto_spawn = auto);
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// DELETE /bots/saved/{id} — forget a stored bot.
+async fn delete_saved_bot(
+    State(s): State<AppState>,
+    Path(id): Path<u32>,
+) -> StatusCode {
+    let mgr = s.manager.lock().unwrap();
+    mgr.store.remove(id);
+    StatusCode::NO_CONTENT
 }
 
 #[derive(Deserialize)]
@@ -253,7 +376,8 @@ async fn stop_bot(
     State(s): State<AppState>,
     Path(id): Path<u32>,
 ) -> StatusCode {
-    if s.manager.lock().unwrap().stop(id) {
+    let reason = format!("ui (DELETE /bots/{id})");
+    if s.manager.lock().unwrap().stop(id, &reason) {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -418,7 +542,10 @@ async fn bot_cmd(
         CmdRequest::AcceptAccess => BotCommand::AcceptAccess,
         CmdRequest::Warp { name, id } => BotCommand::Warp { name, id },
     };
-    if s.manager.lock().unwrap().send_cmd(id, cmd) {
+    let mut mgr = s.manager.lock().unwrap();
+    // Remember configuration changes right away (the bot may be offline).
+    mgr.record_config_cmd(id, &cmd);
+    if mgr.send_cmd(id, cmd) {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -801,7 +928,7 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::PATCH])
         .allow_headers(Any);
 
     let dist = std::env::current_dir()
@@ -823,6 +950,10 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
         .route("/bots/{id}", delete(stop_bot))
         .route("/bots/{id}/state", get(bot_state))
         .route("/bots/{id}/cmd", post(bot_cmd))
+        .route("/bots/saved", get(list_saved_bots))
+        .route("/bots/saved/{id}/spawn", post(spawn_saved_bot))
+        .route("/bots/saved/{id}/restart", post(restart_saved_bot))
+        .route("/bots/saved/{id}", patch(patch_saved_bot).delete(delete_saved_bot))
         .route("/items", get(list_items))
         .route("/items/names", get(item_names))
         .route("/items/colors", get(item_colors))
@@ -851,5 +982,9 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
     println!("Dashboard  http://localhost:3000");
     println!("WebSocket  ws://localhost:3000/ws");
     println!("API        http://localhost:3000/bots");
+    // LAN address, so a phone on the same network can open the dashboard.
+    for ip in lan_addresses() {
+        println!("LAN        http://{ip}:3000");
+    }
     axum::serve(listener, app).await.unwrap();
 }
