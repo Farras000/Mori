@@ -37,6 +37,7 @@ export type WsEventMap = {
   ObjectsUpdate: { bot_id: number; objects: WorldObject[] }
   InventoryUpdate: { bot_id: number; gems: number; items: InventoryItem[] }
   Console: { bot_id: number; message: string }
+  Chat: { bot_id: number; message: string; kind: "incoming" | "outgoing" }
 }
 
 type Listener<K extends keyof WsEventMap> = (data: WsEventMap[K]) => void

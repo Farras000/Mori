@@ -36,6 +36,7 @@ export interface LiveBot {
   collect_blacklist: number[]
   auto_reconnect: boolean
   proxy: ProxyInfo | null
+  chat: string[]
 }
 
 export function makeBot(id: number, username: string): LiveBot {
@@ -54,6 +55,7 @@ export function makeBot(id: number, username: string): LiveBot {
     collect_blacklist: [],
     auto_reconnect: true,
     proxy: null,
+    chat: [],
   }
 }
 
@@ -213,6 +215,16 @@ export function useMoriStore() {
           if (!bot) return m
           const console_ = [...bot.console, d.message].slice(-500)
           return patchBot(m, d.bot_id, { console: console_ })
+        })],
+
+      ['Chat', (d: { bot_id: number; message: string; kind: "incoming" | "outgoing" }) =>
+        setBots((m) => {
+          const bot = m.get(d.bot_id)
+          if (!bot) return m
+          const prefix = d.kind === 'outgoing' ? '[Kamu]' : ''
+          const line = prefix ? `${prefix} ${d.message}` : d.message
+          const chat = [...bot.chat, line].slice(-500)
+          return patchBot(m, d.bot_id, { chat })
         })],
     ]
 

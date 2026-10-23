@@ -427,6 +427,7 @@ enum CmdRequest {
     },
     AcceptAccess,
     Warp { name: String, id: String },
+    Say { text: String },
 }
 
 #[derive(Deserialize)]
@@ -541,6 +542,7 @@ async fn bot_cmd(
         }
         CmdRequest::AcceptAccess => BotCommand::AcceptAccess,
         CmdRequest::Warp { name, id } => BotCommand::Warp { name, id },
+        CmdRequest::Say { text } => BotCommand::Say { text },
     };
     let mut mgr = s.manager.lock().unwrap();
     // Remember configuration changes right away (the bot may be offline).

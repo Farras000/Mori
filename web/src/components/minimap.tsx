@@ -168,8 +168,8 @@ interface ColorTileLayer {
   height: number
 }
 
-const TILE_PX = 4
-const CHAR_PX = 2
+const TILE_PX = 12
+const CHAR_PX = 4
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 20
 
@@ -234,7 +234,7 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
   const setItemsMap = useSetAtom(itemsMapAtom)
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const [items, setItems] = useState<ItemRecord[]>([])
-  const [useTileManager, setUseTileManager] = useState(false)
+  const [useTileManager, setUseTileManager] = useState(true)
   const [loadingProgress, setLoadingProgress] = useState<{ current: number; total: number; stage: 'loading' | 'decoding' } | null>(null)
   const [currentZoom, setCurrentZoom] = useState(3)
   const appRef = useRef<Application | null>(null)
@@ -696,7 +696,7 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
     app.init({
       resizeTo: el,
       backgroundColor: 0x080c10,
-      antialias: false,
+      antialias: true,
     }).then(() => {
       if (!mounted) { app.destroy(true, { children: true }); return }
 
@@ -953,7 +953,7 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
         className="absolute top-2 right-2 px-2 py-1 text-xs bg-background border border-border rounded hover:bg-accent"
         title="Toggle accurate tile rendering"
       >
-        {useTileManager ? '🎨 Sprites' : '🎨 Colors'}
+        {useTileManager ? '🎨 Sprites' : '🎨 Warna'}
       </button>
 
       <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-background border border-border rounded p-1">

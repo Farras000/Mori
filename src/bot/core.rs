@@ -6,7 +6,7 @@ use crate::bot_state::{
 use crate::constants::{FHASH, GAME_VER, PROTOCOL};
 use crate::cursor::Cursor;
 use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex, resolve_mac};
-use crate::events::{WsEvent, WsInvItem, WsObject, WsTile, WsTx};
+use crate::events::{ChatKind, WsEvent, WsInvItem, WsObject, WsTile, WsTx};
 use crate::inventory::Inventory;
 use crate::items::ItemsDat;
 use crate::login::check_token;
@@ -864,6 +864,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                 })
                                 .ok();
                             }
+                            self.emit(WsEvent::Chat {
+                                bot_id: self.bot_id,
+                                message: s.to_string(),
+                                kind: ChatKind::Incoming,
+                            });
                             if s.contains("Advanced Account Protection") {
                                 self.pending_2fa = true;
                             }
@@ -2721,6 +2726,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             BotCommand::Say { text } => {
                 self.say(&text);
+                self.emit(WsEvent::Chat {
+                    bot_id: self.bot_id,
+                    message: text.clone(),
+                    kind: ChatKind::Outgoing,
+                });
             }
             BotCommand::Warp { name, id } => {
                 self.warp(&name, &id);

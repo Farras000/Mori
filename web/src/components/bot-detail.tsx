@@ -165,7 +165,7 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
         className="flex-1 flex flex-col overflow-hidden"
       >
         <TabsList className="shrink-0 w-full justify-start rounded-none border-b border-border bg-card/40 h-9 px-2 gap-0">
-          {(["overview", "console", "script", "config"] as const).map((t) => (
+          {(["overview", "console", "chat", "script", "config"] as const).map((t) => (
             <TabsTrigger
               key={t}
               value={t}
@@ -187,6 +187,13 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
           className="flex-1 overflow-hidden m-0 p-4 flex flex-col"
         >
           <ConsoleTab lines={bot.console} />
+        </TabsContent>
+
+        <TabsContent
+          value="chat"
+          className="flex-1 overflow-hidden m-0 p-4 flex flex-col"
+        >
+          <ChatTab botId={bot.id} chat={bot.chat} />
         </TabsContent>
 
         <TabsContent
@@ -255,101 +262,111 @@ function OverviewTab({ bot }: { bot: LiveBot }) {
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {/* Left column: minimap + tiles + players */}
-      <div className="flex flex-col gap-4">
-        <Section label="Minimap" hint="click to walk · scroll to zoom">
-          <Minimap bot={bot} />
-        </Section>
-
-        <Section label="Tiles in World">
-          <TilesTable tiles={bot.tiles} itemLabel={itemLabel} />
-        </Section>
-
-        <Section label="Players in World">
-          <DataTable
-            columns={["Name", "Net ID", "Country"]}
-            rows={players.map((p) => [p.name, String(p.net_id), p.country])}
-            empty="No players"
-          />
+    <div className="flex flex-col h-full gap-4">
+      {/* Left: sticky minimap */}
+      <div className="shrink-0 w-[360px] flex flex-col gap-4">
+        <Section label="Minimap" hint="klik untuk jalan · scroll untuk zoom">
+          <div className="sticky top-4 z-10 w-full aspect-video">
+            <Minimap bot={bot} />
+          </div>
         </Section>
       </div>
 
-      {/* Right column: account + inventory + objects */}
-      <div className="flex flex-col gap-4">
-        <Section label="Account">
-          <div className="rounded border border-border bg-background p-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-            {[
-              ["Level", bot.track_info?.level],
-              ["Grow ID", bot.track_info?.grow_id],
-              ["Awesomeness", bot.track_info?.awesomeness],
-              [
-                "Playtime",
-                bot.track_info
-                  ? `${Math.floor(bot.track_info.global_playtime / 3600)}h`
-                  : null,
-              ],
-              [
-                "Install Date",
-                bot.track_info
-                  ? new Date(
-                      bot.track_info.install_date * 1000,
-                    ).toLocaleDateString()
-                  : null,
-              ],
-            ].map(([label, val]) => (
-              <Fragment key={label}>
-                <span className="text-muted-foreground">
-                  {label}
-                </span>
-                <span className="text-foreground">
-                  {val ?? "—"}
-                </span>
-              </Fragment>
-            ))}
+      {/* Right: scrollable content */}
+      <div className="flex-1 overflow-y-auto flex flex-col gap-4 p-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Left column: tiles + players */}
+          <div className="flex flex-col gap-4">
+            <Section label="Tiles in World">
+              <TilesTable tiles={bot.tiles} itemLabel={itemLabel} />
+            </Section>
+
+            <Section label="Players in World">
+              <DataTable
+                columns={["Name", "Net ID", "Country"]}
+                rows={players.map((p) => [p.name, String(p.net_id), p.country])}
+                empty="No players"
+              />
+            </Section>
           </div>
-          <button
-            className="mt-2 w-full rounded border border-border bg-background px-2 py-1 text-xs hover:bg-accent"
-            onClick={() => api.sendCmd(bot.id, { type: "accept_access" })}
-          >
-            Accept Access
-          </button>
-        </Section>
 
-        <AutoCollectRangePanel
-          botId={bot.id}
-          collectRadiusTiles={bot.collect_radius_tiles}
-          collectBlacklist={bot.collect_blacklist}
-        />
+          {/* Right column: account + inventory + objects */}
+          <div className="flex flex-col gap-4">
+            <Section label="Account">
+              <div className="rounded border border-border bg-background p-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                {[
+                  ["Level", bot.track_info?.level],
+                  ["Grow ID", bot.track_info?.grow_id],
+                  ["Awesomeness", bot.track_info?.awesomeness],
+                  [
+                    "Playtime",
+                    bot.track_info
+                      ? `${Math.floor(bot.track_info.global_playtime / 3600)}h`
+                      : null,
+                  ],
+                  [
+                    "Install Date",
+                    bot.track_info
+                      ? new Date(
+                          bot.track_info.install_date * 1000,
+                        ).toLocaleDateString()
+                      : null,
+                  ],
+                ].map(([label, val]) => (
+                  <Fragment key={label}>
+                    <span className="text-muted-foreground">
+                      {label}
+                    </span>
+                    <span className="text-foreground">
+                      {val ?? "—"}
+                    </span>
+                  </Fragment>
+                ))}
+              </div>
+              <button
+                className="mt-2 w-full rounded border border-border bg-background px-2 py-1 text-xs hover:bg-accent"
+                onClick={() => api.sendCmd(bot.id, { type: "accept_access" })}
+              >
+                Accept Access
+              </button>
+            </Section>
 
-        <Section label="Movement">
-          <WarpInput botId={bot.id} />
-          <DPad botId={bot.id} />
-        </Section>
+            <AutoCollectRangePanel
+              botId={bot.id}
+              collectRadiusTiles={bot.collect_radius_tiles}
+              collectBlacklist={bot.collect_blacklist}
+            />
 
-        <Section
-          label="Inventory"
-          hint={bot.inventory_slots > 0 ? `${bot.inventory.length} / ${bot.inventory_slots} slots` : undefined}
-        >
-          <InventoryTable
-            botId={bot.id}
-            inventory={bot.inventory}
-            itemLabel={itemLabel}
-          />
-        </Section>
+            <Section label="Movement">
+              <WarpInput botId={bot.id} />
+              <DPad botId={bot.id} />
+            </Section>
 
-        <Section label="Floating Objects">
-          <DataTable
-            columns={["Item", "Amt", "Pos", "UID"]}
-            rows={bot.objects.map((o) => [
-              itemLabel(o.item_id),
-              String(o.count),
-              `${o.x.toFixed(1)},${o.y.toFixed(1)}`,
-              String(o.uid),
-            ])}
-            empty="No objects"
-          />
-        </Section>
+            <Section
+              label="Inventory"
+              hint={bot.inventory_slots > 0 ? `${bot.inventory.length} / ${bot.inventory_slots} slots` : undefined}
+            >
+              <InventoryTable
+                botId={bot.id}
+                inventory={bot.inventory}
+                itemLabel={itemLabel}
+              />
+            </Section>
+
+            <Section label="Floating Objects">
+              <DataTable
+                columns={["Item", "Amt", "Pos", "UID"]}
+                rows={bot.objects.map((o) => [
+                  itemLabel(o.item_id),
+                  String(o.count),
+                  `${o.x.toFixed(1)},${o.y.toFixed(1)}`,
+                  String(o.uid),
+                ])}
+                empty="No objects"
+              />
+            </Section>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -555,6 +572,72 @@ function ConsoleTab({ lines }: { lines: string[] }) {
       )}
       <div ref={bottomRef} />
     </ScrollArea>
+  );
+}
+
+// ── Chat tab ─────────────────────────────────────────────────────────────────
+
+function ChatTab({ botId, chat }: { botId: number; chat: string[] }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [input, setInput] = useState("");
+  const [status, setStatus] = useState("");
+
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chat]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    try {
+      await api.sendCmd(botId, { type: "say", text });
+      setStatus("Terkirim");
+      setTimeout(() => setStatus(""), 2000);
+    } catch {
+      setStatus("Gagal mengirim");
+      setTimeout(() => setStatus(""), 2000);
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-full gap-2">
+      <div className="flex-1 overflow-y-auto rounded border border-border bg-background p-3 font-mono text-[12px] leading-relaxed">
+        {chat.length === 0 ? (
+          <span className="text-muted-foreground">Belum ada pesan chat.</span>
+        ) : (
+          chat.map((line, i) => (
+            <div key={i} className="whitespace-pre-wrap break-all mb-1">
+              {line.startsWith("[Kamu]") ? (
+                <span className="text-primary">{line}</span>
+              ) : (
+                <span className="text-foreground">{line}</span>
+              )}
+            </div>
+          ))
+        )}
+        <div ref={bottomRef} />
+      </div>
+      <div className="shrink-0 flex items-center gap-2">
+        <Input
+          ref={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && send()}
+          placeholder="/pull, /ban, /say, atau pesan biasa…"
+          className="flex-1 h-7 text-xs"
+          spellCheck={false}
+        />
+        <Button size="sm" className="text-xs" onClick={send} disabled={!input.trim()}>
+          Kirim
+        </Button>
+        {status && (
+          <span className="text-xs text-muted-foreground">{status}</span>
+        )}
+      </div>
+    </div>
   );
 }
 

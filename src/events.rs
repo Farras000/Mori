@@ -59,6 +59,8 @@ pub enum WsEvent {
     InventoryUpdate { bot_id: u32, gems: i32, inventory_size: u32, items: Vec<WsInvItem> },
     /// A new console message arrived.
     Console { bot_id: u32, message: String },
+    /// A chat / game message arrived from the server or sent by the bot.
+    Chat { bot_id: u32, message: String, kind: ChatKind },
     /// Account info extracted from the Track packet (sent once per login).
     BotTrackInfo { bot_id: u32, level: u32, grow_id: u64, install_date: u64, global_playtime: u64, awesomeness: u32 },
     /// GrowID resolved from SetHasGrowID (useful when logged in via ltoken).
@@ -69,6 +71,15 @@ pub enum WsEvent {
     BotDelays { bot_id: u32, place_ms: u64, walk_ms: u64, twofa_secs: u64, server_overload_secs: u64, too_many_logins_secs: u64, maintenance_secs: u64 },
     /// Bot SOCKS5 proxy updated (`proxy_host` is `None` = direct connection).
     BotProxy { bot_id: u32, proxy_host: Option<String>, proxy_port: Option<u16>, proxy_username: Option<String>, proxy_password: Option<String> },
+}
+
+/// Direction of a chat message.
+#[derive(Serialize, Clone, Debug)]
+pub enum ChatKind {
+    /// Message sent by the bot (outgoing).
+    Outgoing,
+    /// Message received from the game server / other players (incoming).
+    Incoming,
 }
 
 pub type WsTx = tokio::sync::broadcast::Sender<WsEvent>;

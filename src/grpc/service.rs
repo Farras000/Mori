@@ -268,7 +268,8 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::BotUsername { bot_id, .. }
         | WsEvent::BotAutoCollect { bot_id, .. }
         | WsEvent::BotDelays { bot_id, .. }
-        | WsEvent::BotProxy { bot_id, .. } => *bot_id,
+        | WsEvent::BotProxy { bot_id, .. }
+        | WsEvent::Chat { bot_id, .. } => *bot_id,
     }
 }
 
@@ -474,6 +475,12 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             mori::bot_event::Event::Console(mori::ConsoleEvent {
                 bot_id: *bot_id,
                 message: format!("[Bot] Proxy updated — {target}"),
+            })
+        }
+        WsEvent::Chat { bot_id, message, kind } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Chat {:?}] {message}", kind),
             })
         }
     };
