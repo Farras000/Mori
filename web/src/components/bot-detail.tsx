@@ -1,4 +1,3 @@
-import { GameDialogModal } from "./game-dialog-modal";
 import { useState, useRef, useEffect, Fragment, type ReactNode } from "react";
 import {
   X,
@@ -206,7 +205,6 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
           />
         </TabsContent>
       </Tabs>
-      <GameDialogModal bot={bot} />
     </div>
   );
 }

@@ -10,11 +10,17 @@ import { SetupPage } from '@/pages/SetupPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { authStore } from '@/lib/auth'
 import { api } from '@/lib/api'
+import { useAtomValue } from 'jotai'
+import { botsAtom, useMoriStore } from '@/lib/store'
+import { GameDialogModal } from '@/components/game-dialog-modal'
 
 type Page = 'bots' | 'items' | 'proxy' | 'docs' | 'grpc'
 type AuthState = 'loading' | 'setup' | 'login' | 'authenticated'
 
 export default function App() {
+  useMoriStore()
+  const bots = useAtomValue(botsAtom)
+  const dialogBot = Array.from(bots.values()).find((b) => b.active_dialog != null)
   const [authState, setAuthState] = useState<AuthState>('loading')
   const [page, setPage] = useState<Page>('bots')
   const isPublicGrpcRoute =
@@ -103,6 +109,7 @@ export default function App() {
         {page === 'docs' && <DocsPage />}
         {page === 'grpc' && <GrpcDocsPage />}
       </div>
+      {dialogBot && <GameDialogModal bot={dialogBot} />}
     </div>
   )
 }

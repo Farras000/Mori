@@ -35,6 +35,7 @@ pub struct BotInfo {
     pub pos_y:   f32,
     pub gems:    i32,
     pub ping_ms: u32,
+    pub active_dialog: Option<crate::events::WsDialog>,
 }
 
 /// Live proxy -> storable proxy.
@@ -420,6 +421,7 @@ impl BotManager {
                 pos_y:   s.pos_y,
                 gems:    s.gems,
                 ping_ms: s.ping_ms,
+                active_dialog: s.active_dialog.clone(),
             }
         }).collect()
     }

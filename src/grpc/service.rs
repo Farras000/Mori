@@ -75,7 +75,9 @@ fn delays_to_proto(d: &BotDelays) -> mori::BotDelays {
 fn delays_from_proto(d: &mori::BotDelays) -> BotDelays {
     BotDelays {
         place_ms: d.place_ms,
+        place_max_ms: None,
         walk_ms: d.walk_ms,
+        walk_max_ms: None,
         twofa_secs: d.twofa_secs,
         server_overload_secs: d.server_overload_secs,
         too_many_logins_secs: d.too_many_logins_secs,
@@ -457,6 +459,7 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             server_overload_secs,
             too_many_logins_secs,
             maintenance_secs,
+            ..
         } => mori::bot_event::Event::Delays(mori::DelaysEvent {
             bot_id: *bot_id,
             delays: Some(mori::BotDelays {

@@ -182,6 +182,8 @@ pub struct BotState {
     pub auto_reconnect: bool,
     /// Current SOCKS5 proxy (`None` = direct connection).
     pub proxy: Option<ProxyInfo>,
+    /// Active modal game dialog or captcha requested by server, if any.
+    pub active_dialog: Option<crate::events::WsDialog>,
 }
 
 impl Default for BotState {
@@ -215,6 +217,7 @@ impl Default for BotState {
             collect_path_check: true,
             auto_reconnect: true,
             proxy: None,
+            active_dialog: None,
         }
     }
 }

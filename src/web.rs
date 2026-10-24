@@ -405,7 +405,22 @@ enum CmdRequest {
     Unwear { item_id: u32 },
     Drop { item_id: u32, count: u32 },
     Trash { item_id: u32, count: u32 },
-    SetDelays(BotDelays),
+    SetDelays {
+        place_ms: u64,
+        #[serde(default)]
+        place_max_ms: Option<u64>,
+        walk_ms: u64,
+        #[serde(default)]
+        walk_max_ms: Option<u64>,
+        #[serde(default)]
+        twofa_secs: Option<u64>,
+        #[serde(default)]
+        server_overload_secs: Option<u64>,
+        #[serde(default)]
+        too_many_logins_secs: Option<u64>,
+        #[serde(default)]
+        maintenance_secs: Option<u64>,
+    },
     SetAutoCollect { enabled: bool },
     SetCollectConfig {
         radius_tiles: u8,
@@ -529,7 +544,25 @@ async fn bot_cmd(
         CmdRequest::Unwear { item_id }      => BotCommand::Unwear { item_id },
         CmdRequest::Drop { item_id, count } => BotCommand::Drop { item_id, count },
         CmdRequest::Trash { item_id, count } => BotCommand::Trash { item_id, count },
-        CmdRequest::SetDelays(d) => BotCommand::SetDelays(d),
+        CmdRequest::SetDelays {
+            place_ms,
+            place_max_ms,
+            walk_ms,
+            walk_max_ms,
+            twofa_secs,
+            server_overload_secs,
+            too_many_logins_secs,
+            maintenance_secs,
+        } => BotCommand::SetDelays(BotDelays {
+            place_ms,
+            place_max_ms,
+            walk_ms,
+            walk_max_ms,
+            twofa_secs: twofa_secs.unwrap_or(120),
+            server_overload_secs: server_overload_secs.unwrap_or(30),
+            too_many_logins_secs: too_many_logins_secs.unwrap_or(5),
+            maintenance_secs: maintenance_secs.unwrap_or(600),
+        }),
         CmdRequest::SetAutoCollect { enabled } => BotCommand::SetAutoCollect { enabled },
         CmdRequest::SetCollectConfig {
             radius_tiles,
@@ -878,18 +911,36 @@ async fn handle_socket(
     mut rx: tokio::sync::broadcast::Receiver<crate::events::WsEvent>,
 ) {
     loop {
-        match rx.recv().await {
-            Ok(event) => {
-                let msg = match serde_json::to_string(&event) {
-                    Ok(s)  => s,
-                    Err(_) => continue,
-                };
-                if socket.send(Message::Text(msg.into())).await.is_err() {
-                    break;
+        tokio::select! {
+            event = rx.recv() => {
+                match event {
+                    Ok(ev) => {
+                        let msg = match serde_json::to_string(&ev) {
+                            Ok(s)  => s,
+                            Err(_) => continue,
+                        };
+                        if socket.send(Message::Text(msg.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        eprintln!("[WS] Receiver lagged by {n} messages");
+                        continue;
+                    }
+                    Err(_) => break,
                 }
             }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(_) => break,
+            incoming = socket.recv() => {
+                match incoming {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(p))) => {
+                        if socket.send(Message::Pong(p)).await.is_err() {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }

@@ -197,6 +197,8 @@ pub struct Bot {
     pub script_stop: Arc<AtomicBool>,
     /// Set when a CAPTCHA or verification prompt is active, freezing all bot actions to avoid evasion bans.
     pub captcha_active: bool,
+    /// Currently active modal dialog waiting for user response.
+    pub active_dialog: Option<crate::events::WsDialog>,
     /// When set, the bot will delay reconnecting until this instant (used for 2FA cooldown).
     reconnect_after: Option<std::time::Instant>,
     /// Set when an `action|log` with "Advanced Account Protection" is received,
@@ -323,6 +325,7 @@ impl Bot {
             script_reply_tx: None,
             script_stop: Arc::new(AtomicBool::new(false)),
             captcha_active: false,
+            active_dialog: None,
             reconnect_after: None,
             pending_2fa: false,
             pending_relogon: false,
@@ -490,6 +493,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             script_reply_tx: None,
             script_stop: Arc::new(AtomicBool::new(false)),
             captcha_active: false,
+            active_dialog: None,
             reconnect_after: None,
             pending_2fa: false,
             pending_relogon: false,
@@ -663,20 +667,25 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let proxy_url = proxy.as_deref();
 
         if !self.ltoken.is_empty() {
-            if let Ok(new_token) = check_token(&self.ltoken, &login_data, proxy_url) {
-                self.log_console("[Bot] Token refreshed via check_token".to_string());
-                self.ltoken = new_token;
-                return;
+            match check_token(&self.ltoken, &login_data, proxy_url) {
+                Ok(new_token) => {
+                    self.log_console("[Bot] Token refreshed via check_token".to_string());
+                    self.ltoken = new_token;
+                    return;
+                }
+                Err(e) => {
+                    self.log_console(format!(
+                        "[Bot] check_token warning: {e} — proceeding with active token"
+                    ));
+                }
             }
-            self.log_console("[Bot] check_token failed".to_string());
         }
 
         match &self.login_method {
             LoginMethod::Ltoken => {
                 self.log_console(
-                    "[Bot] ltoken login — no fallback credentials, stopping bot".to_string(),
+                    "[Bot] ltoken reconnect — proceeding with active token".to_string(),
                 );
-                self.stop_requested = true;
             }
             LoginMethod::Legacy { password } => {
                 let password = password.clone();
@@ -1622,37 +1631,32 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.log_console(format!("[Bot] Dialog: {}", message));
 
                 let dialog = parse_quick_dialog(&message);
-                let lower = message.to_lowercase();
-                let is_captcha = lower.contains("captcha")
-                    || lower.contains("puzzle")
-                    || lower.contains("are you human")
-                    || lower.contains("verify")
-                    || lower.contains("antibot")
-                    || lower.contains("gazette");
-
-                if is_captcha {
-                    self.log_console(
-                        "[Bot] ⚠️ CAPTCHA DIALOG TERDETEKSI: Freezing bot actions (TIDAK disconnect untuk cegah evasion ban)"
-                    );
-                    self.captcha_active = true;
-                    self.pathfind_target = None;
-                    self.pathfind_recalc = false;
-                    self.script_stop.store(true, Ordering::SeqCst);
-                    self.emit(WsEvent::Chat {
-                        bot_id: self.bot_id,
-                        message: "[SAFETY ALERT] Captcha dialog aktif. Buka dashboard untuk menyelesaikan.".into(),
-                        kind: ChatKind::Incoming,
-                    });
-                }
-
                 self.emit(WsEvent::DialogRequest {
                     bot_id: self.bot_id,
-                    dialog,
+                    dialog: dialog.clone(),
                 });
 
                 let cb = self.temporary_data.dialog_callback.lock().unwrap().take();
                 if let Some(cb) = cb {
                     cb(self);
+                } else {
+                    // UNIVERSAL MODAL FREEZE: In GT, all modal dialogs block player actions!
+                    // Continuing to send hit/place/move packets while a dialog is open triggers auto-ban.
+                    self.captcha_active = true;
+                    self.active_dialog = Some(dialog.clone());
+                    self.state.write().unwrap().active_dialog = Some(dialog.clone());
+                    self.pathfind_target = None;
+                    self.pathfind_recalc = false;
+                    self.script_stop.store(true, Ordering::SeqCst);
+                    self.log_console(format!(
+                        "[Bot] ⚠️ MODAL / CAPTCHA DIALOG TERDETEKSI: Freezing bot actions (dialog='{}', title='{}'). Selesaikan via Web Dashboard!",
+                        dialog.dialog_name, dialog.title
+                    ));
+                    self.emit(WsEvent::Chat {
+                        bot_id: self.bot_id,
+                        message: format!("[SAFETY ALERT] Modal dialog aktif ('{}'). Buka dashboard untuk menyelesaikan.", dialog.title),
+                        kind: ChatKind::Incoming,
+                    });
                 }
             }
             "SetHasGrowID" => {
@@ -2800,16 +2804,26 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     fn handle_command(&mut self, cmd: BotCommand) {
         match cmd {
             BotCommand::Move { x, y } => {
-                let cx = ((self.pos_x / 32.0).round() as i32) + x;
-                let cy = ((self.pos_y / 32.0).round() as i32) + y;
-                if cx < 0 || cy < 0 { return; }
-                self.walk((cx + x) as u32, (cy + y) as u32);
+                if self.captcha_active || self.active_dialog.is_some() {
+                    self.log_console("[Bot] Move rejected: modal dialog / captcha is active".to_string());
+                } else {
+                    let cx = ((self.pos_x / 32.0).round() as i32) + x;
+                    let cy = ((self.pos_y / 32.0).round() as i32) + y;
+                    if cx < 0 || cy < 0 { return; }
+                    self.walk((cx + x) as u32, (cy + y) as u32);
+                }
             }
             BotCommand::WalkTo { x, y } => {
-                self.find_path(x, y);
+                if self.captcha_active || self.active_dialog.is_some() {
+                    self.log_console("[Bot] WalkTo rejected: modal dialog / captcha is active".to_string());
+                } else {
+                    self.find_path(x, y);
+                }
             }
             BotCommand::MoveTo { x, y } => {
-                if x >= 0 && y >= 0 {
+                if self.captcha_active || self.active_dialog.is_some() {
+                    self.log_console("[Bot] MoveTo rejected: modal dialog / captcha is active".to_string());
+                } else if x >= 0 && y >= 0 {
                     self.walk(x as u32, y as u32);
                 }
             }
@@ -2865,10 +2879,18 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.reconnect();
             }
             BotCommand::Place { x, y, item } => {
-                self.place(x, y, item, false);
+                if self.captcha_active || self.active_dialog.is_some() {
+                    self.log_console("[Bot] Place rejected: modal dialog / captcha is active".to_string());
+                } else {
+                    self.place(x, y, item, false);
+                }
             }
             BotCommand::Hit { x, y } => {
-                self.punch(x, y);
+                if self.captcha_active || self.active_dialog.is_some() {
+                    self.log_console("[Bot] Hit rejected: modal dialog / captcha is active".to_string());
+                } else {
+                    self.punch(x, y);
+                }
             }
             BotCommand::Wrench { x, y } => {
                 self.wrench_at(x, y);
@@ -3058,10 +3080,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.send_text(&pkt_str);
 
                 self.captcha_active = false;
+                self.active_dialog = None;
+                self.state.write().unwrap().active_dialog = None;
 
                 self.emit(WsEvent::DialogClose { bot_id: self.bot_id });
 
-                self.log_console(format!("[Bot] DialogReturn sent for '{dialog_name}' button='{button}'"));
+                self.log_console(format!("[Bot] DialogReturn sent for '{dialog_name}' button='{button}' — actions unfreezed"));
 
             }
         }

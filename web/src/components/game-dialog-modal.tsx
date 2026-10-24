@@ -22,6 +22,38 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
       setFormValues(initial)
       setErrorMsg("")
       setSubmitting(false)
+
+      // Play audio chime alert via Web Audio API (works without external files)
+      try {
+        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+        if (AudioContextClass) {
+          const ctx = new AudioContextClass()
+          const osc = ctx.createOscillator()
+          const gain = ctx.createGain()
+          osc.type = "sine"
+          osc.frequency.setValueAtTime(880, ctx.currentTime)
+          osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.35)
+          gain.gain.setValueAtTime(0.3, ctx.currentTime)
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35)
+          osc.connect(gain)
+          gain.connect(ctx.destination)
+          osc.start()
+          osc.stop(ctx.currentTime + 0.35)
+        }
+      } catch {
+        // AudioContext might require user gesture on first load
+      }
+
+      // Trigger desktop system notification
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "granted") {
+          new Notification("⚠️ Mori Alert: Dialog / Captcha Masuk!", {
+            body: `Bot #${bot.id} (${bot.username || "Bot"}): ${dialog.title || "Game Dialog"} memerlukan respon!`,
+          })
+        } else if (Notification.permission === "default") {
+          Notification.requestPermission().catch(() => {})
+        }
+      }
     }
   }, [dialog])
 

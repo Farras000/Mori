@@ -33,7 +33,7 @@ use bot_manager::BotManager;
 
 #[tokio::main]
 async fn main() {
-    let (ws_tx, _) = tokio::sync::broadcast::channel(256);
+    let (ws_tx, _) = tokio::sync::broadcast::channel(2048);
     let mgr = Arc::new(Mutex::new(BotManager::new(ws_tx.clone())));
     // Bring back the bots that were flagged for auto-start, with the settings
     // they had before the restart (data/bots.json).

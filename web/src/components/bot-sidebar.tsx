@@ -3,7 +3,7 @@ import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { botsAtom, selectedBotIdAtom } from '@/lib/store'
 import { authStore } from '@/lib/auth'
-import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type ProxyInfo, type SavedBot, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
+import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type ProxyInfo, type WsDialog, type SavedBot, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
 import { GoogleBrowserModal } from '@/components/GoogleBrowserModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -735,7 +735,7 @@ function BotItem({
   selected,
   onSelect,
 }: {
-  bot: { id: number; username: string; status: BotStatus; world_name: string; gems: number; proxy: ProxyInfo | null }
+  bot: { id: number; username: string; status: BotStatus; world_name: string; gems: number; proxy: ProxyInfo | null; active_dialog?: WsDialog | null }
   selected: boolean
   onSelect: () => void
 }) {
@@ -782,7 +782,14 @@ function BotItem({
         {bot.proxy ? 'Proxy' : 'Direct'}
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium truncate leading-tight">{bot.username}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-xs font-medium truncate leading-tight">{bot.username}</p>
+          {Boolean(bot.active_dialog) && (
+            <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.2 rounded bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">
+              DIALOG
+            </span>
+          )}
+        </div>
         {bot.world_name ? (
           <p className="text-[10px] text-muted-foreground truncate leading-tight">{bot.world_name}</p>
         ) : (

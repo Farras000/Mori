@@ -90,19 +90,49 @@ export function useMoriStore() {
   useEffect(() => {
     moriWs.connect()
 
-    api.getBots().then((list: BotSummary[]) => {
-      const map = new Map<number, LiveBot>()
-      for (const b of list) {
-        map.set(b.id, {
-          ...makeBot(b.id, b.username),
-          status: b.status,
-          world_name: b.world,
-          pos_x: b.pos_x, pos_y: b.pos_y,
-          gems: b.gems, ping_ms: b.ping_ms,
+    const syncBots = () => {
+      api.getBots().then((list: BotSummary[]) => {
+        setBots((prev) => {
+          const map = new Map(prev)
+          for (const b of list) {
+            const existing = map.get(b.id)
+            if (existing) {
+              map.set(b.id, {
+                ...existing,
+                status: b.status,
+                world_name: b.world,
+                pos_x: b.pos_x,
+                pos_y: b.pos_y,
+                gems: b.gems,
+                ping_ms: b.ping_ms,
+                active_dialog: b.active_dialog !== undefined ? b.active_dialog : existing.active_dialog,
+              })
+            } else {
+              map.set(b.id, {
+                ...makeBot(b.id, b.username),
+                status: b.status,
+                world_name: b.world,
+                pos_x: b.pos_x,
+                pos_y: b.pos_y,
+                gems: b.gems,
+                ping_ms: b.ping_ms,
+                active_dialog: b.active_dialog ?? null,
+              })
+            }
+          }
+          return map
         })
+      }).catch(() => {})
+    }
+
+    syncBots()
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncBots()
       }
-      setBots(map)
-    }).catch(() => {})
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
     api.getItemNames().then(setItemNames).catch(() => {})
     api.getItemColors().then(setItemColors).catch(() => {})
@@ -242,6 +272,7 @@ export function useMoriStore() {
       for (const [event, handler] of handlers) {
         moriWs.bus.off(event as never, handler as never)
       }
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [setBots, setItemNames])
 }

@@ -68,6 +68,7 @@ export interface BotSummary {
   pos_y: number;
   gems: number;
   ping_ms: number;
+  active_dialog?: WsDialog | null;
 }
 
 export interface Player {
@@ -140,6 +141,7 @@ export interface BotState {
   collect_blacklist: number[];
   auto_reconnect: boolean;
   proxy: ProxyInfo | null;
+  active_dialog?: WsDialog | null;
 }
 
 export interface SpawnBotBody {

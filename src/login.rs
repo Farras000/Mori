@@ -2,6 +2,7 @@ use scraper::{Html, Selector};
 use serde_json::Value;
 use std::fmt;
 use std::time::Duration;
+use ureq::tls::TlsConfig;
 
 #[derive(Debug)]
 pub enum LoginError {
@@ -138,12 +139,14 @@ pub fn check_token(
         ureq::Agent::new_with_config(
             ureq::config::Config::builder()
                 .proxy(Some(proxy))
+                .tls_config(TlsConfig::builder().disable_verification(true).build())
                 .timeout_global(Some(Duration::from_secs(20)))
                 .build(),
         )
     } else {
         ureq::Agent::new_with_config(
             ureq::config::Config::builder()
+                .tls_config(TlsConfig::builder().disable_verification(true).build())
                 .timeout_global(Some(Duration::from_secs(20)))
                 .build(),
         )
