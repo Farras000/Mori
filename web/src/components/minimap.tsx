@@ -1,5 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { Application, Graphics, Container, Sprite, Texture } from 'pixi.js'
+import { Application, Graphics, Container, Sprite, Texture, Text } from 'pixi.js'
+import { cn } from '@/lib/utils'
+import { stripGTColors } from '@/lib/gt-colors'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { itemNamesAtom, itemColorsAtom, itemsMapAtom, type LiveBot } from '@/lib/store'
 import { api, type ItemRecord } from '@/lib/api'
@@ -159,6 +161,15 @@ interface TooltipState {
   tile: TileData
 }
 
+interface SpriteTileLayer {
+  bgContainer: Container
+  fgContainer: Container
+  bgSprites: (Sprite | null)[]
+  fgSprites: (Sprite | null)[]
+  width: number
+  height: number
+}
+
 interface ColorTileLayer {
   canvas: HTMLCanvasElement
   ctx: CanvasRenderingContext2D
@@ -237,15 +248,20 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
   const [useTileManager, setUseTileManager] = useState(true)
   const [loadingProgress, setLoadingProgress] = useState<{ current: number; total: number; stage: 'loading' | 'decoding' } | null>(null)
   const [currentZoom, setCurrentZoom] = useState(3)
+  const [showNames, setShowNames] = useState(true)
   const appRef = useRef<Application | null>(null)
   const layersRef = useRef<{
     tiles: Container
     objects: Graphics
     players: Graphics
     bot: Graphics
+    labels: Container
   } | null>(null)
+  const botLabelRef = useRef<Text | null>(null)
   const tileManagerRef = useRef<TileManager | null>(null)
   const colorTileLayerRef = useRef<ColorTileLayer | null>(null)
+  const spriteTileLayerRef = useRef<SpriteTileLayer | null>(null)
+  const pixiTextureCacheRef = useRef<Map<string, Texture>>(new Map())
   const previousTilesRef = useRef<TileData[] | null>(null)
 
   const botRef = useRef(bot)
@@ -411,13 +427,186 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
     }
   }
 
-  async function renderTilesWithTileManager(container: Container, b: LiveBot, items: ItemRecord[]) {
-    
-    container.removeChildren()
-    
-    if (items.length === 0 || b.tiles.length === 0) {
-      return
+    function getTileTextureRequest(
+    tileManager: TileManager,
+    itemMap: Map<number, ItemRecord>,
+    tile: TileManagerData,
+    isBg: boolean
+  ) {
+    const itemId = isBg ? tile.bgItemId : tile.fgItemId
+    if (itemId === 0) return null
+    const item = itemMap.get(itemId)
+    if (!item) return null
+
+    if (!isBg && tile.fgItemId % 2 === 1) {
+      const treeItemId = tile.fgItemId + 1
+      const treeItem = itemMap.get(treeItemId)
+      if (treeItem) {
+        const baseColor = item.base_color ? new Color(item.base_color) : new Color(0xFFFFFFFF)
+        const overlayColor = item.overlay_color ? new Color(item.overlay_color) : new Color(0xFFFFFFFF)
+        return {
+          textureFileName: "tiles_page1.rttex",
+          textureX: item.tree_base_sprite,
+          textureY: 19,
+          x: tile.x,
+          y: tile.y,
+          isBg: false,
+          isTree: true,
+          treeOverlayY: 18,
+          treeOverlayX: item.tree_overlay_sprite,
+          baseColor: baseColor.getUint(),
+          overlayColor: overlayColor.getUint(),
+        }
+      }
     }
+
+    const coords = tileManager.getSpriteCoords(tile, isBg)
+    return {
+      textureFileName: item.texture_file_name,
+      textureX: coords.x,
+      textureY: coords.y,
+      x: tile.x,
+      y: tile.y,
+      isBg,
+      isTree: false,
+    }
+  }
+
+  async function getOrCreateTileTexture(
+    req: {
+      textureFileName: string
+      textureX: number
+      textureY: number
+      isTree?: boolean
+      treeOverlayX?: number
+      treeOverlayY?: number
+      baseColor?: number
+      overlayColor?: number
+    },
+    textureCache: Map<string, Texture>
+  ): Promise<Texture | null> {
+    const key = req.isTree
+      ? `tree_${req.textureFileName}_${req.treeOverlayX}_${req.treeOverlayY}_${req.baseColor}_${req.overlayColor}`
+      : `${req.textureFileName}_${req.textureX}_${req.textureY}`
+
+    const cached = textureCache.get(key)
+    if (cached && !cached.destroyed) {
+      return cached
+    }
+
+    if (req.isTree && req.treeOverlayY !== undefined && req.treeOverlayX !== undefined) {
+      try {
+        const trunkUrl = await textureCacheManager.getCroppedTile(req.textureFileName, req.textureX, req.textureY)
+        const overlayUrl = await textureCacheManager.getCroppedTile(
+          "tiles_page1.rttex",
+          req.treeOverlayX,
+          req.treeOverlayY
+        )
+        const baseColor = req.baseColor && req.baseColor !== 0 ? new Color(req.baseColor) : undefined
+        const overlayColor = req.overlayColor && req.overlayColor !== 0 ? new Color(req.overlayColor) : undefined
+        const compositeCanvas = await createCompositeTreeTexture(trunkUrl, overlayUrl, baseColor, overlayColor)
+        const texture = Texture.from(compositeCanvas)
+        textureCache.set(key, texture)
+        return texture
+      } catch {
+        return null
+      }
+    }
+
+    try {
+      const url = await textureCacheManager.getCroppedTile(req.textureFileName, req.textureX, req.textureY)
+      if (!url) return null
+      const img = new Image()
+      img.src = url
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = reject
+        setTimeout(() => reject(new Error('Image load timeout')), 5000)
+      })
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      ctx.drawImage(img, 0, 0)
+      const texture = Texture.from(canvas)
+      textureCache.set(key, texture)
+      return texture
+    } catch {
+      return null
+    }
+  }
+
+  async function updateTileSpriteAt(
+    tileManager: TileManager,
+    itemMap: Map<number, ItemRecord>,
+    b: LiveBot,
+    x: number,
+    y: number,
+    layer: SpriteTileLayer,
+    textureCache: Map<string, Texture>
+  ) {
+    if (x < 0 || y < 0 || x >= b.world_width || y >= b.world_height) return
+    const tile = tileManager.getTile(x, y)
+    if (!tile) return
+    const idx = y * b.world_width + x
+
+    // 1. Background
+    const bgReq = getTileTextureRequest(tileManager, itemMap, tile, true)
+    if (!bgReq) {
+      if (layer.bgSprites[idx]) {
+        layer.bgContainer.removeChild(layer.bgSprites[idx]!)
+        layer.bgSprites[idx] = null
+      }
+    } else {
+      const tex = await getOrCreateTileTexture(bgReq, textureCache)
+      if (tex) {
+        if (!layer.bgSprites[idx]) {
+          const sprite = new Sprite(tex)
+          sprite.x = x * TILE_PX
+          sprite.y = y * TILE_PX
+          sprite.width = TILE_PX
+          sprite.height = TILE_PX
+          layer.bgContainer.addChild(sprite)
+          layer.bgSprites[idx] = sprite
+        } else {
+          layer.bgSprites[idx]!.texture = tex
+        }
+      }
+    }
+
+    // 2. Foreground
+    const fgReq = getTileTextureRequest(tileManager, itemMap, tile, false)
+    if (!fgReq) {
+      if (layer.fgSprites[idx]) {
+        layer.fgContainer.removeChild(layer.fgSprites[idx]!)
+        layer.fgSprites[idx] = null
+      }
+    } else {
+      const tex = await getOrCreateTileTexture(fgReq, textureCache)
+      if (tex) {
+        if (!layer.fgSprites[idx]) {
+          const sprite = new Sprite(tex)
+          sprite.x = x * TILE_PX
+          sprite.y = y * TILE_PX
+          sprite.width = TILE_PX
+          sprite.height = TILE_PX
+          layer.fgContainer.addChild(sprite)
+          layer.fgSprites[idx] = sprite
+        } else {
+          layer.fgSprites[idx]!.texture = tex
+        }
+      }
+    }
+  }
+
+  async function renderTilesWithTileManager(
+    container: Container,
+    b: LiveBot,
+    items: ItemRecord[],
+    previousTiles: TileData[] | null
+  ) {
+    if (items.length === 0 || b.tiles.length === 0) return
 
     // Convert to WorldData format
     const tiles: TileManagerData[] = b.tiles.map((tile, i) => ({
@@ -443,213 +632,137 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
 
     const tileManager = tileManagerRef.current
     const itemMap = new Map(items.map(item => [item.id, item]))
+    const textureCache = pixiTextureCacheRef.current
 
-    // Collect all texture requests needed
-    const textureRequests: Array<{
-      textureFileName: string
-      textureX: number
-      textureY: number
-      x: number
-      y: number
-      isBg: boolean
-      isTree?: boolean
-      treeOverlayY?: number
-      treeOverlayX?: number
-      baseColor?: number
-      overlayColor?: number
-      item?: ItemRecord
+    let layer = spriteTileLayerRef.current
+    const needsFullRender =
+      !layer ||
+      layer.width !== b.world_width ||
+      layer.height !== b.world_height ||
+      !previousTiles ||
+      previousTiles.length !== b.tiles.length
+
+    if (!needsFullRender && layer) {
+      // ── INCREMENTAL UPDATE: Only update changed tiles & 3x3 neighbors ──
+      const changedCoords = new Set<string>()
+
+      for (let i = 0; i < b.tiles.length; i++) {
+        const nextTile = b.tiles[i]
+        const prevTile = previousTiles[i]
+        if (
+          nextTile.fg !== prevTile.fg ||
+          nextTile.bg !== prevTile.bg ||
+          nextTile.flags !== prevTile.flags
+        ) {
+          const tx = i % b.world_width
+          const ty = Math.floor(i / b.world_width)
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = tx + dx
+              const ny = ty + dy
+              if (nx >= 0 && ny >= 0 && nx < b.world_width && ny < b.world_height) {
+                changedCoords.add(`${nx},${ny}`)
+              }
+            }
+          }
+        }
+      }
+
+      if (changedCoords.size === 0) return
+
+      // Update only the few changed tiles silently without loading progress
+      const updatePromises: Promise<void>[] = []
+      for (const coordKey of changedCoords) {
+        const [x, y] = coordKey.split(',').map(Number)
+        updatePromises.push(updateTileSpriteAt(tileManager, itemMap, b, x, y, layer, textureCache))
+      }
+      await Promise.all(updatePromises)
+      return
+    }
+
+    // ── FULL INITIAL RENDER ──
+    container.removeChildren()
+
+    const bgContainer = new Container()
+    const fgContainer = new Container()
+    container.addChild(bgContainer)
+    container.addChild(fgContainer)
+
+    layer = {
+      bgContainer,
+      fgContainer,
+      bgSprites: new Array(b.world_width * b.world_height).fill(null),
+      fgSprites: new Array(b.world_width * b.world_height).fill(null),
+      width: b.world_width,
+      height: b.world_height,
+    }
+    spriteTileLayerRef.current = layer
+
+    const requests: Array<{
+      req: NonNullable<ReturnType<typeof getTileTextureRequest>>
+      idx: number
     }> = []
 
     for (let y = 0; y < b.world_height; y++) {
       for (let x = 0; x < b.world_width; x++) {
         const tile = tileManager.getTile(x, y)
         if (!tile) continue
-
-        // Background
-        if (tile.bgItemId !== 0) {
-          const item = itemMap.get(tile.bgItemId)
-          if (item) {
-            const coords = tileManager.getSpriteCoords(tile, true)
-            textureRequests.push({
-              textureFileName: item.texture_file_name,
-              textureX: coords.x,
-              textureY: coords.y,
-              x,
-              y,
-              isBg: true
-            })
-          }
-        }
-
-        // Foreground
-        if (tile.fgItemId !== 0) {
-          const item = itemMap.get(tile.fgItemId)
-          if (item) {
-            const isSeed = tile.fgItemId % 2 === 1;
-            
-            if (isSeed) {
-              const treeItemId = tile.fgItemId + 1;
-              const treeItem = itemMap.get(treeItemId);
-              
-              if (treeItem) {
-                // Convert seed's base_color and overlay_color to Color objects
-                const baseColor = item.base_color ? new Color(item.base_color) : new Color(0xFFFFFFFF);
-                const overlayColor = item.overlay_color ? new Color(item.overlay_color) : new Color(0xFFFFFFFF);
-                
-                // Debug: Log complete seed item data (tree sprites are in the seed item, not tree item)
-                
-                textureRequests.push({
-                  textureFileName: "tiles_page1.rttex",
-                  textureX: item.tree_base_sprite,
-                  textureY: 19,  // Row 19 is the trunk (bottom part)
-                  x,
-                  y,
-                  isBg: false,
-                  isTree: true,
-                  treeOverlayY: 18,  // Row 18 is the leaves (top part)
-                  treeOverlayX: item.tree_overlay_sprite,
-                  baseColor: baseColor.getUint(),
-                  overlayColor: overlayColor.getUint(),
-                  item: treeItem
-                })
-              } else {
-                const coords = tileManager.getSpriteCoords(tile, false)
-                textureRequests.push({
-                  textureFileName: item.texture_file_name,
-                  textureX: coords.x,
-                  textureY: coords.y,
-                  x,
-                  y,
-                  isBg: false
-                })
-              }
-            } else {
-              const coords = tileManager.getSpriteCoords(tile, false)
-              textureRequests.push({
-                textureFileName: item.texture_file_name,
-                textureX: coords.x,
-                textureY: coords.y,
-                x,
-                y,
-                isBg: false
-              })
-            }
-          }
-        }
+        const idx = y * b.world_width + x
+        const bgReq = getTileTextureRequest(tileManager, itemMap, tile, true)
+        if (bgReq) requests.push({ req: bgReq, idx })
+        const fgReq = getTileTextureRequest(tileManager, itemMap, tile, false)
+        if (fgReq) requests.push({ req: fgReq, idx })
       }
     }
 
     const CHUNK_SIZE = 200
-    const bgContainer = new Container()
-    const fgContainer = new Container()
-    const textureCache = new Map<string, Texture>()
-    
-    for (let chunkStart = 0; chunkStart < textureRequests.length; chunkStart += CHUNK_SIZE) {
-      const chunk = textureRequests.slice(chunkStart, chunkStart + CHUNK_SIZE)
-      
-      // Batch load this chunk
-      const chunkTextureReqs = chunk.map(req => ({
-        textureFileName: req.textureFileName,
-        textureX: req.textureX,
-        textureY: req.textureY
-      }))
-      
-      const urls = await textureCacheManager.batchLoadTiles(chunkTextureReqs, (loaded) => {
-        const overallProgress = chunkStart + loaded
-        setLoadingProgress({ 
-          current: overallProgress, 
-          total: textureRequests.length, 
-          stage: 'loading' 
-        })
-      })
-      
-      // Convert loaded images to textures and create sprites
-      setLoadingProgress({ 
-        current: chunkStart, 
-        total: textureRequests.length, 
-        stage: 'decoding' 
-      })
-      
-      for (let i = 0; i < chunk.length; i++) {
-        const req = chunk[i]
-        const url = urls[i]
-        if (!url) continue
-        
-        if (req.isTree && req.treeOverlayY !== undefined && req.treeOverlayX !== undefined) {
-          try {
-            const overlayUrl = await textureCacheManager.getCroppedTile(
-              "tiles_page1.rttex",
-              req.treeOverlayX,
-              req.treeOverlayY
-            );
+    for (let chunkStart = 0; chunkStart < requests.length; chunkStart += CHUNK_SIZE) {
+      const chunk = requests.slice(chunkStart, chunkStart + CHUNK_SIZE)
 
-            const baseColor = req.baseColor && req.baseColor !== 0 ? new Color(req.baseColor) : undefined;
-            const overlayColor = req.overlayColor && req.overlayColor !== 0 ? new Color(req.overlayColor) : undefined;
-            const compositeCanvas = await createCompositeTreeTexture(url, overlayUrl, baseColor, overlayColor);
-            
-            const texture = Texture.from(compositeCanvas);
-            const sprite = new Sprite(texture);
-            sprite.x = req.x * TILE_PX;
-            sprite.y = req.y * TILE_PX;
-            sprite.width = TILE_PX;
-            sprite.height = TILE_PX;
-            fgContainer.addChild(sprite);
-          } catch (e) {
-          }
-          continue;
-        }
-        
-        const key = `${req.textureFileName}_${req.textureX}_${req.textureY}`
-        
-        let texture = textureCache.get(key)
-        if (!texture) {
-          try {
-            const img = new Image()
-            img.src = url
-            await new Promise<void>((resolve, reject) => {
-              img.onload = () => resolve()
-              img.onerror = reject
-              setTimeout(() => reject(new Error('Image load timeout')), 5000)
-            })
-            
-            const canvas = document.createElement('canvas')
-            canvas.width = img.width
-            canvas.height = img.height
-            const ctx = canvas.getContext('2d')
-            if (ctx) {
-              ctx.drawImage(img, 0, 0)
-              texture = Texture.from(canvas)
-              textureCache.set(key, texture)
-            }
-          } catch (e) {
-            continue
-          }
-        }
-        
+      setLoadingProgress({
+        current: chunkStart,
+        total: requests.length,
+        stage: 'loading'
+      })
+
+      const chunkTextureReqs = chunk.map(item => ({
+        textureFileName: item.req.textureFileName,
+        textureX: item.req.textureX,
+        textureY: item.req.textureY
+      }))
+
+      await textureCacheManager.batchLoadTiles(chunkTextureReqs)
+
+      setLoadingProgress({
+        current: chunkStart,
+        total: requests.length,
+        stage: 'decoding'
+      })
+
+      for (const item of chunk) {
+        const texture = await getOrCreateTileTexture(item.req, textureCache)
         if (texture) {
           const sprite = new Sprite(texture)
-          sprite.x = req.x * TILE_PX
-          sprite.y = req.y * TILE_PX
+          sprite.x = item.req.x * TILE_PX
+          sprite.y = item.req.y * TILE_PX
           sprite.width = TILE_PX
           sprite.height = TILE_PX
-          
-          if (req.isBg) {
+
+          if (item.req.isBg) {
             bgContainer.addChild(sprite)
+            layer.bgSprites[item.idx] = sprite
           } else {
             fgContainer.addChild(sprite)
+            layer.fgSprites[item.idx] = sprite
           }
         }
       }
-      
-      // Yield to main thread between chunks
-      if (chunkStart + CHUNK_SIZE < textureRequests.length) {
+
+      if (chunkStart + CHUNK_SIZE < requests.length) {
         await new Promise(resolve => setTimeout(resolve, 0))
       }
     }
 
-    container.addChild(bgContainer)
-    container.addChild(fgContainer)
-    
     setLoadingProgress(null)
   }
 
@@ -671,6 +784,13 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
     world.scale.set(zoom.current)
     world.x = offset.current.x
     world.y = offset.current.y
+    const labels = layersRef.current?.labels
+    if (labels) {
+      const invScale = 1 / Math.max(0.2, zoom.current)
+      for (const child of labels.children) {
+        child.scale.set(invScale)
+      }
+    }
   }
 
   const centerOnBot = useCallback(() => {
@@ -708,9 +828,11 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
       const objectGfx = new Graphics()
       const playerGfx = new Graphics()
       const botGfx = new Graphics()
-      world.addChild(tileContainer, objectGfx, playerGfx, botGfx)
+      const labelContainer = new Container()
+      labelContainer.visible = true
+      world.addChild(tileContainer, objectGfx, playerGfx, botGfx, labelContainer)
       app.stage.addChild(world)
-      layersRef.current = { tiles: tileContainer, objects: objectGfx, players: playerGfx, bot: botGfx }
+      layersRef.current = { tiles: tileContainer, objects: objectGfx, players: playerGfx, bot: botGfx, labels: labelContainer }
 
       // Draw whatever is already loaded (state was fetched before Pixi was ready)
       const b = botRef.current
@@ -730,6 +852,44 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
 
       botGfx.rect(b.pos_x * TILE_PX + (TILE_PX - CHAR_PX) / 2, (b.pos_y + 1) * TILE_PX - CHAR_PX, CHAR_PX, CHAR_PX).fill(0xef4444)
 
+      // Initial bot label
+      const bText = new Text({
+        text: b.username || 'Bot',
+        style: {
+          fontSize: 10,
+          fontFamily: 'Inter, system-ui, sans-serif',
+          fontWeight: 'bold',
+          fill: 0x4ade80,
+          stroke: { color: 0x000000, width: 3 },
+        },
+        resolution: 2,
+      })
+      bText.anchor.set(0.5, 1)
+      bText.position.set(b.pos_x * TILE_PX + TILE_PX / 2, b.pos_y * TILE_PX - 2)
+      bText.scale.set(1 / zoom.current)
+      labelContainer.addChild(bText)
+      botLabelRef.current = bText
+
+      // Initial player labels
+      for (const p of b.players.values()) {
+        const cleanName = stripGTColors(p.name) || `Player #${p.net_id}`
+        const pText = new Text({
+          text: cleanName,
+          style: {
+            fontSize: 10,
+            fontFamily: 'Inter, system-ui, sans-serif',
+            fontWeight: '600',
+            fill: 0xffffff,
+            stroke: { color: 0x000000, width: 3 },
+          },
+          resolution: 2,
+        })
+        pText.anchor.set(0.5, 1)
+        pText.position.set(p.pos_x * TILE_PX + TILE_PX / 2, p.pos_y * TILE_PX - 2)
+        pText.scale.set(1 / zoom.current)
+        labelContainer.addChild(pText)
+      }
+
       centerOnBot()
     })
 
@@ -740,7 +900,10 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
         appRef.current = null
       }
       layersRef.current = null
+      botLabelRef.current = null
       colorTileLayerRef.current = null
+      spriteTileLayerRef.current = null
+      pixiTextureCacheRef.current.clear()
       previousTilesRef.current = null
     }
   }, [centerOnBot])
@@ -751,14 +914,18 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
     
     if (useTileManager && items.length > 0) {
       colorTileLayerRef.current = null
-      renderTilesWithTileManager(layers.tiles, bot, items)
+      const isInitial = !previousTilesRef.current || previousTilesRef.current.length !== bot.tiles.length
+      renderTilesWithTileManager(layers.tiles, bot, items, previousTilesRef.current)
         .then(() => {
           previousTilesRef.current = bot.tiles
-          centerOnBot()
+          if (isInitial) {
+            centerOnBot()
+          }
         })
         .catch(() => {
           layers.tiles.removeChildren()
           colorTileLayerRef.current = null
+          spriteTileLayerRef.current = null
           const g = new Graphics()
           for (let i = 0; i < bot.tiles.length; i++) {
             const tile = bot.tiles[i]
@@ -772,6 +939,7 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
           previousTilesRef.current = bot.tiles
         })
     } else {
+      spriteTileLayerRef.current = null
       renderTilesColor(layers.tiles, bot, itemColors, previousTilesRef.current)
       previousTilesRef.current = bot.tiles
       centerOnBot()
@@ -798,6 +966,34 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
     for (const p of bot.players.values()) {
       g.rect(p.pos_x * TILE_PX, p.pos_y * TILE_PX, TILE_PX, TILE_PX).fill(0x60a5fa)
     }
+
+    // Refresh player labels
+    const labels = layers.labels
+    const botText = botLabelRef.current
+    labels.removeChildren()
+    if (botText) {
+      labels.addChild(botText)
+    }
+
+    const invScale = 1 / Math.max(0.2, zoom.current)
+    for (const p of bot.players.values()) {
+      const cleanName = stripGTColors(p.name) || `Player #${p.net_id}`
+      const pText = new Text({
+        text: cleanName,
+        style: {
+          fontSize: 10,
+          fontFamily: 'Inter, system-ui, sans-serif',
+          fontWeight: '600',
+          fill: 0xffffff,
+          stroke: { color: 0x000000, width: 3 },
+        },
+        resolution: 2,
+      })
+      pText.anchor.set(0.5, 1)
+      pText.position.set(p.pos_x * TILE_PX + TILE_PX / 2, p.pos_y * TILE_PX - 2)
+      pText.scale.set(invScale)
+      labels.addChild(pText)
+    }
   }, [bot.players])
 
   useEffect(() => {
@@ -806,8 +1002,18 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
       layers.bot.clear()
       layers.bot.rect(bot.pos_x * TILE_PX + (TILE_PX - CHAR_PX) / 2, (bot.pos_y + 1) * TILE_PX - CHAR_PX, CHAR_PX, CHAR_PX).fill(0xef4444)
     }
+    if (botLabelRef.current) {
+      botLabelRef.current.text = bot.username || 'Bot'
+      botLabelRef.current.position.set(bot.pos_x * TILE_PX + TILE_PX / 2, bot.pos_y * TILE_PX - 2)
+    }
     centerOnBot()
-  }, [bot.pos_x, bot.pos_y, centerOnBot])
+  }, [bot.pos_x, bot.pos_y, bot.username, centerOnBot])
+
+  useEffect(() => {
+    if (layersRef.current?.labels) {
+      layersRef.current.labels.visible = showNames
+    }
+  }, [showNames])
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = containerRef.current!.getBoundingClientRect()
@@ -946,15 +1152,31 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
         </div>
       )}
 
-      <button
-        onClick={() => {
-          setUseTileManager(!useTileManager)
-        }}
-        className="absolute top-2 right-2 px-2 py-1 text-xs bg-background border border-border rounded hover:bg-accent"
-        title="Toggle accurate tile rendering"
-      >
-        {useTileManager ? '🎨 Sprites' : '🎨 Warna'}
-      </button>
+      <div className="absolute top-2 right-2 flex items-center gap-1.5">
+        <button
+          onClick={() => setShowNames(!showNames)}
+          className={cn(
+            "px-2 py-1 text-xs border rounded transition-colors",
+            showNames ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border hover:bg-accent"
+          )}
+          title="Toggle player names on minimap"
+        >
+          🏷️ Nama
+        </button>
+
+        <button
+          onClick={() => {
+            spriteTileLayerRef.current = null
+            colorTileLayerRef.current = null
+            previousTilesRef.current = null
+            setUseTileManager(!useTileManager)
+          }}
+          className="px-2 py-1 text-xs bg-background border border-border rounded hover:bg-accent"
+          title="Toggle accurate tile rendering"
+        >
+          {useTileManager ? '🎨 Sprites' : '🎨 Warna'}
+        </button>
+      </div>
 
       <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-background border border-border rounded p-1">
         <button
@@ -1015,6 +1237,7 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
 
 export const Minimap = memo(MinimapInner, (prev, next) => (
   prev.bot.id === next.bot.id &&
+  prev.bot.username === next.bot.username &&
   prev.bot.world_width === next.bot.world_width &&
   prev.bot.world_height === next.bot.world_height &&
   prev.bot.tiles === next.bot.tiles &&

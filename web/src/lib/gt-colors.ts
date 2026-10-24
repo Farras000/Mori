@@ -32,3 +32,8 @@ export function parseGTColors(text: string): string {
   if (open) html += '</span>'
   return html
 }
+
+export function stripGTColors(text: string): string {
+  if (!text) return ''
+  return text.replace(/`./g, '').trim()
+}

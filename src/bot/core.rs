@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
+use rand::Rng;
 
 use super::auth::fetch_credentials;
 use super::shared::{BotEventRaw, Socks5Config, TemporaryData};
@@ -194,6 +195,8 @@ pub struct Bot {
     script_reply_tx: Option<crossbeam_channel::Sender<crate::script_channel::ScriptReply>>,
     /// Set to true to interrupt a running Lua script.
     pub script_stop: Arc<AtomicBool>,
+    /// Set when a CAPTCHA or verification prompt is active, freezing all bot actions to avoid evasion bans.
+    pub captcha_active: bool,
     /// When set, the bot will delay reconnecting until this instant (used for 2FA cooldown).
     reconnect_after: Option<std::time::Instant>,
     /// Set when an `action|log` with "Advanced Account Protection" is received,
@@ -319,6 +322,7 @@ impl Bot {
             script_req_rx: None,
             script_reply_tx: None,
             script_stop: Arc::new(AtomicBool::new(false)),
+            captcha_active: false,
             reconnect_after: None,
             pending_2fa: false,
             pending_relogon: false,
@@ -485,6 +489,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             script_req_rx: None,
             script_reply_tx: None,
             script_stop: Arc::new(AtomicBool::new(false)),
+            captcha_active: false,
             reconnect_after: None,
             pending_2fa: false,
             pending_relogon: false,
@@ -749,7 +754,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             self.service_once();
             self.drain_script_requests();
-            if self.auto_collect
+            if self.auto_collect && !self.captcha_active
                 && self.collect_timer.elapsed() >= std::time::Duration::from_millis(self.collect_interval)
             {
                 self.collect_timer = std::time::Instant::now();
@@ -758,6 +763,47 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
+
+    /// Calculate delay with random humanized jitter (-5% to +15%) to break static timing bot detection.
+    pub fn jittered_delay(base_ms: u64) -> u64 {
+        if base_ms < 50 {
+            return base_ms;
+        }
+        let mut rng = rand::rng();
+        let min_delta = -(base_ms as i64 * 5 / 100).max(5);
+        let max_delta = (base_ms as i64 * 15 / 100).max(10);
+        let delta = rng.random_range(min_delta..=max_delta);
+        (base_ms as i64 + delta).max(40) as u64
+    }
+
+    /// Sleep with humanized jitter (+/- 10%) to break static rhythm.
+    pub fn sleep_jittered(&mut self, base_ms: u64) {
+        let actual = Self::jittered_delay(base_ms);
+        self.sleep_ms(actual);
+    }
+
+    /// Get randomized place delay from [place_ms ..= place_max_ms] if configured, else jittered place_ms.
+    pub fn get_place_delay(&self) -> u64 {
+        let min = self.delays.place_ms;
+        if let Some(max) = self.delays.place_max_ms {
+            if max > min {
+                return rand::rng().random_range(min..=max);
+            }
+        }
+        Self::jittered_delay(min)
+    }
+
+    /// Get randomized walk delay from [walk_ms ..= walk_max_ms] if configured, else jittered walk_ms.
+    pub fn get_walk_delay(&self) -> u64 {
+        let min = self.delays.walk_ms;
+        if let Some(max) = self.delays.walk_max_ms {
+            if max > min {
+                return rand::rng().random_range(min..=max);
+            }
+        }
+        Self::jittered_delay(min)
+    }
+
 
     /// Sleep for `ms` milliseconds while keeping ENet alive.
     pub fn sleep_ms(&mut self, ms: u64) {
@@ -1536,6 +1582,37 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     gems,
                 });
             }
+            "OnTalkBubble" => {
+                let net_id = vl.get(1).map(|v| v.as_int32()).unwrap_or(-1);
+                let text = vl.get(2).map(|v| v.as_string()).unwrap_or_default();
+                self.log_console(format!("[Bot] TalkBubble (net_id={net_id}): {text}"));
+                self.emit(WsEvent::Chat {
+                    bot_id: self.bot_id,
+                    message: format!("[Bubble #{net_id}] {text}"),
+                    kind: ChatKind::Incoming,
+                });
+                let lower = text.to_lowercase();
+                if lower.contains("captcha")
+                    || lower.contains("solve")
+                    || lower.contains("human")
+                    || lower.contains("verify")
+                    || lower.contains("warning")
+                    || lower.contains("antibot")
+                {
+                    self.log_console(format!(
+                        "[Bot] ⚠️ CAPTCHA / VERIFIKASI TERDETEKSI: '{text}' — Freeze bot (TIDAK disconnect untuk cegah ban)"
+                    ));
+                    self.captcha_active = true;
+                    self.pathfind_target = None;
+                    self.pathfind_recalc = false;
+                    self.script_stop.store(true, Ordering::SeqCst);
+                    self.emit(WsEvent::Chat {
+                        bot_id: self.bot_id,
+                        message: format!("[SAFETY] Captcha terdeteksi: '{text}'. Bot di-freeze otomatis demi keamanan."),
+                        kind: ChatKind::Incoming,
+                    });
+                }
+            }
             "OnConsoleMessage" => {
                 let message = vl.get(1).map(|v| v.as_string()).unwrap_or_default();
                 self.log_console(message);
@@ -1543,6 +1620,36 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             "OnDialogRequest" => {
                 let message = vl.get(1).map(|v| v.as_string()).unwrap_or_default();
                 self.log_console(format!("[Bot] Dialog: {}", message));
+
+                let dialog = parse_quick_dialog(&message);
+                let lower = message.to_lowercase();
+                let is_captcha = lower.contains("captcha")
+                    || lower.contains("puzzle")
+                    || lower.contains("are you human")
+                    || lower.contains("verify")
+                    || lower.contains("antibot")
+                    || lower.contains("gazette");
+
+                if is_captcha {
+                    self.log_console(
+                        "[Bot] ⚠️ CAPTCHA DIALOG TERDETEKSI: Freezing bot actions (TIDAK disconnect untuk cegah evasion ban)"
+                    );
+                    self.captcha_active = true;
+                    self.pathfind_target = None;
+                    self.pathfind_recalc = false;
+                    self.script_stop.store(true, Ordering::SeqCst);
+                    self.emit(WsEvent::Chat {
+                        bot_id: self.bot_id,
+                        message: "[SAFETY ALERT] Captcha dialog aktif. Buka dashboard untuk menyelesaikan.".into(),
+                        kind: ChatKind::Incoming,
+                    });
+                }
+
+                self.emit(WsEvent::DialogRequest {
+                    bot_id: self.bot_id,
+                    dialog,
+                });
+
                 let cb = self.temporary_data.dialog_callback.lock().unwrap().take();
                 if let Some(cb) = cb {
                     cb(self);
@@ -1561,6 +1668,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
             "OnRequestWorldSelectMenu" => {
                 self.world = None;
+                self.captcha_active = false;
                 self.pathfind_target = None;
                 self.pathfind_recalc = false;
                 let removed = {
@@ -2080,6 +2188,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     }
 
     pub fn walk(&mut self, tile_x: u32, tile_y: u32) {
+        if self.captcha_active {
+            return;
+        }
         let target_x = tile_x as f32 * 32.0;
         let target_y = tile_y as f32 * 32.0;
 
@@ -2112,10 +2223,14 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         };
 
         self.send_game_packet(&pkt, false);
-        self.sleep_ms(self.delays.walk_ms);
+        let d = self.get_walk_delay();
+        self.sleep_ms(d);
     }
 
     pub fn place(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
+        if self.captcha_active {
+            return;
+        }
         if !is_punch && !self.inventory.has_item(item_id as u16, 1) {
             return;
         }
@@ -2151,7 +2266,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         pkt.packet_type = GamePacketType::State;
         pkt.flags = flags;
         self.send_game_packet(&pkt, true);
-        self.sleep_ms(self.delays.place_ms);
+        let d = self.get_place_delay();
+        self.sleep_ms(d);
 
         if !is_punch && item_id != 18 && item_id != 32 {
             self.inventory.sub_item(item_id as u16, 1);
@@ -2224,8 +2340,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     }
 
     pub fn collect(&mut self, radius: Option<u8>, delay: Option<u64>) -> usize {
-        // Must be in a world
-        if self.world.is_none() {
+        // Must be in a world and not dealing with captcha
+        if self.world.is_none() || self.captcha_active {
             return 0;
         }
 
@@ -2352,11 +2468,14 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     }
 
     pub fn find_path(&mut self, to_x: u32, to_y: u32) {
+        if self.captcha_active {
+            return;
+        }
         self.pathfind_target = Some((to_x, to_y));
         self.pathfind_recalc = false;
 
         while self.pathfind_target.is_some() {
-            if self.world.is_none() {
+            if self.world.is_none() || self.captcha_active {
                 self.pathfind_target = None;
                 return;
             }
@@ -2623,7 +2742,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.emit(WsEvent::BotDelays {
                     bot_id: self.bot_id,
                     place_ms: self.delays.place_ms,
+                    place_max_ms: self.delays.place_max_ms,
                     walk_ms: self.delays.walk_ms,
+                    walk_max_ms: self.delays.walk_max_ms,
                     twofa_secs: self.delays.twofa_secs,
                     server_overload_secs: self.delays.server_overload_secs,
                     too_many_logins_secs: self.delays.too_many_logins_secs,
@@ -2637,7 +2758,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.emit(WsEvent::BotDelays {
                     bot_id: self.bot_id,
                     place_ms: self.delays.place_ms,
+                    place_max_ms: self.delays.place_max_ms,
                     walk_ms: self.delays.walk_ms,
+                    walk_max_ms: self.delays.walk_max_ms,
                     twofa_secs: self.delays.twofa_secs,
                     server_overload_secs: self.delays.server_overload_secs,
                     too_many_logins_secs: self.delays.too_many_logins_secs,
@@ -2824,7 +2947,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.emit(WsEvent::BotDelays {
                     bot_id: self.bot_id,
                     place_ms: d.place_ms,
+                    place_max_ms: d.place_max_ms,
                     walk_ms: d.walk_ms,
+                    walk_max_ms: d.walk_max_ms,
                     twofa_secs: d.twofa_secs,
                     server_overload_secs: d.server_overload_secs,
                     too_many_logins_secs: d.too_many_logins_secs,
@@ -2919,6 +3044,26 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 ));
             }
             BotCommand::AcceptAccess => self.accept_access(),
+
+            BotCommand::DialogReturn { dialog_name, button, fields } => {
+
+                let mut pkt_str = format!("action|dialog_return\ndialog_name|{dialog_name}\nbuttonClicked|{button}\n");
+
+                for (k, v) in fields {
+
+                    pkt_str.push_str(&format!("{k}|{v}\n"));
+
+                }
+
+                self.send_text(&pkt_str);
+
+                self.captcha_active = false;
+
+                self.emit(WsEvent::DialogClose { bot_id: self.bot_id });
+
+                self.log_console(format!("[Bot] DialogReturn sent for '{dialog_name}' button='{button}'"));
+
+            }
         }
     }
 
@@ -2984,6 +3129,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     }
 
     pub fn warp(&mut self, name: &str, id: &str) {
+        self.captcha_active = false;
         self.send_game_message(&format!(
             "action|join_request\nname|{name}|{id}\ninvitedWorld|0\n"
         ));
@@ -3192,4 +3338,98 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
         }
     }
+}
+
+
+pub fn parse_quick_dialog(raw: &str) -> crate::events::WsDialog {
+    let mut dialog = crate::events::WsDialog {
+        raw: raw.to_string(),
+        confirm_label: "OK".to_string(),
+        cancel_label: "Cancel".to_string(),
+        ..Default::default()
+    };
+
+    for line in raw.lines() {
+        let parts: Vec<&str> = line.split('|').collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        match parts[0] {
+            "add_label_icon" => {
+                if let Some(t) = parts.get(2) {
+                    if !t.is_empty() {
+                        dialog.title = t.to_string();
+                    }
+                }
+            }
+            "add_textbox" | "add_smalltext" => {
+                if let Some(txt) = parts.get(1) {
+                    let cleaned = txt.trim();
+                    if !cleaned.is_empty() {
+                        dialog.body_text.push(cleaned.to_string());
+                    }
+                }
+            }
+            "add_text_input" => {
+                let name = parts.get(1).unwrap_or(&"").to_string();
+                let label = parts.get(2).unwrap_or(&"").to_string();
+                let default_val = parts.get(3).unwrap_or(&"").to_string();
+                let max_len = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+                if !name.is_empty() {
+                    dialog.inputs.push(crate::events::DialogField {
+                        name,
+                        label,
+                        default_val,
+                        max_len,
+                    });
+                }
+            }
+            "add_url_button" => {
+                let name = parts.get(1).unwrap_or(&"").to_string();
+                let label = parts.get(2).unwrap_or(&"").to_string();
+                let url = parts.get(3).unwrap_or(&"").to_string();
+                dialog.buttons.push(crate::events::DialogButton {
+                    name,
+                    label,
+                    url: if url.is_empty() { None } else { Some(url) },
+                });
+            }
+            "add_button" => {
+                let name = parts.get(1).unwrap_or(&"").to_string();
+                let label = parts.get(2).unwrap_or(&"").to_string();
+                if !name.is_empty() {
+                    dialog.buttons.push(crate::events::DialogButton {
+                        name,
+                        label,
+                        url: None,
+                    });
+                }
+            }
+            "end_dialog" => {
+                if let Some(name) = parts.get(1) {
+                    dialog.dialog_name = name.to_string();
+                }
+                if let Some(confirm) = parts.get(2) {
+                    if !confirm.is_empty() {
+                        dialog.confirm_label = confirm.to_string();
+                    }
+                }
+                if let Some(cancel) = parts.get(3) {
+                    dialog.cancel_label = cancel.to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if dialog.title.is_empty() {
+        dialog.title = if dialog.dialog_name.is_empty() {
+            "Game Dialog".to_string()
+        } else {
+            dialog.dialog_name.clone()
+        };
+    }
+
+    dialog
 }

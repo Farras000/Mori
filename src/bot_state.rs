@@ -93,7 +93,11 @@ pub struct TrackInfo {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BotDelays {
     pub place_ms:             u64,
+    #[serde(default)]
+    pub place_max_ms:         Option<u64>,
     pub walk_ms:              u64,
+    #[serde(default)]
+    pub walk_max_ms:          Option<u64>,
     pub twofa_secs:           u64,
     pub server_overload_secs: u64,
     pub too_many_logins_secs: u64,
@@ -103,8 +107,10 @@ pub struct BotDelays {
 impl Default for BotDelays {
     fn default() -> Self {
         Self {
-            place_ms:             500,
-            walk_ms:              500,
+            place_ms:             200,
+            place_max_ms:         Some(240),
+            walk_ms:              220,
+            walk_max_ms:          Some(260),
             twofa_secs:           120,
             server_overload_secs: 30,
             too_many_logins_secs: 5,
@@ -265,6 +271,11 @@ pub enum BotCommand {
     SetWalkDelay { ms: u64 },
     SetProxy { proxy: Option<crate::bot::Socks5Config> },
     AcceptAccess,
+    DialogReturn {
+        dialog_name: String,
+        button: String,
+        fields: std::collections::HashMap<String, String>,
+    },
 }
 
 pub type CmdSender   = mpsc::Sender<BotCommand>;

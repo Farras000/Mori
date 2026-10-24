@@ -1,4 +1,4 @@
-import type { BotStatus, WorldObject, InventoryItem } from './api'
+import type { BotStatus, WorldObject, InventoryItem, WsDialog } from './api'
 import { authStore } from './auth'
 
 // ── Event payload types ────────────────────────────────────────────────────
@@ -38,6 +38,8 @@ export type WsEventMap = {
   InventoryUpdate: { bot_id: number; gems: number; items: InventoryItem[] }
   Console: { bot_id: number; message: string }
   Chat: { bot_id: number; message: string; kind: "incoming" | "outgoing" }
+  DialogRequest: { bot_id: number; dialog: WsDialog }
+  DialogClose: { bot_id: number }
 }
 
 type Listener<K extends keyof WsEventMap> = (data: WsEventMap[K]) => void

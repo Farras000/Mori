@@ -1,4 +1,32 @@
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DialogField {
+    pub name: String,
+    pub label: String,
+    pub default_val: String,
+    pub max_len: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DialogButton {
+    pub name: String,
+    pub label: String,
+    pub url: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct WsDialog {
+    pub dialog_name: String,
+    pub raw: String,
+    pub title: String,
+    pub body_text: Vec<String>,
+    pub inputs: Vec<DialogField>,
+    pub buttons: Vec<DialogButton>,
+    pub confirm_label: String,
+    pub cancel_label: String,
+}
+
 use crate::world::TileType;
 
 #[derive(Serialize, Clone, Debug)]
@@ -68,9 +96,13 @@ pub enum WsEvent {
     /// Bot auto-collect toggled.
     BotAutoCollect { bot_id: u32, enabled: bool },
     /// Bot delays updated.
-    BotDelays { bot_id: u32, place_ms: u64, walk_ms: u64, twofa_secs: u64, server_overload_secs: u64, too_many_logins_secs: u64, maintenance_secs: u64 },
+    BotDelays { bot_id: u32, place_ms: u64, place_max_ms: Option<u64>, walk_ms: u64, walk_max_ms: Option<u64>, twofa_secs: u64, server_overload_secs: u64, too_many_logins_secs: u64, maintenance_secs: u64 },
     /// Bot SOCKS5 proxy updated (`proxy_host` is `None` = direct connection).
     BotProxy { bot_id: u32, proxy_host: Option<String>, proxy_port: Option<u16>, proxy_username: Option<String>, proxy_password: Option<String> },
+    /// Quick dialog / Captcha requested by game server.
+    DialogRequest { bot_id: u32, dialog: WsDialog },
+    /// Active dialog closed or answered.
+    DialogClose { bot_id: u32 },
 }
 
 /// Direction of a chat message.

@@ -426,6 +426,12 @@ enum CmdRequest {
         proxy_password: Option<String>,
     },
     AcceptAccess,
+    DialogReturn {
+        dialog_name: String,
+        button: String,
+        #[serde(default)]
+        fields: std::collections::HashMap<String, String>,
+    },
     Warp { name: String, id: String },
     Say { text: String },
 }
@@ -541,6 +547,9 @@ async fn bot_cmd(
             }
         }
         CmdRequest::AcceptAccess => BotCommand::AcceptAccess,
+        CmdRequest::DialogReturn { dialog_name, button, fields } => {
+            BotCommand::DialogReturn { dialog_name, button, fields }
+        }
         CmdRequest::Warp { name, id } => BotCommand::Warp { name, id },
         CmdRequest::Say { text } => BotCommand::Say { text },
     };

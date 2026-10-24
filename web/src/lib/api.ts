@@ -173,7 +173,9 @@ export type BotCmd =
   | {
     type: "set_delays";
     place_ms: number;
+    place_max_ms?: number | null;
     walk_ms: number;
+    walk_max_ms?: number | null;
     twofa_secs: number;
     server_overload_secs: number;
     too_many_logins_secs: number;
@@ -193,7 +195,38 @@ export type BotCmd =
   | { type: "set_collect_config"; radius_tiles: number; blacklist: number[] }
   | { type: "accept_access" }
   | { type: "warp"; name: string; id: string }
-  | { type: "say"; text: string };
+  | { type: "say"; text: string }
+  | {
+      type: "dialog_return";
+      dialog_name: string;
+      button: string;
+      fields?: Record<string, string>;
+    };
+
+export interface DialogField {
+  name: string;
+  label: string;
+  default_val: string;
+  max_len: number;
+}
+
+export interface DialogButton {
+  name: string;
+  label: string;
+  url?: string | null;
+}
+
+export interface WsDialog {
+  dialog_name: string;
+  raw: string;
+  title: string;
+  body_text: string[];
+  inputs: DialogField[];
+  buttons: DialogButton[];
+  confirm_label: string;
+  cancel_label: string;
+}
+
 
 export interface ProxyTestRequest {
   proxy_host: string;

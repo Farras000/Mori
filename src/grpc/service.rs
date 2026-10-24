@@ -269,7 +269,9 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::BotAutoCollect { bot_id, .. }
         | WsEvent::BotDelays { bot_id, .. }
         | WsEvent::BotProxy { bot_id, .. }
-        | WsEvent::Chat { bot_id, .. } => *bot_id,
+        | WsEvent::Chat { bot_id, .. }
+        | WsEvent::DialogRequest { bot_id, .. }
+        | WsEvent::DialogClose { bot_id } => *bot_id,
     }
 }
 
@@ -481,6 +483,18 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             mori::bot_event::Event::Console(mori::ConsoleEvent {
                 bot_id: *bot_id,
                 message: format!("[Chat {:?}] {message}", kind),
+            })
+        }
+        WsEvent::DialogRequest { bot_id, dialog } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Dialog] {}", dialog.title),
+            })
+        }
+        WsEvent::DialogClose { bot_id } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: "[Dialog] Closed".into(),
             })
         }
     };

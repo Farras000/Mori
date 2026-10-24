@@ -1,3 +1,4 @@
+import { GameDialogModal } from "./game-dialog-modal";
 import { useState, useRef, useEffect, Fragment, type ReactNode } from "react";
 import {
   X,
@@ -177,9 +178,7 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
         </TabsList>
 
         <TabsContent value="overview" className="flex-1 overflow-hidden m-0">
-          <ScrollArea className="h-full p-4">
-            <OverviewTab bot={bot} />
-          </ScrollArea>
+          <OverviewTab bot={bot} />
         </TabsContent>
 
         <TabsContent
@@ -207,6 +206,7 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
           />
         </TabsContent>
       </Tabs>
+      <GameDialogModal bot={bot} />
     </div>
   );
 }
@@ -255,10 +255,25 @@ function OverviewTab({ bot }: { bot: LiveBot }) {
   };
 
   return (
-    <div className="flex flex-col h-full gap-4">
-      {/* Left: main scrollable content */}
-      <div className="flex-1 overflow-y-auto flex flex-col gap-4 p-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="h-full flex flex-col overflow-hidden p-4 gap-4">
+      {/* Top PiP Dock: Minimap + Chat side-by-side (Pinned / Always visible) */}
+      <div className="shrink-0 flex flex-col sm:flex-row gap-4 items-start">
+        <div className="w-full sm:w-[440px] shrink-0">
+          <Section label="Minimap" hint="klik untuk jalan · scroll untuk zoom">
+            <div className="w-full aspect-video">
+              <Minimap bot={bot} />
+            </div>
+          </Section>
+        </div>
+
+        <div className="w-full sm:w-[380px] lg:w-[420px] shrink-0 h-[272px]">
+          <ChatPanel botId={bot.id} chat={bot.chat} />
+        </div>
+      </div>
+
+      {/* Bottom Content: Scrollable independent area */}
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pr-3 pb-4">
           {/* Left column: tiles + players */}
           <div className="flex flex-col gap-4">
             <Section label="Tiles in World">
@@ -351,17 +366,7 @@ function OverviewTab({ bot }: { bot: LiveBot }) {
             </Section>
           </div>
         </div>
-      </div>
-
-      {/* Right: sticky minimap + chat */}
-      <div className="shrink-0 w-[420px] flex flex-col gap-4">
-        <Section label="Minimap" hint="klik untuk jalan · scroll untuk zoom">
-          <div className="sticky top-4 z-10 w-full aspect-video">
-            <Minimap bot={bot} />
-          </div>
-        </Section>
-        <ChatPanel botId={bot.id} chat={bot.chat} />
-      </div>
+      </ScrollArea>
     </div>
   );
 }
@@ -597,9 +602,9 @@ function ChatPanel({ botId, chat }: { botId: number; chat: string[] }) {
   }
 
   return (
-    <Section label="Chat" hint="ketik /pull, /ban, /say, atau pesan biasa">
-      <div className="flex flex-col h-full gap-2">
-        <div className="flex-1 overflow-y-auto rounded border border-border bg-background p-2 font-mono text-[11px] leading-relaxed max-h-[220px]">
+    <Section label="Chat" hint="ketik /pull, /ban, /say, atau pesan biasa" className="h-full">
+      <div className="flex flex-col h-full gap-2 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto rounded border border-border bg-background p-2 font-mono text-[11px] leading-relaxed">
           {chat.length === 0 ? (
             <span className="text-muted-foreground">Belum ada pesan chat.</span>
           ) : (
@@ -736,7 +741,9 @@ function ConfigTab({
   botId: number;
   delays: {
     place_ms: number;
+    place_max_ms?: number | null;
     walk_ms: number;
+    walk_max_ms?: number | null;
     twofa_secs: number;
     server_overload_secs: number;
     too_many_logins_secs: number;
@@ -748,7 +755,9 @@ function ConfigTab({
   botStatus: BotStatus;
 }) {
   const [placeMs, setPlaceMs] = useState(String(delays.place_ms));
+  const [placeMaxMs, setPlaceMaxMs] = useState(delays.place_max_ms != null ? String(delays.place_max_ms) : "");
   const [walkMs, setWalkMs] = useState(String(delays.walk_ms));
+  const [walkMaxMs, setWalkMaxMs] = useState(delays.walk_max_ms != null ? String(delays.walk_max_ms) : "");
   const [twofaSecs, setTwofaSecs] = useState(String(delays.twofa_secs));
   const [serverOverloadSecs, setServerOverloadSecs] = useState(
     String(delays.server_overload_secs),
@@ -765,14 +774,18 @@ function ConfigTab({
   // sync when bot prop changes
   useEffect(() => {
     setPlaceMs(String(delays.place_ms));
+    setPlaceMaxMs(delays.place_max_ms != null ? String(delays.place_max_ms) : "");
     setWalkMs(String(delays.walk_ms));
+    setWalkMaxMs(delays.walk_max_ms != null ? String(delays.walk_max_ms) : "");
     setTwofaSecs(String(delays.twofa_secs));
     setServerOverloadSecs(String(delays.server_overload_secs));
     setTooManyLoginsSecs(String(delays.too_many_logins_secs));
     setMaintenanceSecs(String(delays.maintenance_secs));
   }, [
     delays.place_ms,
+    delays.place_max_ms,
     delays.walk_ms,
+    delays.walk_max_ms,
     delays.twofa_secs,
     delays.server_overload_secs,
     delays.too_many_logins_secs,
@@ -781,12 +794,14 @@ function ConfigTab({
 
   async function save() {
     const newDelays = {
-      place_ms: parseInt(placeMs, 10),
-      walk_ms: parseInt(walkMs, 10),
-      twofa_secs: parseInt(twofaSecs, 10),
-      server_overload_secs: parseInt(serverOverloadSecs, 10),
-      too_many_logins_secs: parseInt(tooManyLoginsSecs, 10),
-      maintenance_secs: parseInt(maintenanceSecs, 10),
+      place_ms: parseInt(placeMs, 10) || 0,
+      place_max_ms: placeMaxMs ? parseInt(placeMaxMs, 10) : null,
+      walk_ms: parseInt(walkMs, 10) || 0,
+      walk_max_ms: walkMaxMs ? parseInt(walkMaxMs, 10) : null,
+      twofa_secs: parseInt(twofaSecs, 10) || 120,
+      server_overload_secs: parseInt(serverOverloadSecs, 10) || 30,
+      too_many_logins_secs: parseInt(tooManyLoginsSecs, 10) || 5,
+      maintenance_secs: parseInt(maintenanceSecs, 10) || 600,
     };
     try {
       await api.sendCmd(botId, { type: "set_delays", ...newDelays });
@@ -905,36 +920,76 @@ function ConfigTab({
 
   return (
     <div className="max-w-xs flex flex-col gap-4">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Action Delays (ms)
-      </p>
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Action Delays (ms)
+        </p>
+        <span className="text-[10px] text-primary/80 font-mono">
+          Interval Min – Max
+        </span>
+      </div>
       <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">
-            Place / Punch (ms)
-          </span>
-          <Input
-            type="number"
-            min={0}
-            step={50}
-            value={placeMs}
-            onChange={(e) => setPlaceMs(e.target.value)}
-            className="h-7 text-xs"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">
-            Walk / Pathfind (ms)
-          </span>
-          <Input
-            type="number"
-            min={0}
-            step={50}
-            value={walkMs}
-            onChange={(e) => setWalkMs(e.target.value)}
-            className="h-7 text-xs"
-          />
-        </label>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Place / Punch (ms)</span>
+            <span className="text-[10px] text-muted-foreground font-mono">
+              {placeMs} {placeMaxMs && parseInt(placeMaxMs, 10) > parseInt(placeMs, 10) ? `– ${placeMaxMs}` : ""} ms
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              type="number"
+              min={0}
+              step={10}
+              placeholder="Min ms"
+              value={placeMs}
+              onChange={(e) => setPlaceMs(e.target.value)}
+              className="h-7 text-xs"
+              title="Minimum Delay"
+            />
+            <Input
+              type="number"
+              min={0}
+              step={10}
+              placeholder="Max ms (acak)"
+              value={placeMaxMs}
+              onChange={(e) => setPlaceMaxMs(e.target.value)}
+              className="h-7 text-xs"
+              title="Maksimum Delay (jika diisi, bot mengacak interval antar min dan max)"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Walk / Pathfind (ms)</span>
+            <span className="text-[10px] text-muted-foreground font-mono">
+              {walkMs} {walkMaxMs && parseInt(walkMaxMs, 10) > parseInt(walkMs, 10) ? `– ${walkMaxMs}` : ""} ms
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              type="number"
+              min={0}
+              step={10}
+              placeholder="Min ms"
+              value={walkMs}
+              onChange={(e) => setWalkMs(e.target.value)}
+              className="h-7 text-xs"
+              title="Minimum Delay"
+            />
+            <Input
+              type="number"
+              min={0}
+              step={10}
+              placeholder="Max ms (acak)"
+              value={walkMaxMs}
+              onChange={(e) => setWalkMaxMs(e.target.value)}
+              className="h-7 text-xs"
+              title="Maksimum Delay (jika diisi, bot mengacak interval antar min dan max)"
+            />
+          </div>
+        </div>
       </div>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         Pending Retry Delays (s)
@@ -1106,13 +1161,15 @@ function Section({
   label,
   hint,
   children,
+  className,
 }: {
   label: string;
   hint?: string;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className={cn("flex flex-col gap-2", className)}>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
         {hint && (

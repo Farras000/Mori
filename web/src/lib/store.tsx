@@ -1,7 +1,7 @@
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { moriWs, type TileData } from './ws'
-import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo } from './api'
+import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo, WsDialog } from './api'
 import { api } from './api'
 
 export interface TrackInfo {
@@ -29,7 +29,7 @@ export interface LiveBot {
   inventory: InventoryItem[]
   inventory_slots: number
   console: string[]
-  delays: { place_ms: number; walk_ms: number; twofa_secs: number; server_overload_secs: number; too_many_logins_secs: number; maintenance_secs: number }
+  delays: { place_ms: number; place_max_ms?: number | null; walk_ms: number; walk_max_ms?: number | null; twofa_secs: number; server_overload_secs: number; too_many_logins_secs: number; maintenance_secs: number }
   track_info: TrackInfo | null
   auto_collect: boolean
   collect_radius_tiles: number
@@ -37,6 +37,7 @@ export interface LiveBot {
   auto_reconnect: boolean
   proxy: ProxyInfo | null
   chat: string[]
+  active_dialog: WsDialog | null
 }
 
 export function makeBot(id: number, username: string): LiveBot {
@@ -48,7 +49,7 @@ export function makeBot(id: number, username: string): LiveBot {
     world_width: 100, world_height: 60,
     tiles: [], players: new Map(),
     objects: [], inventory: [], inventory_slots: 0, console: [],
-    delays: { place_ms: 500, walk_ms: 500, twofa_secs: 120, server_overload_secs: 30, too_many_logins_secs: 5, maintenance_secs: 600 },
+    delays: { place_ms: 200, place_max_ms: 240, walk_ms: 220, walk_max_ms: 260, twofa_secs: 120, server_overload_secs: 30, too_many_logins_secs: 5, maintenance_secs: 600 },
     track_info: null,
     auto_collect: true,
     collect_radius_tiles: 3,
@@ -56,6 +57,7 @@ export function makeBot(id: number, username: string): LiveBot {
     auto_reconnect: true,
     proxy: null,
     chat: [],
+    active_dialog: null,
   }
 }
 
@@ -132,8 +134,8 @@ export function useMoriStore() {
       ['BotAutoCollect', (d: { bot_id: number; enabled: boolean }) =>
         setBots((m) => patchBot(m, d.bot_id, { auto_collect: d.enabled }))],
 
-      ['BotDelays', (d: { bot_id: number; place_ms: number; walk_ms: number; twofa_secs: number; server_overload_secs: number; too_many_logins_secs: number; maintenance_secs: number }) =>
-        setBots((m) => patchBot(m, d.bot_id, { delays: { place_ms: d.place_ms, walk_ms: d.walk_ms, twofa_secs: d.twofa_secs, server_overload_secs: d.server_overload_secs, too_many_logins_secs: d.too_many_logins_secs, maintenance_secs: d.maintenance_secs } }))],
+      ['BotDelays', (d: { bot_id: number; place_ms: number; place_max_ms?: number | null; walk_ms: number; walk_max_ms?: number | null; twofa_secs: number; server_overload_secs: number; too_many_logins_secs: number; maintenance_secs: number }) =>
+        setBots((m) => patchBot(m, d.bot_id, { delays: { place_ms: d.place_ms, place_max_ms: d.place_max_ms, walk_ms: d.walk_ms, walk_max_ms: d.walk_max_ms, twofa_secs: d.twofa_secs, server_overload_secs: d.server_overload_secs, too_many_logins_secs: d.too_many_logins_secs, maintenance_secs: d.maintenance_secs } }))],
 
       ['BotProxy', (d: { bot_id: number; proxy_host: string | null; proxy_port: number | null; proxy_username?: string | null; proxy_password?: string | null }) =>
         setBots((m) => patchBot(m, d.bot_id, {
@@ -226,6 +228,11 @@ export function useMoriStore() {
           const chat = [...bot.chat, line].slice(-500)
           return patchBot(m, d.bot_id, { chat })
         })],
+      ['DialogRequest', (d: { bot_id: number; dialog: WsDialog }) =>
+        setBots((m) => patchBot(m, d.bot_id, { active_dialog: d.dialog }))],
+
+      ['DialogClose', (d: { bot_id: number }) =>
+        setBots((m) => patchBot(m, d.bot_id, { active_dialog: null }))],
     ]
 
     for (const [event, handler] of handlers) {
