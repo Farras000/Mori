@@ -447,6 +447,7 @@ enum CmdRequest {
         #[serde(default)]
         fields: std::collections::HashMap<String, String>,
     },
+    DismissDialog,
     Warp { name: String, id: String },
     Say { text: String },
 }
@@ -583,6 +584,7 @@ async fn bot_cmd(
         CmdRequest::DialogReturn { dialog_name, button, fields } => {
             BotCommand::DialogReturn { dialog_name, button, fields }
         }
+        CmdRequest::DismissDialog => BotCommand::DismissDialog,
         CmdRequest::Warp { name, id } => BotCommand::Warp { name, id },
         CmdRequest::Say { text } => BotCommand::Say { text },
     };

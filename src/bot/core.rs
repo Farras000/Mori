@@ -310,7 +310,7 @@ impl Bot {
             auto_ban: false,
             auto_reconnect: true,
             manual_disconnect: false,
-            reconnect_interval: 0,
+            reconnect_interval: 8000,
             collect_radius_tiles: 3,
             collect_blacklist: HashSet::new(),
             collect_timer: std::time::Instant::now(),
@@ -432,13 +432,25 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             server_data.meta,
         );
 
-        let ltoken = match check_token(&ltoken, &login_data, proxy_url_ref) {
-            Ok(new_token) => {
-                log_fn(format!("[Bot] ltoken validated successfully"));
-                new_token
+        let mut final_ltoken = ltoken.clone();
+        for attempt in 1..=3 {
+            match check_token(&final_ltoken, &login_data, proxy_url_ref) {
+                Ok(new_token) => {
+                    log_fn(format!("[Bot] ltoken validated successfully"));
+                    final_ltoken = new_token;
+                    break;
+                }
+                Err(e) => {
+                    if attempt < 3 {
+                        log_fn(format!("[Bot] check_token attempt {attempt} failed: {e} — retrying in 2s..."));
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    } else {
+                        log_fn(format!("[Bot] check_token warning: {e} — proceeding with active token"));
+                    }
+                }
             }
-            Err(e) => panic!("[Bot] ltoken validation failed: {e} — stopping"),
-        };
+        }
+        let ltoken = final_ltoken;
 
         let addr: SocketAddr = format!("{}:{}", server_data.server, server_data.port)
             .parse()
@@ -478,7 +490,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             auto_ban: false,
             auto_reconnect: true,
             manual_disconnect: false,
-            reconnect_interval: 0,
+            reconnect_interval: 8000,
             collect_radius_tiles: 3,
             collect_blacklist: HashSet::new(),
             collect_timer: std::time::Instant::now(),
@@ -876,22 +888,19 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     } else if self.reconnect_after.is_some() {
                         // Delayed reconnect already scheduled (e.g. 2FA cooldown) — do nothing here.
                     } else if self.auto_reconnect {
-                        if self.reconnect_interval > 0 {
-                            self.log_console(format!(
-                                "[Bot] Server disconnected — reconnecting in {}ms",
-                                self.reconnect_interval
-                            ));
-                            self.reconnect_after = Some(
-                                std::time::Instant::now()
-                                    + std::time::Duration::from_millis(self.reconnect_interval),
-                            );
+                        let interval = if self.reconnect_interval > 0 {
+                            self.reconnect_interval
                         } else {
-                            self.log_console(
-                                "[Bot] Server disconnected — re-fetching token and server data"
-                                    .to_string(),
-                            );
-                            self.reconnect_main();
-                        }
+                            8000 // Safe minimum floor to prevent IP soft bans
+                        };
+                        self.log_console(format!(
+                            "[Bot] Server disconnected — reconnecting in {}ms",
+                            interval
+                        ));
+                        self.reconnect_after = Some(
+                            std::time::Instant::now()
+                                + std::time::Duration::from_millis(interval),
+                        );
                     } else {
                         self.log_console(
                             "[Bot] Server disconnected — auto-reconnect is disabled".to_string(),
@@ -1602,19 +1611,16 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 });
                 let lower = text.to_lowercase();
                 if lower.contains("captcha")
-                    || lower.contains("solve")
-                    || lower.contains("human")
-                    || lower.contains("verify")
-                    || lower.contains("warning")
+                    || lower.contains("are you human")
+                    || lower.contains("verification")
                     || lower.contains("antibot")
                 {
                     self.log_console(format!(
-                        "[Bot] ⚠️ CAPTCHA / VERIFIKASI TERDETEKSI: '{text}' — Freeze bot (TIDAK disconnect untuk cegah ban)"
+                        "[Bot] ⚠️ CAPTCHA / VERIFIKASI TERDETEKSI: '{text}' — Freeze punch/place (TIDAK disconnect untuk cegah ban)"
                     ));
                     self.captcha_active = true;
                     self.pathfind_target = None;
                     self.pathfind_recalc = false;
-                    self.script_stop.store(true, Ordering::SeqCst);
                     self.emit(WsEvent::Chat {
                         bot_id: self.bot_id,
                         message: format!("[SAFETY] Captcha terdeteksi: '{text}'. Bot di-freeze otomatis demi keamanan."),
@@ -1631,32 +1637,50 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.log_console(format!("[Bot] Dialog: {}", message));
 
                 let dialog = parse_quick_dialog(&message);
-                self.emit(WsEvent::DialogRequest {
-                    bot_id: self.bot_id,
-                    dialog: dialog.clone(),
-                });
 
                 let cb = self.temporary_data.dialog_callback.lock().unwrap().take();
                 if let Some(cb) = cb {
                     cb(self);
+                    self.active_dialog = None;
+                    self.state.write().unwrap().active_dialog = None;
+                    self.emit(WsEvent::DialogClose { bot_id: self.bot_id });
                 } else {
-                    // UNIVERSAL MODAL FREEZE: In GT, all modal dialogs block player actions!
-                    // Continuing to send hit/place/move packets while a dialog is open triggers auto-ban.
-                    self.captcha_active = true;
-                    self.active_dialog = Some(dialog.clone());
-                    self.state.write().unwrap().active_dialog = Some(dialog.clone());
-                    self.pathfind_target = None;
-                    self.pathfind_recalc = false;
-                    self.script_stop.store(true, Ordering::SeqCst);
-                    self.log_console(format!(
-                        "[Bot] ⚠️ MODAL / CAPTCHA DIALOG TERDETEKSI: Freezing bot actions (dialog='{}', title='{}'). Selesaikan via Web Dashboard!",
-                        dialog.dialog_name, dialog.title
-                    ));
-                    self.emit(WsEvent::Chat {
-                        bot_id: self.bot_id,
-                        message: format!("[SAFETY ALERT] Modal dialog aktif ('{}'). Buka dashboard untuk menyelesaikan.", dialog.title),
-                        kind: ChatKind::Incoming,
-                    });
+                    let classification = classify_dialog(&message, &dialog);
+                    match classification {
+                        DialogClassification::Threat => {
+                            self.captcha_active = true;
+                            self.active_dialog = Some(dialog.clone());
+                            self.state.write().unwrap().active_dialog = Some(dialog.clone());
+                            self.pathfind_target = None;
+                            self.pathfind_recalc = false;
+                            self.log_console(format!(
+                                "[Bot] 🚨 VERIFIKASI MENGANCAM TERDETEKSI: Menahan aksi punch/place (dialog='{}', title='{}'). Selesaikan di Web Dashboard!",
+                                dialog.dialog_name, dialog.title
+                            ));
+                            self.emit(WsEvent::Chat {
+                                bot_id: self.bot_id,
+                                message: format!("[SAFETY ALERT] Dialog verifikasi aktif ('{}'). Buka dashboard untuk menyelesaikan.", dialog.title),
+                                kind: ChatKind::Incoming,
+                            });
+                            self.emit(WsEvent::DialogRequest {
+                                bot_id: self.bot_id,
+                                dialog: dialog.clone(),
+                            });
+                        }
+                        DialogClassification::Safe => {
+                            self.captcha_active = false;
+                            self.active_dialog = Some(dialog.clone());
+                            self.state.write().unwrap().active_dialog = Some(dialog.clone());
+                            self.log_console(format!(
+                                "[Bot] Dialog game biasa (Safe): dialog='{}', title='{}' — script berjalan normal",
+                                dialog.dialog_name, dialog.title
+                            ));
+                            self.emit(WsEvent::DialogRequest {
+                                bot_id: self.bot_id,
+                                dialog: dialog.clone(),
+                            });
+                        }
+                    }
                 }
             }
             "SetHasGrowID" => {
@@ -2804,26 +2828,16 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     fn handle_command(&mut self, cmd: BotCommand) {
         match cmd {
             BotCommand::Move { x, y } => {
-                if self.captcha_active || self.active_dialog.is_some() {
-                    self.log_console("[Bot] Move rejected: modal dialog / captcha is active".to_string());
-                } else {
-                    let cx = ((self.pos_x / 32.0).round() as i32) + x;
-                    let cy = ((self.pos_y / 32.0).round() as i32) + y;
-                    if cx < 0 || cy < 0 { return; }
-                    self.walk((cx + x) as u32, (cy + y) as u32);
-                }
+                let cx = ((self.pos_x / 32.0).round() as i32) + x;
+                let cy = ((self.pos_y / 32.0).round() as i32) + y;
+                if cx < 0 || cy < 0 { return; }
+                self.walk((cx + x) as u32, (cy + y) as u32);
             }
             BotCommand::WalkTo { x, y } => {
-                if self.captcha_active || self.active_dialog.is_some() {
-                    self.log_console("[Bot] WalkTo rejected: modal dialog / captcha is active".to_string());
-                } else {
-                    self.find_path(x, y);
-                }
+                self.find_path(x, y);
             }
             BotCommand::MoveTo { x, y } => {
-                if self.captcha_active || self.active_dialog.is_some() {
-                    self.log_console("[Bot] MoveTo rejected: modal dialog / captcha is active".to_string());
-                } else if x >= 0 && y >= 0 {
+                if x >= 0 && y >= 0 {
                     self.walk(x as u32, y as u32);
                 }
             }
@@ -2879,15 +2893,15 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.reconnect();
             }
             BotCommand::Place { x, y, item } => {
-                if self.captcha_active || self.active_dialog.is_some() {
-                    self.log_console("[Bot] Place rejected: modal dialog / captcha is active".to_string());
+                if self.captcha_active {
+                    self.log_console("[Bot] Place ditahan: verifikasi captcha aktif".to_string());
                 } else {
                     self.place(x, y, item, false);
                 }
             }
             BotCommand::Hit { x, y } => {
-                if self.captcha_active || self.active_dialog.is_some() {
-                    self.log_console("[Bot] Hit rejected: modal dialog / captcha is active".to_string());
+                if self.captcha_active {
+                    self.log_console("[Bot] Hit ditahan: verifikasi captcha aktif".to_string());
                 } else {
                     self.punch(x, y);
                 }
@@ -3087,6 +3101,13 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
                 self.log_console(format!("[Bot] DialogReturn sent for '{dialog_name}' button='{button}' — actions unfreezed"));
 
+            }
+            BotCommand::DismissDialog => {
+                self.captcha_active = false;
+                self.active_dialog = None;
+                self.state.write().unwrap().active_dialog = None;
+                self.emit(WsEvent::DialogClose { bot_id: self.bot_id });
+                self.log_console("[Bot] Dialog ditutup / dismissed".to_string());
             }
         }
     }
@@ -3365,6 +3386,88 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 }
 
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogClassification {
+    Safe,
+    Threat,
+}
+
+pub fn classify_dialog(raw: &str, dialog: &crate::events::WsDialog) -> DialogClassification {
+    let lower_raw = raw.to_lowercase();
+    let lower_name = dialog.dialog_name.to_lowercase();
+    let lower_title = dialog.title.to_lowercase();
+
+    // 1. Whitelist Eksplisit untuk dialog game normal (Drop, Trash, Wrench, Pintu, dll)
+    let is_whitelisted = matches!(
+        lower_name.as_str(),
+        "drop_item"
+            | "drop"
+            | "trash_item"
+            | "trash"
+            | "door_edit"
+            | "password_key"
+            | "sign_edit"
+            | "lock_edit"
+            | "display_edit"
+            | "storage"
+            | "telephone"
+            | "vending"
+            | "vend_edit"
+            | "change_name"
+            | "friends"
+            | "trade"
+            | "popup"
+            | "acceptaccess"
+            | "acceptlock"
+            | "wrench"
+            | "wrench_player"
+            | "player_wrench"
+            | "wrench_tile"
+            | "info_box"
+            | "info_dialog"
+            | "seed_info"
+            | "item_info"
+            | "item_search"
+            | "find"
+    ) || lower_title.contains("drop")
+      || lower_title.contains("trash")
+      || lower_title.contains("wrench")
+      || lower_title.contains("door")
+      || lower_title.contains("sign")
+      || lower_title.contains("storage")
+      || lower_title.contains("vending")
+      || lower_title.contains("friends")
+      || lower_title.contains("trade");
+
+    if is_whitelisted && !lower_raw.contains("puzzle") && !lower_raw.contains("are you human") {
+        return DialogClassification::Safe;
+    }
+
+    // 2. Deteksi Signature Ancaman: Captcha / Verifikasi / Anti-bot
+    let is_threat = lower_name.contains("captcha")
+        || lower_name.contains("puzzle")
+        || lower_name.contains("verify")
+        || lower_name.contains("verification")
+        || lower_name.contains("antibot")
+        || lower_title.contains("verification")
+        || lower_title.contains("are you human")
+        || lower_title.contains("puzzle")
+        || lower_title.contains("captcha")
+        || lower_raw.contains("are you human")
+        || lower_raw.contains("robot verification")
+        || lower_raw.contains("solve the puzzle")
+        || lower_raw.contains("enter the number you see")
+        || lower_raw.contains("enter the number below")
+        || lower_raw.contains("add_puzzle")
+        || lower_raw.contains("add_captcha");
+
+    if is_threat {
+        DialogClassification::Threat
+    } else {
+        DialogClassification::Safe
+    }
+}
+
 pub fn parse_quick_dialog(raw: &str) -> crate::events::WsDialog {
     let mut dialog = crate::events::WsDialog {
         raw: raw.to_string(),
@@ -3456,4 +3559,56 @@ pub fn parse_quick_dialog(raw: &str) -> crate::events::WsDialog {
     }
 
     dialog
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_classify_dialog_drop_and_trash_are_safe() {
+        let drop_raw = "add_label_icon|big|Drop Item|32|\nadd_textbox|How many would you like to drop?|left|\nadd_text_input|count||200|5|\nend_dialog|drop_item|Cancel|OK|";
+        let drop_dialog = parse_quick_dialog(drop_raw);
+        assert_eq!(classify_dialog(drop_raw, &drop_dialog), DialogClassification::Safe);
+
+        let trash_raw = "add_label_icon|big|Trash Item|32|\nadd_textbox|Are you sure you want to trash this?|left|\nadd_text_input|count||200|5|\nend_dialog|trash_item|Cancel|OK|";
+        let trash_dialog = parse_quick_dialog(trash_raw);
+        assert_eq!(classify_dialog(trash_raw, &trash_dialog), DialogClassification::Safe);
+    }
+
+    #[test]
+    fn test_classify_dialog_game_mechanics_are_safe() {
+        let door_raw = "add_label_icon|big|Door Edit|32|\nend_dialog|door_edit|OK|Cancel|";
+        let door_dialog = parse_quick_dialog(door_raw);
+        assert_eq!(classify_dialog(door_raw, &door_dialog), DialogClassification::Safe);
+
+        let sign_raw = "add_label_icon|big|Sign Edit|32|\nend_dialog|sign_edit|OK|Cancel|";
+        let sign_dialog = parse_quick_dialog(sign_raw);
+        assert_eq!(classify_dialog(sign_raw, &sign_dialog), DialogClassification::Safe);
+
+        let vend_raw = "add_label_icon|big|Vending Machine|32|\nend_dialog|vending|OK|Cancel|";
+        let vend_dialog = parse_quick_dialog(vend_raw);
+        assert_eq!(classify_dialog(vend_raw, &vend_dialog), DialogClassification::Safe);
+
+        let wrench_raw = "add_label_icon|big|Wrench|32|\nadd_textbox|Please select an action|left|\nend_dialog|wrench|OK|Cancel|";
+        let wrench_dialog = parse_quick_dialog(wrench_raw);
+        assert_eq!(classify_dialog(wrench_raw, &wrench_dialog), DialogClassification::Safe);
+    }
+
+    #[test]
+    fn test_classify_dialog_threats_are_detected() {
+        let captcha_raw = "add_label_icon|big|Robot Verification|32|\nadd_textbox|Are you human? Please solve the puzzle below.|left|\nend_dialog|captcha_submit|Submit|Cancel|";
+        let captcha_dialog = parse_quick_dialog(captcha_raw);
+        assert_eq!(classify_dialog(captcha_raw, &captcha_dialog), DialogClassification::Threat);
+
+        let puzzle_raw = "add_label_icon|big|Security Check|32|\nadd_puzzle|image|\nend_dialog|security|Submit||";
+        let puzzle_dialog = parse_quick_dialog(puzzle_raw);
+        assert_eq!(classify_dialog(puzzle_raw, &puzzle_dialog), DialogClassification::Threat);
+
+        let number_raw = "add_textbox|Please enter the number you see above|left|\nadd_text_input|ans|||5|\nend_dialog|verify|Submit||";
+        let number_dialog = parse_quick_dialog(number_raw);
+        assert_eq!(classify_dialog(number_raw, &number_dialog), DialogClassification::Threat);
+    }
 }

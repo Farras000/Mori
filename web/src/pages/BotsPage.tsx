@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMoriStore, selectedBotAtom } from '@/lib/store'
+import { selectedBotAtom } from '@/lib/store'
 import { useAtomValue } from 'jotai'
 import { BotSidebar } from '@/components/bot-sidebar'
 import { BotDetail } from '@/components/bot-detail'
@@ -7,7 +7,7 @@ import { Monitor, Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export function BotsPage() {
-  useMoriStore()
+
 
   const selected = useAtomValue(selectedBotAtom)
   const [sidebarOpen, setSidebarOpen] = useState(false)

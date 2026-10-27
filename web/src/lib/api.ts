@@ -203,7 +203,8 @@ export type BotCmd =
       dialog_name: string;
       button: string;
       fields?: Record<string, string>;
-    };
+    }
+  | { type: "dismiss_dialog" };
 
 export interface DialogField {
   name: string;

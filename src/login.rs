@@ -154,8 +154,11 @@ pub fn check_token(
 
     let body = agent
         .post("https://login.growtopiagame.com/player/growid/checktoken?valKey=40db4045f2d8c572efe8c4a060605726")
-        .header("User-Agent", "UbiServices_SDK_2022.Release.9_PC64_ansi_static")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+        .header("Accept", "application/json")
         .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Origin", "null")
+        .header("Referer", "https://login.growtopiagame.com/player/login/dashboard?valKey=40db4045f2d8c572efe8c4a060605726")
         .send_form([
             ("refreshToken", token),
             ("clientData", login_info),

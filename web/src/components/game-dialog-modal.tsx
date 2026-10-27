@@ -1,17 +1,33 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { api, type DialogButton, type DialogField, type WsDialog } from "@/lib/api"
 import { type LiveBot } from "@/lib/store"
 import { parseGTColors } from "@/lib/gt-colors"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { AlertCircle, ExternalLink, Loader2, ShieldAlert } from "lucide-react"
+import { ExternalLink, Loader2, ShieldAlert, Clock, X, Info } from "lucide-react"
 
 export function GameDialogModal({ bot }: { bot: LiveBot }) {
   const dialog: WsDialog | null = bot.active_dialog
   const [formValues, setFormValues] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
+
+  // Auto-close timeout for Safe (non-captcha) dialogs (default: 5 seconds)
+  const [timeLeft, setTimeLeft] = useState(5)
+  const [isPaused, setIsPaused] = useState(false)
+  const dismissedRef = useRef(false)
+
+  const isCaptcha =
+    Boolean(dialog) &&
+    (dialog!.dialog_name.toLowerCase().includes("captcha") ||
+      dialog!.title.toLowerCase().includes("captcha") ||
+      dialog!.body_text.some((t: string) =>
+        t.toLowerCase().includes("captcha") ||
+        t.toLowerCase().includes("puzzle") ||
+        t.toLowerCase().includes("human") ||
+        t.toLowerCase().includes("verify")
+      ))
 
   useEffect(() => {
     if (dialog) {
@@ -22,52 +38,79 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
       setFormValues(initial)
       setErrorMsg("")
       setSubmitting(false)
+      setTimeLeft(5)
+      setIsPaused(false)
+      dismissedRef.current = false
 
-      // Play audio chime alert via Web Audio API (works without external files)
-      try {
-        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-        if (AudioContextClass) {
-          const ctx = new AudioContextClass()
-          const osc = ctx.createOscillator()
-          const gain = ctx.createGain()
-          osc.type = "sine"
-          osc.frequency.setValueAtTime(880, ctx.currentTime)
-          osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.35)
-          gain.gain.setValueAtTime(0.3, ctx.currentTime)
-          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35)
-          osc.connect(gain)
-          gain.connect(ctx.destination)
-          osc.start()
-          osc.stop(ctx.currentTime + 0.35)
+      // Play audio chime and desktop notification ONLY for CAPTCHA / Threats!
+      // Safe dialogs (drop_item, trash_item, etc.) MUST NOT trigger alarms.
+      if (isCaptcha) {
+        try {
+          const AudioContextClass =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+          if (AudioContextClass) {
+            const ctx = new AudioContextClass()
+            const osc = ctx.createOscillator()
+            const gain = ctx.createGain()
+            osc.type = "sine"
+            osc.frequency.setValueAtTime(880, ctx.currentTime)
+            osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.35)
+            gain.gain.setValueAtTime(0.3, ctx.currentTime)
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35)
+            osc.connect(gain)
+            gain.connect(ctx.destination)
+            osc.start()
+            osc.stop(ctx.currentTime + 0.35)
+          }
+        } catch {
+          // AudioContext might require user gesture on first load
         }
-      } catch {
-        // AudioContext might require user gesture on first load
-      }
 
-      // Trigger desktop system notification
-      if (typeof window !== "undefined" && "Notification" in window) {
-        if (Notification.permission === "granted") {
-          new Notification("⚠️ Mori Alert: Dialog / Captcha Masuk!", {
-            body: `Bot #${bot.id} (${bot.username || "Bot"}): ${dialog.title || "Game Dialog"} memerlukan respon!`,
-          })
-        } else if (Notification.permission === "default") {
-          Notification.requestPermission().catch(() => {})
+        // Trigger desktop system notification for Captcha only
+        if (typeof window !== "undefined" && "Notification" in window) {
+          if (Notification.permission === "granted") {
+            new Notification("⚠️ Mori Alert: Verifikasi Captcha Masuk!", {
+              body: `Bot #${bot.id} (${bot.username || "Bot"}): ${dialog.title || "Captcha"} memerlukan respon!`,
+            })
+          } else if (Notification.permission === "default") {
+            Notification.requestPermission().catch(() => {})
+          }
         }
       }
     }
-  }, [dialog])
+  }, [dialog, isCaptcha, bot.id, bot.username])
+
+  // Countdown timer effect: auto-dismiss safe dialogs after 5s if not paused
+  useEffect(() => {
+    if (!dialog || isCaptcha || isPaused) return
+    if (timeLeft <= 0) {
+      if (!dismissedRef.current) {
+        dismissedRef.current = true
+        handleDismiss()
+      }
+      return
+    }
+
+    const timer = setTimeout(() => {
+      setTimeLeft((prev) => prev - 1)
+    }, 1000)
+
+    return () => clearTimeout(timer)
+  }, [dialog, isCaptcha, isPaused, timeLeft])
 
   if (!dialog) return null
 
-  const isCaptcha =
-    dialog.dialog_name.toLowerCase().includes("captcha") ||
-    dialog.title.toLowerCase().includes("captcha") ||
-    dialog.body_text.some((t: string) =>
-      t.toLowerCase().includes("captcha") ||
-      t.toLowerCase().includes("puzzle") ||
-      t.toLowerCase().includes("human") ||
-      t.toLowerCase().includes("verify")
-    )
+  async function handleDismiss() {
+    if (!dialog) return
+    try {
+      await api.sendCmd(bot.id, {
+        type: "dismiss_dialog",
+      })
+    } catch {
+      // offline / already closed
+    }
+  }
 
   async function handleAction(buttonClicked: string) {
     if (!dialog) return
@@ -89,8 +132,11 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
   }
 
   return (
-    <Dialog open={true} onOpenChange={() => {}}>
-      <DialogContent className="max-w-md sm:max-w-lg border-primary/40 bg-card p-6 shadow-2xl">
+    <Dialog open={true} onOpenChange={(open) => { if (!open) handleDismiss() }}>
+      <DialogContent
+        className="max-w-md sm:max-w-lg border-primary/40 bg-card p-6 shadow-2xl"
+        onMouseEnter={() => setIsPaused(true)}
+      >
         <DialogHeader className="gap-1.5 pb-2 border-b border-border">
           <div className="flex items-center gap-2">
             {isCaptcha ? (
@@ -99,14 +145,34 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
                 VERIFIKASI CAPTCHA
               </span>
             ) : (
-              <span className="flex items-center gap-1.5 text-xs font-semibold px-2 py-0.5 rounded bg-primary/20 text-primary border border-primary/30">
-                <AlertCircle className="w-3.5 h-3.5" />
+              <span className="flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30">
+                <Info className="w-3.5 h-3.5" />
                 GAME DIALOG
               </span>
             )}
-            <span className="text-[11px] text-muted-foreground ml-auto font-mono">
-              Bot #{bot.id} ({bot.username || "Bot"})
-            </span>
+
+            {!isCaptcha && (
+              <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-mono bg-muted/60 px-2 py-0.5 rounded border border-border/60">
+                <Clock className="w-3 h-3 text-sky-400" />
+                {isPaused ? "Timer Dijeda" : `Menutup otomatis dalam ${timeLeft}s`}
+              </span>
+            )}
+
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-[11px] text-muted-foreground font-mono">
+                Bot #{bot.id} ({bot.username || "Bot"})
+              </span>
+              {!isCaptcha && (
+                <button
+                  type="button"
+                  onClick={handleDismiss}
+                  className="rounded-sm opacity-70 hover:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-foreground"
+                  title="Tutup dialog"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
 
           <DialogTitle
@@ -165,12 +231,14 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
                     id={input.name}
                     value={formValues[input.name] ?? ""}
                     maxLength={input.max_len || 100}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    onFocus={() => setIsPaused(true)}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      setIsPaused(true)
                       setFormValues((prev) => ({
                         ...prev,
                         [input.name]: e.target.value,
                       }))
-                    }
+                    }}
                     onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                       if (e.key === "Enter" && !submitting) {
                         e.preventDefault()
@@ -213,7 +281,7 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2 pt-2 border-t border-border flex sm:justify-end">
-          {dialog.cancel_label && (
+          {dialog.cancel_label ? (
             <Button
               type="button"
               variant="ghost"
@@ -224,7 +292,18 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
             >
               {dialog.cancel_label}
             </Button>
-          )}
+          ) : !isCaptcha ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={submitting}
+              onClick={handleDismiss}
+              className="text-xs h-8 text-muted-foreground hover:text-foreground"
+            >
+              Tutup
+            </Button>
+          ) : null}
 
           <Button
             type="button"

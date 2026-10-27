@@ -113,7 +113,7 @@ impl Default for BotDelays {
             walk_max_ms:          Some(260),
             twofa_secs:           120,
             server_overload_secs: 30,
-            too_many_logins_secs: 5,
+            too_many_logins_secs: 30,
             maintenance_secs:     600,
         }
     }
@@ -279,6 +279,7 @@ pub enum BotCommand {
         button: String,
         fields: std::collections::HashMap<String, String>,
     },
+    DismissDialog,
 }
 
 pub type CmdSender   = mpsc::Sender<BotCommand>;
