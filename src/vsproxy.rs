@@ -128,31 +128,61 @@ impl std::fmt::Display for VsProxyError {
 impl std::error::Error for VsProxyError {}
 
 /// Calculates the next rotation minutes to force VSProxy to generate a fresh IP.
-/// If current rotation is 45, returns 46. If 46, returns 45.
+/// Strictly cycles between: base -> base + 1 -> base + 2 -> base (e.g. 45 -> 46 -> 47 -> 45 -> ...).
 pub fn calculate_next_rotation(base_rotation: u32, current_proxy: Option<&Socks5Config>) -> u32 {
     let current_val = current_proxy
         .and_then(|p| p.username.as_deref())
         .and_then(extract_sessttl_from_username);
 
     match current_val {
-        Some(val) if val == base_rotation => {
-            if base_rotation < 120 {
-                base_rotation + 1
-            } else {
-                base_rotation.saturating_sub(1).max(1)
-            }
-        }
-        Some(val) if val == base_rotation + 1 => base_rotation,
-        Some(val) => {
-            // Alternate around base_rotation
-            if val % 2 == 0 {
-                base_rotation
-            } else {
-                base_rotation + 1
-            }
-        }
-        None => base_rotation,
+        Some(val) if val == base_rotation => base_rotation + 1,
+        Some(val) if val == base_rotation + 1 => base_rotation + 2,
+        Some(val) if val == base_rotation + 2 => base_rotation,
+        _ => base_rotation,
     }
+}
+
+/// Queries external IP through the given SOCKS5 proxy using ipify.org, icanhazip.com, or ifconfig.me.
+pub fn check_proxy_ip(proxy: &Socks5Config) -> Result<String, String> {
+    let proxy_url = proxy.to_url();
+    let proxy_target = ureq::Proxy::new(&proxy_url)
+        .map_err(|e| format!("Invalid proxy URL '{proxy_url}': {e}"))?;
+
+    let agent = ureq::Agent::new_with_config(
+        ureq::config::Config::builder()
+            .proxy(Some(proxy_target))
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build(),
+    );
+
+    let endpoints = [
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+    ];
+
+    let mut last_err = String::new();
+    for endpoint in endpoints {
+        match agent
+            .get(endpoint)
+            .header("User-Agent", "curl/7.88.1")
+            .call()
+        {
+            Ok(mut resp) => {
+                if let Ok(body) = resp.body_mut().read_to_string() {
+                    let ip = body.trim().to_string();
+                    if ip.parse::<std::net::IpAddr>().is_ok() {
+                        return Ok(ip);
+                    }
+                }
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+
+    Err(format!("All IP check endpoints failed (last: {last_err})"))
 }
 
 /// Extracts the `sessttl.X` value from a VSProxy username string.
@@ -407,6 +437,20 @@ mod tests {
 
         assert_eq!(calculate_next_rotation(45, Some(&mock_cfg)), 46);
 
+        let mock_cfg_46 = Socks5Config {
+            proxy_addr: "127.0.0.1:10000".parse().unwrap(),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.46:b4c2f01cc617cda0".to_string()),
+            password: Some("pass".into()),
+        };
+        assert_eq!(calculate_next_rotation(45, Some(&mock_cfg_46)), 47);
+
+        let mock_cfg_47 = Socks5Config {
+            proxy_addr: "127.0.0.1:10000".parse().unwrap(),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.47:b4c2f01cc617cda0".to_string()),
+            password: Some("pass".into()),
+        };
+        assert_eq!(calculate_next_rotation(45, Some(&mock_cfg_47)), 45);
+
         let bumped = bump_vsproxy_session(&mock_cfg, 45).expect("Should bump");
         let bumped_uname = bumped.username.unwrap();
         assert!(bumped_uname.contains("sessttl.46"));
@@ -441,5 +485,16 @@ mod tests {
             }
             _ => panic!("Expected cooldown error, got {err:?}"),
         }
+    }
+
+    #[test]
+    fn test_check_proxy_ip_handles_offline_proxy() {
+        let mock_cfg = Socks5Config {
+            proxy_addr: "127.0.0.1:1".parse().unwrap(),
+            username: Some("user".into()),
+            password: Some("pass".into()),
+        };
+        let res = check_proxy_ip(&mock_cfg);
+        assert!(res.is_err());
     }
 }

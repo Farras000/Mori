@@ -854,16 +854,11 @@ function ConfigTab({
     setProxyBusy(true);
     setProxyStatus("");
     try {
-      // Guarantee: bot must be offline before the proxy is swapped so the
-      // old UDP-via-proxy socket is torn down first.
+      // Guarantee: bot is disconnected so the old UDP-via-proxy socket is torn down
       if (needsDisconnect) {
         setProxyStatus("Disconnecting…");
         await api.sendCmd(botId, { type: "disconnect" });
-        const offline = await waitForDisconnected();
-        if (!offline) {
-          setProxyStatus("Disconnect timed out — try again");
-          return;
-        }
+        await waitForDisconnected(2500);
       }
       if (parsed.empty) {
         await api.sendCmd(botId, { type: "set_proxy" });
@@ -881,9 +876,9 @@ function ConfigTab({
       setBots((m) => {
         const bot = m.get(botId);
         if (!bot) return m;
-        return new Map(m).set(botId, { ...bot, proxy: next });
+        return new Map(m).set(botId, { ...bot, proxy: next, status: "disconnected" });
       });
-      setProxyStatus("Saved — reconnect to apply");
+      setProxyStatus("Saved — click Reconnect to connect");
       setTimeout(() => setProxyStatus(""), 4000);
     } catch {
       setProxyStatus("Error");
@@ -905,16 +900,20 @@ function ConfigTab({
     setProxyTesting(true);
     setProxyStatus("Testing…");
     try {
-      const r = await api.testProxy({
+      const testPromise = api.testProxy({
         proxy_host: parsed.body.proxy_host,
         proxy_port: parsed.body.proxy_port,
         ...(parsed.body.proxy_username ? { proxy_username: parsed.body.proxy_username } : {}),
         ...(parsed.body.proxy_password ? { proxy_password: parsed.body.proxy_password } : {}),
       });
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Timeout (15s)")), 15000)
+      );
+      const r = await Promise.race([testPromise, timeoutPromise]);
       const failed = [r.socks5, r.server_data, r.enet].find((c) => !c.ok);
       setProxyStatus(failed ? `Failed: ${failed.error ?? "check failed"}` : "All checks passed");
-    } catch {
-      setProxyStatus("Test failed");
+    } catch (e: any) {
+      setProxyStatus(e?.message ? `Failed: ${e.message}` : "Test failed");
     } finally {
       setProxyTesting(false);
     }
@@ -1167,18 +1166,25 @@ function ConfigTab({
             Bot is {botStatus} — saving will disconnect it first. Reconnect afterwards to use the new proxy.
           </p>
         )}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button size="sm" className="text-xs" onClick={saveProxy} disabled={proxyBusy}>
             {proxyBusy ? "Saving…" : needsDisconnect ? "Disconnect & Save" : "Save proxy"}
           </Button>
           <Button size="sm" variant="outline" className="text-xs" onClick={testProxy} disabled={proxyTesting || proxyBusy}>
             {proxyTesting ? "Testing…" : "Test"}
           </Button>
-          {!needsDisconnect && (
-            <Button size="sm" variant="outline" className="text-xs" onClick={() => api.sendCmd(botId, { type: "reconnect" })}>
-              Reconnect
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs"
+            onClick={() => {
+              setProxyStatus("Reconnecting…");
+              api.sendCmd(botId, { type: "reconnect" }).catch(() => setProxyStatus("Reconnect failed"));
+              setTimeout(() => setProxyStatus(""), 3000);
+            }}
+          >
+            Reconnect
+          </Button>
           {proxyStatus && (
             <span className="text-xs text-muted-foreground">{proxyStatus}</span>
           )}

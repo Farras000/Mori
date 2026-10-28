@@ -73,9 +73,13 @@ impl Socks5UdpSocket {
         username: Option<&str>,
         password: Option<&str>,
     ) -> io::Result<Self> {
-        let mut control_stream = TcpStream::connect_timeout(&proxy_addr, Duration::from_secs(10))?;
+        let mut control_stream = TcpStream::connect_timeout(&proxy_addr, Duration::from_secs(6))?;
+        control_stream.set_read_timeout(Some(Duration::from_secs(6)))?;
+        control_stream.set_write_timeout(Some(Duration::from_secs(6)))?;
 
         let mut relay_addr = Self::socks5_handshake(&mut control_stream, username, password)?;
+
+        let _ = control_stream.set_read_timeout(None);
 
         // If server returns 0.0.0.0, use the proxy's IP for the relay
         if relay_addr.ip().is_unspecified() {

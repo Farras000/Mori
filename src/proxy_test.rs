@@ -52,6 +52,22 @@ pub fn run_proxy_test(cfg: Socks5Config) -> ProxyTestResult {
         }
     };
 
+    if !socks5_check.ok {
+        return ProxyTestResult {
+            socks5: socks5_check,
+            server_data: CheckResult {
+                ok: false,
+                error: Some("skipped: socks5 handshake failed".into()),
+                detail: None,
+            },
+            enet: CheckResult {
+                ok: false,
+                error: Some("skipped: socks5 handshake failed".into()),
+                detail: None,
+            },
+        };
+    }
+
     let (server_data_check, server_addr) = {
         let result = get_server_data_proxied(false, &login_info, Some(&proxy_url))
             .or_else(|_| get_server_data_proxied(true, &login_info, Some(&proxy_url)));
@@ -143,7 +159,7 @@ fn check_enet(cfg: &Socks5Config, server_addr: SocketAddr) -> CheckResult {
         };
     }
 
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(4);
     loop {
         if Instant::now() >= deadline {
             return CheckResult {
@@ -152,21 +168,22 @@ fn check_enet(cfg: &Socks5Config, server_addr: SocketAddr) -> CheckResult {
                 detail: None,
             };
         }
-        match host.service() {
-            Ok(Some(event)) => {
-                if let enet::EventNoRef::Connect { .. } = event.no_ref() {
-                    return CheckResult {
-                        ok: true,
-                        error: None,
-                        detail: None,
-                    };
-                }
+        let service_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            host.service().ok().flatten().map(|e| e.no_ref())
+        }));
+        match service_res {
+            Ok(Some(enet::EventNoRef::Connect { .. })) => {
+                return CheckResult {
+                    ok: true,
+                    error: None,
+                    detail: None,
+                };
             }
-            Ok(None) => {}
-            Err(e) => {
+            Ok(_) => {}
+            Err(_) => {
                 return CheckResult {
                     ok: false,
-                    error: Some(e.to_string()),
+                    error: Some("ENet service panicked".into()),
                     detail: None,
                 };
             }

@@ -10,7 +10,7 @@ use crate::events::{ChatKind, WsEvent, WsInvItem, WsObject, WsTile, WsTx};
 use crate::inventory::Inventory;
 use crate::items::ItemsDat;
 use crate::login::{check_token, is_ip_limit_error};
-use crate::vsproxy::{self, VsProxyConfig, VsProxyError};
+use crate::vsproxy::{self, VsProxyConfig, VsProxyError, check_proxy_ip};
 use crate::protocol::packet::{self, GamePacketType, GameUpdatePacket, IncomingPacket};
 use crate::player::{LocalPlayer, Player, parse_pipe_map};
 use crate::server_data::{LoginInfo, get_server_data_proxied};
@@ -36,18 +36,18 @@ impl BotHost {
     fn next_event(&mut self) -> Option<enet::EventNoRef> {
         match self {
             Self::Direct(h) => {
-                if let Some(e) = h.service().expect("service failed") {
-                    Some(e.no_ref())
-                } else {
-                    None
-                }
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    h.service().ok().flatten().map(|e| e.no_ref())
+                }))
+                .ok()
+                .flatten()
             }
             Self::Socks5(h) => {
-                if let Some(e) = h.service().expect("service failed") {
-                    Some(e.no_ref())
-                } else {
-                    None
-                }
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    h.service().ok().flatten().map(|e| e.no_ref())
+                }))
+                .ok()
+                .flatten()
             }
         }
     }
@@ -88,6 +88,17 @@ impl BotHost {
             }
             Self::Socks5(h) => {
                 h.peer_mut(id).disconnect(data);
+            }
+        }
+    }
+
+    fn peer_disconnect_now(&mut self, id: enet::PeerID, data: u32) {
+        match self {
+            Self::Direct(h) => {
+                h.peer_mut(id).disconnect_now(data);
+            }
+            Self::Socks5(h) => {
+                h.peer_mut(id).disconnect_now(data);
             }
         }
     }
@@ -234,6 +245,8 @@ pub struct Bot {
     consecutive_reconnect_failures: u32,
     /// Timestamp of last proxy roll (for rate-limit cooldown guard).
     last_proxy_roll: Option<std::time::Instant>,
+    /// Last verified external IP of the active proxy.
+    current_proxy_ip: Option<String>,
     /// Configuration for VSProxy auto-rolling.
     vsproxy_cfg: Option<VsProxyConfig>,
     /// Whether the bot should automatically rotate proxy on reconnect failures / IP limit / HTTP 403.
@@ -351,6 +364,7 @@ impl Bot {
             pending_ip_limit: false,
             consecutive_reconnect_failures: 0,
             last_proxy_roll: None,
+            current_proxy_ip: None,
             vsproxy_cfg: VsProxyConfig::from_env(),
             auto_rotate_reconnect: VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
         };
@@ -578,6 +592,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             pending_ip_limit: false,
             consecutive_reconnect_failures: 0,
             last_proxy_roll: None,
+            current_proxy_ip: None,
             vsproxy_cfg: VsProxyConfig::from_env(),
             auto_rotate_reconnect: VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
         };
@@ -620,11 +635,55 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
 
         self.log_console(format!("[Bot] Rolling proxy (reason: {reason})..."));
 
+        // Fetch current IP if not yet determined
+        if self.current_proxy_ip.is_none() {
+            if let Some(ref curr) = self.proxy {
+                if let Ok(ip) = check_proxy_ip(curr) {
+                    self.current_proxy_ip = Some(ip);
+                }
+            }
+        }
+        let old_ip = self.current_proxy_ip.clone();
+
         match vsproxy::roll_proxy(&cfg, self.proxy.as_ref(), self.last_proxy_roll) {
             Ok(new_proxy) => {
+                // Verify external IP of the candidate proxy
+                self.log_console("[Bot] Checking external IP of rolled proxy...".to_string());
+                match check_proxy_ip(&new_proxy) {
+                    Ok(new_ip) => {
+                        self.log_console(format!("[Bot] Rolled proxy external IP check: {new_ip}"));
+                        if let Some(ref prev_ip) = old_ip {
+                            if prev_ip == &new_ip {
+                                self.log_console(format!(
+                                    "[Bot] Rolled proxy IP ({new_ip}) did NOT change from previous IP. Scheduling re-roll after cooldown ({}s)...",
+                                    cfg.cooldown_secs
+                                ));
+                                self.last_proxy_roll = Some(std::time::Instant::now());
+                                self.reconnect_after = Some(
+                                    std::time::Instant::now()
+                                        + std::time::Duration::from_secs(cfg.cooldown_secs),
+                                );
+                                return false;
+                            }
+                        }
+                        self.log_console(format!(
+                            "[Bot] Proxy IP successfully changed: {} -> {new_ip}",
+                            old_ip.as_deref().unwrap_or("unknown")
+                        ));
+                        self.current_proxy_ip = Some(new_ip);
+                    }
+                    Err(e) => {
+                        self.log_console(format!(
+                            "[Bot] Warning: Could not verify rolled proxy IP ({e}) — applying proxy anyway"
+                        ));
+                    }
+                }
+
                 self.last_proxy_roll = Some(std::time::Instant::now());
                 self.proxy = Some(new_proxy.clone());
-                self.host = Self::create_host(self.proxy.as_ref());
+                if let Some(id) = self.peer_id.take() {
+                    self.host.peer_disconnect(id, 0);
+                }
 
                 let info = ProxyInfo::from_config(&new_proxy);
                 self.state.write().unwrap().proxy = Some(info.clone());
@@ -642,12 +701,18 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
                     new_proxy.to_url()
                 ));
                 self.consecutive_reconnect_failures = 0;
+                self.reconnect_after = Some(
+                    std::time::Instant::now() + std::time::Duration::from_secs(3),
+                );
                 true
             }
             Err(VsProxyError::Cooldown { remaining_secs }) => {
                 self.log_console(format!(
-                    "[Bot] Proxy roll cooldown active: {remaining_secs}s remaining — skipping roll for now"
+                    "[Bot] Proxy roll cooldown active: {remaining_secs}s remaining — will retry roll after cooldown"
                 ));
+                self.reconnect_after = Some(
+                    std::time::Instant::now() + std::time::Duration::from_secs(remaining_secs),
+                );
                 false
             }
             Err(e) => {
@@ -658,8 +723,12 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
     }
 
     fn reconnect_main(&mut self) {
-        self.host = Self::create_host(self.proxy.as_ref());
         self.refresh_token();
+
+        if self.reconnect_after.is_some() {
+            // Reconnect delayed (e.g. proxy roll cooldown / IP unchanged) — abort connecting with stale proxy
+            return;
+        }
 
         let login_info = LoginInfo {
             protocol: PROTOCOL,
@@ -691,6 +760,8 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
                         if self.try_roll_proxy(reason) {
                             proxy_url = self.proxy.as_ref().map(|p| p.to_url());
                             sd_failures = 0;
+                        } else if self.reconnect_after.is_some() {
+                            return;
                         }
                     }
                     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -702,6 +773,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
         let addr: SocketAddr = format!("{}:{}", server_data.server, server_data.port)
             .parse()
             .expect("Invalid server address");
+        self.host = Self::create_host(self.proxy.as_ref());
         self.host.connect(addr, 2, 0);
     }
 
@@ -853,6 +925,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                     ));
                                 }
                             }
+                        } else {
+                            // try_roll_proxy scheduled a cooldown retry — abort token refresh for now
+                            return;
                         }
                     } else {
                         self.log_console(format!(
@@ -1013,6 +1088,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
     /// Process all pending ENet events once.
     pub fn service_once(&mut self) {
+        if self.peer_id.is_none() && self.reconnect_after.is_some() {
+            return;
+        }
         while let Some(event) = self.host.next_event() {
             match event {
                 enet::EventNoRef::Connect { peer: id, .. } => {
@@ -1064,19 +1142,38 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     } else if self.reconnect_after.is_some() {
                         // Delayed reconnect already scheduled (e.g. 2FA cooldown) — do nothing here.
                     } else if self.auto_reconnect {
-                        let interval = if self.reconnect_interval > 0 {
-                            self.reconnect_interval
-                        } else {
-                            8000 // Safe minimum floor to prevent IP soft bans
-                        };
+                        self.consecutive_reconnect_failures += 1;
+                        let max_retries = self.vsproxy_max_retries();
                         self.log_console(format!(
-                            "[Bot] Server disconnected — reconnecting in {}ms",
-                            interval
+                            "[Bot] Disconnected unexpectedly (attempt {}/{})",
+                            self.consecutive_reconnect_failures,
+                            max_retries
                         ));
-                        self.reconnect_after = Some(
-                            std::time::Instant::now()
-                                + std::time::Duration::from_millis(interval),
-                        );
+
+                        if self.consecutive_reconnect_failures >= max_retries {
+                            self.log_console(format!(
+                                "[Bot] Consecutive reconnect failures reached limit ({max_retries}) — rolling proxy..."
+                            ));
+                            if self.try_roll_proxy("Consecutive reconnect failures limit reached") {
+                                self.consecutive_reconnect_failures = 0;
+                            }
+                        }
+
+                        if self.reconnect_after.is_none() {
+                            let interval = if self.reconnect_interval > 0 {
+                                self.reconnect_interval
+                            } else {
+                                8000 // Safe minimum floor to prevent IP soft bans
+                            };
+                            self.log_console(format!(
+                                "[Bot] Server disconnected — reconnecting in {}ms",
+                                interval
+                            ));
+                            self.reconnect_after = Some(
+                                std::time::Instant::now()
+                                    + std::time::Duration::from_millis(interval),
+                            );
+                        }
                     } else {
                         self.log_console(
                             "[Bot] Server disconnected — auto-reconnect is disabled".to_string(),
@@ -1252,11 +1349,14 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                         ));
                                         if self.try_roll_proxy("Consecutive reconnect failures limit reached") {
                                             self.consecutive_reconnect_failures = 0;
-                                            self.reconnect_after = Some(
-                                                std::time::Instant::now()
-                                                    + std::time::Duration::from_secs(3),
-                                            );
                                         }
+                                    }
+                                    if self.reconnect_after.is_none() {
+                                        let interval = self.reconnect_interval.max(8000);
+                                        self.reconnect_after = Some(
+                                            std::time::Instant::now()
+                                                + std::time::Duration::from_millis(interval),
+                                        );
                                     }
                                 }
                                 // self.redirect = None;
@@ -3293,6 +3393,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     self.disconnect();
                 }
                 self.proxy = proxy.clone();
+                self.current_proxy_ip = None;
                 let info = proxy.as_ref().map(ProxyInfo::from_config);
                 self.state.write().unwrap().proxy = info.clone();
                 let (host, port, username, password) = match &info {
@@ -3356,26 +3457,27 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     pub fn disconnect(&mut self) {
         self.manual_disconnect = true;
         self.reconnect_after = None;
-        if let Some(id) = self.peer_id {
-            self.host.peer_disconnect(id, 0);
-        } else {
-            {
-                let mut s = self.state.write().unwrap();
-                s.status = BotStatus::Disconnected;
-                s.world_name = String::new();
-                s.players = Vec::new();
-                s.ping_ms = 0;
-            }
-            self.emit(WsEvent::BotStatus {
-                bot_id: self.bot_id,
-                status: "disconnected".into(),
-            });
-            self.emit(WsEvent::BotWorld {
-                bot_id: self.bot_id,
-                world_name: String::new(),
-            });
-            self.log_console("[Bot] Manual disconnect — staying offline until reconnect".to_string());
+        if let Some(id) = self.peer_id.take() {
+            self.host.peer_disconnect_now(id, 0);
         }
+        self.pathfind_target = None;
+        self.pathfind_recalc = false;
+        {
+            let mut s = self.state.write().unwrap();
+            s.status = BotStatus::Disconnected;
+            s.world_name = String::new();
+            s.players = Vec::new();
+            s.ping_ms = 0;
+        }
+        self.emit(WsEvent::BotStatus {
+            bot_id: self.bot_id,
+            status: "disconnected".into(),
+        });
+        self.emit(WsEvent::BotWorld {
+            bot_id: self.bot_id,
+            world_name: String::new(),
+        });
+        self.log_console("[Bot] Manual disconnect executed".to_string());
     }
 
     fn disconnect_raw(&mut self) {
