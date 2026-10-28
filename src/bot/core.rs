@@ -1,4 +1,4 @@
-use crate::astar::{self, find_path};
+use crate::astar;
 use crate::bot_state::{
     BotCommand, BotDelays, BotState, BotStatus, CmdReceiver, InvSlot, PlayerInfo, ProxyInfo,
     TileInfo, WorldObjectInfo,
@@ -9,7 +9,8 @@ use crate::protocol::crypto::{compute_klv, generate_rid, hash_string, random_hex
 use crate::events::{ChatKind, WsEvent, WsInvItem, WsObject, WsTile, WsTx};
 use crate::inventory::Inventory;
 use crate::items::ItemsDat;
-use crate::login::check_token;
+use crate::login::{check_token, is_ip_limit_error};
+use crate::vsproxy::{self, VsProxyConfig, VsProxyError};
 use crate::protocol::packet::{self, GamePacketType, GameUpdatePacket, IncomingPacket};
 use crate::player::{LocalPlayer, Player, parse_pipe_map};
 use crate::server_data::{LoginInfo, get_server_data_proxied};
@@ -227,6 +228,16 @@ pub struct Bot {
     ws_tx: Option<WsTx>,
     /// Last broadcast ping value — used to suppress redundant BotPing events.
     last_ping: u32,
+    /// Set when an IP account limit message is detected in game chat or check_token.
+    pending_ip_limit: bool,
+    /// Number of consecutive reconnection / logon failures before triggering auto-roll.
+    consecutive_reconnect_failures: u32,
+    /// Timestamp of last proxy roll (for rate-limit cooldown guard).
+    last_proxy_roll: Option<std::time::Instant>,
+    /// Configuration for VSProxy auto-rolling.
+    vsproxy_cfg: Option<VsProxyConfig>,
+    /// Whether the bot should automatically rotate proxy on reconnect failures / IP limit / HTTP 403.
+    pub auto_rotate_reconnect: bool,
 }
 
 fn sorted_blacklist_vec(set: &HashSet<u16>) -> Vec<u16> {
@@ -337,6 +348,11 @@ impl Bot {
             bot_id,
             ws_tx,
             last_ping: 0,
+            pending_ip_limit: false,
+            consecutive_reconnect_failures: 0,
+            last_proxy_roll: None,
+            vsproxy_cfg: VsProxyConfig::from_env(),
+            auto_rotate_reconnect: VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
         };
 
         {
@@ -346,6 +362,7 @@ impl Bot {
             s.collect_radius_tiles = bot.collect_radius_tiles;
             s.collect_blacklist = sorted_blacklist_vec(&bot.collect_blacklist);
             s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
+            s.auto_rotate_reconnect = bot.auto_rotate_reconnect;
         }
         bot.host.connect(creds.addr, 2, 0);
         bot
@@ -366,7 +383,7 @@ impl Bot {
 
     pub fn new_ltoken(
         ltoken_str: &str,
-        proxy: Option<Socks5Config>,
+        mut proxy: Option<Socks5Config>,
         state: Arc<RwLock<BotState>>,
         cmd_rx: CmdReceiver,
         items_dat: Arc<ItemsDat>,
@@ -380,7 +397,7 @@ impl Bot {
         let hash2 = hash_string(&format!("{}RT", random_hex(16)));
 
         let proxy_url = proxy.as_ref().map(|p| p.to_url());
-        let proxy_url_ref = proxy_url.as_deref();
+        let _proxy_url_ref = proxy_url.as_deref();
         let login_info = LoginInfo {
             protocol: PROTOCOL,
             game_version: GAME_VER.into(),
@@ -407,17 +424,39 @@ impl Bot {
         };
 
         let mut alternate = false;
+        let mut sd_failures = 0;
         let server_data = loop {
             log_fn(format!(
                 "[Bot] fetching server_data (alternate={alternate})..."
             ));
-            match get_server_data_proxied(alternate, &login_info, proxy_url_ref) {
+            let cur_proxy_url = proxy.as_ref().map(|p| p.to_url());
+            match get_server_data_proxied(alternate, &login_info, cur_proxy_url.as_deref()) {
                 Ok(s) => break s,
                 Err(e) => {
                     alternate = !alternate;
+                    sd_failures += 1;
+                    let err_str = e.to_string();
+                    let is_403 = err_str.contains("403");
                     log_fn(format!(
-                        "[Bot] fetch: server_data failed: {e} — retrying in 5s"
+                        "[Bot] fetch: server_data failed: {err_str} — retrying in 5s"
                     ));
+                    if is_403 || sd_failures >= 3 {
+                        if let Some(cfg) = VsProxyConfig::from_env() {
+                            if cfg.auto_roll {
+                                log_fn("[Bot] server_data HTTP 403 / failure during startup — rolling proxy...".to_string());
+                                match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None) {
+                                    Ok(new_p) => {
+                                        log_fn(format!("[Bot] Rolled proxy to: {}", new_p.to_url()));
+                                        proxy = Some(new_p);
+                                        sd_failures = 0;
+                                    }
+                                    Err(err) => {
+                                        log_fn(format!("[Bot] Proxy roll skipped/failed: {err}"));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     std::thread::sleep(std::time::Duration::from_secs(5));
                 }
             }
@@ -434,13 +473,32 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
 
         let mut final_ltoken = ltoken.clone();
         for attempt in 1..=3 {
-            match check_token(&final_ltoken, &login_data, proxy_url_ref) {
+            let cur_proxy_url = proxy.as_ref().map(|p| p.to_url());
+            match check_token(&final_ltoken, &login_data, cur_proxy_url.as_deref()) {
                 Ok(new_token) => {
                     log_fn(format!("[Bot] ltoken validated successfully"));
                     final_ltoken = new_token;
                     break;
                 }
                 Err(e) => {
+                    let err_str = e.to_string();
+                    if is_ip_limit_error(&err_str) {
+                        log_fn("[Bot] check_token IP limit reached during startup — rolling proxy...".to_string());
+                        if let Some(cfg) = VsProxyConfig::from_env() {
+                            if cfg.auto_roll {
+                                match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None) {
+                                    Ok(new_p) => {
+                                        log_fn(format!("[Bot] Rolled proxy to: {}", new_p.to_url()));
+                                        proxy = Some(new_p);
+                                        continue;
+                                    }
+                                    Err(err) => {
+                                        log_fn(format!("[Bot] Proxy roll skipped/failed: {err}"));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if attempt < 3 {
                         log_fn(format!("[Bot] check_token attempt {attempt} failed: {e} — retrying in 2s..."));
                         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -517,6 +575,11 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             bot_id,
             ws_tx,
             last_ping: 0,
+            pending_ip_limit: false,
+            consecutive_reconnect_failures: 0,
+            last_proxy_roll: None,
+            vsproxy_cfg: VsProxyConfig::from_env(),
+            auto_rotate_reconnect: VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
         };
 
         {
@@ -525,9 +588,73 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             s.collect_radius_tiles = bot.collect_radius_tiles;
             s.collect_blacklist = sorted_blacklist_vec(&bot.collect_blacklist);
             s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
+            s.auto_rotate_reconnect = bot.auto_rotate_reconnect;
         }
         bot.host.connect(addr, 2, 0);
         bot
+    }
+
+    pub fn vsproxy_max_retries(&self) -> u32 {
+        self.vsproxy_cfg.as_ref().map(|c| c.max_retries).unwrap_or(3)
+    }
+
+    pub fn try_roll_proxy(&mut self, reason: &str) -> bool {
+        let cfg = match &self.vsproxy_cfg {
+            Some(c) => c.clone(),
+            None => match VsProxyConfig::from_env() {
+                Some(c) => {
+                    self.vsproxy_cfg = Some(c.clone());
+                    c
+                }
+                None => {
+                    self.log_console("[Bot] Cannot roll proxy: no VSProxy configuration found".to_string());
+                    return false;
+                }
+            },
+        };
+
+        if (!self.auto_rotate_reconnect || !cfg.auto_roll) && reason != "Manual command" && reason != "Script request" {
+            self.log_console("[Bot] Proxy rolling skipped: auto_rotate_reconnect is disabled".to_string());
+            return false;
+        }
+
+        self.log_console(format!("[Bot] Rolling proxy (reason: {reason})..."));
+
+        match vsproxy::roll_proxy(&cfg, self.proxy.as_ref(), self.last_proxy_roll) {
+            Ok(new_proxy) => {
+                self.last_proxy_roll = Some(std::time::Instant::now());
+                self.proxy = Some(new_proxy.clone());
+                self.host = Self::create_host(self.proxy.as_ref());
+
+                let info = ProxyInfo::from_config(&new_proxy);
+                self.state.write().unwrap().proxy = Some(info.clone());
+
+                self.emit(WsEvent::BotProxy {
+                    bot_id: self.bot_id,
+                    proxy_host: Some(info.host),
+                    proxy_port: Some(info.port),
+                    proxy_username: info.username,
+                    proxy_password: info.password,
+                });
+
+                self.log_console(format!(
+                    "[Bot] Proxy successfully rolled: {}",
+                    new_proxy.to_url()
+                ));
+                self.consecutive_reconnect_failures = 0;
+                true
+            }
+            Err(VsProxyError::Cooldown { remaining_secs }) => {
+                self.log_console(format!(
+                    "[Bot] Proxy roll cooldown active: {remaining_secs}s remaining — skipping roll for now"
+                ));
+                false
+            }
+            Err(e) => {
+                self.log_console(format!("[Bot] Failed to roll proxy: {e}"));
+                false
+            }
+        }
     }
 
     fn reconnect_main(&mut self) {
@@ -538,16 +665,34 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             protocol: PROTOCOL,
             game_version: GAME_VER.into(),
         };
-        let proxy_url = self.proxy.as_ref().map(|p| p.to_url());
+        let mut proxy_url = self.proxy.as_ref().map(|p| p.to_url());
         let mut alternate = false;
+        let mut sd_failures = 0;
         let server_data = loop {
             match get_server_data_proxied(alternate, &login_info, proxy_url.as_deref()) {
                 Ok(s) => break s,
                 Err(e) => {
                     alternate = !alternate;
+                    sd_failures += 1;
+                    let err_str = e.to_string();
+                    let is_403 = err_str.contains("403");
                     self.log_console(format!(
-                        "[Bot] reconnect: server_data failed: {e} — retrying in 5s"
+                        "[Bot] reconnect: server_data failed (attempt {sd_failures}): {err_str} — retrying in 5s"
                     ));
+                    if is_403 || sd_failures >= self.vsproxy_max_retries() {
+                        let reason = if is_403 {
+                            "server_data blocked (HTTP 403 Forbidden)"
+                        } else {
+                            "server_data failed repeatedly"
+                        };
+                        self.log_console(format!(
+                            "[Bot] {reason} — attempting proxy roll..."
+                        ));
+                        if self.try_roll_proxy(reason) {
+                            proxy_url = self.proxy.as_ref().map(|p| p.to_url());
+                            sd_failures = 0;
+                        }
+                    }
                     std::thread::sleep(std::time::Duration::from_secs(5));
                 }
             }
@@ -686,9 +831,34 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     return;
                 }
                 Err(e) => {
-                    self.log_console(format!(
-                        "[Bot] check_token warning: {e} — proceeding with active token"
-                    ));
+                    let err_str = e.to_string();
+                    if is_ip_limit_error(&err_str) {
+                        self.log_console(format!(
+                            "[Bot] check_token failed: IP account limit reached ({err_str}). Triggering automatic proxy roll..."
+                        ));
+                        if self.try_roll_proxy("IP account limit reached in check_token") {
+                            let new_proxy = self.proxy.as_ref().map(|p| p.to_url());
+                            match check_token(&self.ltoken, &login_data, new_proxy.as_deref()) {
+                                Ok(new_token) => {
+                                    self.log_console(
+                                        "[Bot] Token refreshed via check_token after proxy roll"
+                                            .to_string(),
+                                    );
+                                    self.ltoken = new_token;
+                                    return;
+                                }
+                                Err(e2) => {
+                                    self.log_console(format!(
+                                        "[Bot] check_token retry after proxy roll warning: {e2} — proceeding with active token"
+                                    ));
+                                }
+                            }
+                        }
+                    } else {
+                        self.log_console(format!(
+                            "[Bot] check_token warning: {e} — proceeding with active token"
+                        ));
+                    }
                 }
             }
         }
@@ -751,10 +921,16 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                 .to_string(),
                         );
                     } else if self.auto_reconnect {
-                        self.log_console(
-                            "[Bot] 2FA cooldown elapsed — re-fetching token and server data"
-                                .to_string(),
-                        );
+                        let status_label = match self.state.read().unwrap().status {
+                            BotStatus::TwoFactorAuth => "2FA cooldown",
+                            BotStatus::ServerOverloaded => "server overload cooldown",
+                            BotStatus::TooManyLogins => "login rate-limit cooldown",
+                            BotStatus::Maintenance => "maintenance cooldown",
+                            _ => "reconnect cooldown",
+                        };
+                        self.log_console(format!(
+                            "[Bot] {status_label} elapsed — re-fetching token and server data"
+                        ));
                         self.reconnect_main();
                     }
                 }
@@ -919,9 +1095,15 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         }
                         Some(IncomingPacket::Text(s)) => {
                             self.log_console(format!("[Bot] Text: {s}"));
+                            if is_ip_limit_error(&s) {
+                                self.pending_ip_limit = true;
+                            }
                         }
                         Some(IncomingPacket::GameMessage(s)) => {
                             self.log_console(format!("[Bot] GameMessage: {s}"));
+                            if is_ip_limit_error(&s) {
+                                self.pending_ip_limit = true;
+                            }
                             if let Some(tx) = &self.event_tx {
                                 tx.try_send(BotEventRaw::GameMessage {
                                     text: s.to_string(),
@@ -1037,11 +1219,45 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                         bot_id: self.bot_id,
                                         status: "maintenance".into(),
                                     });
-                                } else {
+                                } else if self.pending_ip_limit {
+                                    self.pending_ip_limit = false;
                                     self.log_console(
-                                        "[Bot] Logon failed — disconnecting to re-fetch token"
+                                        "[Bot] Logon failed — IP account limit reached. Rolling proxy..."
                                             .to_string(),
                                     );
+                                    if self.try_roll_proxy("IP account limit reached on logon") {
+                                        self.consecutive_reconnect_failures = 0;
+                                        self.reconnect_after = Some(
+                                            std::time::Instant::now()
+                                                + std::time::Duration::from_secs(3),
+                                        );
+                                    } else {
+                                        let interval = self.reconnect_interval.max(8000);
+                                        self.reconnect_after = Some(
+                                            std::time::Instant::now()
+                                                + std::time::Duration::from_millis(interval),
+                                        );
+                                    }
+                                } else {
+                                    self.consecutive_reconnect_failures += 1;
+                                    let max_retries = self.vsproxy_max_retries();
+                                    self.log_console(format!(
+                                        "[Bot] Logon failed (attempt {}/{}) — disconnecting to re-fetch token",
+                                        self.consecutive_reconnect_failures,
+                                        max_retries
+                                    ));
+                                    if self.consecutive_reconnect_failures >= max_retries {
+                                        self.log_console(format!(
+                                            "[Bot] Consecutive reconnect failures reached limit ({max_retries}) — rolling proxy..."
+                                        ));
+                                        if self.try_roll_proxy("Consecutive reconnect failures limit reached") {
+                                            self.consecutive_reconnect_failures = 0;
+                                            self.reconnect_after = Some(
+                                                std::time::Instant::now()
+                                                    + std::time::Duration::from_secs(3),
+                                            );
+                                        }
+                                    }
                                 }
                                 // self.redirect = None;
                                 self.host.peer_disconnect(id, 0);
@@ -1562,6 +1778,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 });
             }
             "OnSuperMainStartAcceptLogonHrdxs47254722215a" => {
+                self.consecutive_reconnect_failures = 0;
+                self.pending_ip_limit = false;
                 self.state.write().unwrap().status = BotStatus::Connected;
                 self.send_text("action|enter_game\n");
                 self.emit(WsEvent::BotStatus {
@@ -2565,6 +2783,10 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.disconnect();
                 Rep::Ack
             }
+            Req::RollProxy => {
+                self.try_roll_proxy("Script request");
+                Rep::Ack
+            }
             Req::SendRaw { pkt } => {
                 self.send_game_packet(&pkt, true);
                 Rep::Ack
@@ -2762,6 +2984,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 Rep::Ack
             }
             Req::GetReconnectInterval => Rep::U32(self.reconnect_interval as u32),
+            Req::SetAutoRotateReconnect { enabled } => {
+                self.auto_rotate_reconnect = enabled;
+                self.state.write().unwrap().auto_rotate_reconnect = enabled;
+                Rep::Ack
+            }
+            Req::GetAutoRotateReconnect => Rep::Bool(self.auto_rotate_reconnect),
             Req::GetPing => Rep::U32(self.state.read().unwrap().ping_ms),
             Req::GetGems => Rep::I32(self.inventory.gems),
             Req::SetPlaceDelay { ms } => {
@@ -2892,6 +3120,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::Reconnect => {
                 self.reconnect();
             }
+            BotCommand::RollProxy => {
+                self.try_roll_proxy("Manual command");
+            }
             BotCommand::Place { x, y, item } => {
                 if self.captcha_active {
                     self.log_console("[Bot] Place ditahan: verifikasi captcha aktif".to_string());
@@ -3000,6 +3231,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::SetAutoReconnect { enabled } => {
                 self.auto_reconnect = enabled;
                 self.state.write().unwrap().auto_reconnect = enabled;
+            }
+            BotCommand::SetAutoRotateReconnect { enabled } => {
+                self.auto_rotate_reconnect = enabled;
+                self.state.write().unwrap().auto_rotate_reconnect = enabled;
+                self.log_console(format!("[Bot] Auto-rotate proxy on reconnect set to: {enabled}"));
             }
             BotCommand::SetIgnoreGems { enabled } => {
                 self.ignore_gems = enabled;

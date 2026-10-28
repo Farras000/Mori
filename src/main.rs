@@ -27,6 +27,7 @@ mod sysbrowser;
 pub mod world;
 mod web;
 pub mod script_channel;
+pub mod vsproxy;
 
 use std::sync::{Arc, Mutex};
 use bot_manager::BotManager;

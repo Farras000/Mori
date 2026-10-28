@@ -180,6 +180,8 @@ pub struct BotState {
     pub collect_path_check: bool,
     /// Whether the bot should automatically reconnect after a disconnect.
     pub auto_reconnect: bool,
+    /// Whether the bot should automatically rotate proxy on reconnect failures / IP limit / HTTP 403.
+    pub auto_rotate_reconnect: bool,
     /// Current SOCKS5 proxy (`None` = direct connection).
     pub proxy: Option<ProxyInfo>,
     /// Active modal game dialog or captcha requested by server, if any.
@@ -216,6 +218,7 @@ impl Default for BotState {
             auto_ban: false,
             collect_path_check: true,
             auto_reconnect: true,
+            auto_rotate_reconnect: true,
             proxy: None,
             active_dialog: None,
         }
@@ -262,6 +265,7 @@ pub enum BotCommand {
         blacklist: Vec<u16>,
     },
     SetAutoReconnect { enabled: bool },
+    SetAutoRotateReconnect { enabled: bool },
     SetIgnoreGems { enabled: bool },
     SetIgnoreEssences { enabled: bool },
     SetAutoLeaveOnMod { enabled: bool },
@@ -273,6 +277,7 @@ pub enum BotCommand {
     SetPlaceDelay { ms: u64 },
     SetWalkDelay { ms: u64 },
     SetProxy { proxy: Option<crate::bot::Socks5Config> },
+    RollProxy,
     AcceptAccess,
     DialogReturn {
         dialog_name: String,

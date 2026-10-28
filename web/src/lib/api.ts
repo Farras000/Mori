@@ -140,6 +140,7 @@ export interface BotState {
   collect_radius_tiles: number;
   collect_blacklist: number[];
   auto_reconnect: boolean;
+  auto_rotate_reconnect: boolean;
   proxy: ProxyInfo | null;
   active_dialog?: WsDialog | null;
 }
@@ -185,6 +186,8 @@ export type BotCmd =
   }
   | { type: "set_auto_collect"; enabled: boolean }
   | { type: "set_auto_reconnect"; enabled: boolean }
+  | { type: "set_auto_rotate_reconnect"; enabled: boolean }
+  | { type: "roll_proxy" }
   | { type: "disconnect" }
   | { type: "reconnect" }
   | {
@@ -366,6 +369,7 @@ export interface SavedBot {
   auto_ban: boolean;
   collect_path_check: boolean;
   auto_reconnect: boolean;
+  auto_rotate_reconnect: boolean;
   auto_spawn: boolean;
   saved_at: number;
   running: boolean;

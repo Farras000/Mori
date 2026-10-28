@@ -203,6 +203,13 @@ impl LuaUserData for BotProxy {
         fields.add_field_method_get("reconnect_interval", |_, p| {
             match p.request(Req::GetReconnectInterval) { Rep::U32(v) => Ok(v), _ => Ok(0) }
         });
+        fields.add_field_method_get("auto_rotate_reconnect", |_, p| {
+            match p.request(Req::GetAutoRotateReconnect) { Rep::Bool(v) => Ok(v), _ => Ok(true) }
+        });
+        fields.add_field_method_set("auto_rotate_reconnect", |_, p, v: bool| {
+            p.request(Req::SetAutoRotateReconnect { enabled: v });
+            Ok(())
+        });
         fields.add_field_method_set("reconnect_interval", |_, p, v: u64| {
             p.request(Req::SetReconnectInterval { ms: v });
             Ok(())
@@ -291,6 +298,11 @@ impl LuaUserData for BotProxy {
         methods.add_method("connect", |_, p, ()| {
             p.request(Req::Reconnect);
             Ok(true)
+        });
+
+        methods.add_method("rollProxy", |_, p, ()| {
+            p.request(Req::RollProxy);
+            Ok(())
         });
 
         methods.add_method("disconnect", |_, p, ()| {

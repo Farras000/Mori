@@ -95,6 +95,8 @@ pub struct BotConfig {
     pub collect_path_check: bool,
     #[serde(default = "default_true")]
     pub auto_reconnect: bool,
+    #[serde(default = "default_true")]
+    pub auto_rotate_reconnect: bool,
     /// Spawn this bot automatically when the server starts.
     #[serde(default)]
     pub auto_spawn: bool,
@@ -119,6 +121,7 @@ impl BotConfig {
             auto_ban: false,
             collect_path_check: true,
             auto_reconnect: true,
+            auto_rotate_reconnect: true,
             auto_spawn: false,
             saved_at: now_secs(),
         }
@@ -146,6 +149,7 @@ impl BotConfig {
             "auto_ban": self.auto_ban,
             "collect_path_check": self.collect_path_check,
             "auto_reconnect": self.auto_reconnect,
+            "auto_rotate_reconnect": self.auto_rotate_reconnect,
             "auto_spawn": self.auto_spawn,
             "saved_at": self.saved_at,
         })

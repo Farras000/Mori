@@ -159,6 +159,7 @@ impl BotManager {
         initial.auto_ban = cfg.auto_ban;
         initial.collect_path_check = cfg.collect_path_check;
         initial.auto_reconnect = cfg.auto_reconnect;
+        initial.auto_rotate_reconnect = cfg.auto_rotate_reconnect;
         if let Some(p) = cfg.proxy.as_ref() {
             initial.proxy = Some(crate::bot_state::ProxyInfo {
                 host: p.host.clone(),
@@ -215,6 +216,7 @@ impl BotManager {
         let _ = entry.cmd_tx.send(BotCommand::SetAutoBan { enabled: cfg.auto_ban });
         let _ = entry.cmd_tx.send(BotCommand::SetCollectPathCheck { enabled: cfg.collect_path_check });
         let _ = entry.cmd_tx.send(BotCommand::SetAutoReconnect { enabled: cfg.auto_reconnect });
+        let _ = entry.cmd_tx.send(BotCommand::SetAutoRotateReconnect { enabled: cfg.auto_rotate_reconnect });
         if let Some(p) = cfg.proxy.as_ref().and_then(proxy_from_config) {
             let _ = entry.cmd_tx.send(BotCommand::SetProxy { proxy: Some(p) });
         }
@@ -246,7 +248,18 @@ impl BotManager {
         for (id, entry) in &self.bots {
             let Some(cfg) = self.store.get(*id) else { continue };
             let st = entry.state.read().unwrap();
-            let changed = cfg.delays != st.delays
+            let proxy_changed = match (&cfg.proxy, &st.proxy) {
+                (Some(cp), Some(sp)) => {
+                    cp.host != sp.host
+                        || cp.port != sp.port
+                        || cp.username != sp.username
+                        || cp.password != sp.password
+                }
+                (None, None) => false,
+                _ => true,
+            };
+            let changed = proxy_changed
+                || cfg.delays != st.delays
                 || cfg.auto_collect != st.auto_collect
                 || cfg.collect_radius_tiles != st.collect_radius_tiles
                 || cfg.collect_blacklist != st.collect_blacklist
@@ -256,6 +269,7 @@ impl BotManager {
                 || cfg.auto_ban != st.auto_ban
                 || cfg.collect_path_check != st.collect_path_check
                 || cfg.auto_reconnect != st.auto_reconnect
+                || cfg.auto_rotate_reconnect != st.auto_rotate_reconnect
                 || cfg.mac.as_deref() != Some(st.mac.as_str());
             if !changed {
                 continue;
@@ -272,6 +286,13 @@ impl BotManager {
                 c.auto_ban = entry.state.read().unwrap().auto_ban;
                 c.collect_path_check = entry.state.read().unwrap().collect_path_check;
                 c.auto_reconnect = entry.state.read().unwrap().auto_reconnect;
+                c.auto_rotate_reconnect = entry.state.read().unwrap().auto_rotate_reconnect;
+                c.proxy = entry.state.read().unwrap().proxy.as_ref().map(|p| ProxyConfig {
+                    host: p.host.clone(),
+                    port: p.port,
+                    username: p.username.clone(),
+                    password: p.password.clone(),
+                });
                 if !c.mac.as_deref().unwrap_or("").is_empty() {
                     c.mac = Some(entry.state.read().unwrap().mac.clone());
                 }
@@ -381,6 +402,10 @@ impl BotManager {
             }
             BotCommand::SetAutoReconnect { enabled } => {
                 next.auto_reconnect = *enabled;
+                true
+            }
+            BotCommand::SetAutoRotateReconnect { enabled } => {
+                next.auto_rotate_reconnect = *enabled;
                 true
             }
             BotCommand::SetProxy { proxy } => {

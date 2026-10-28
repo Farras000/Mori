@@ -26,6 +26,15 @@ impl fmt::Display for LoginError {
 
 impl std::error::Error for LoginError {}
 
+/// Detects whether an error message from check_token or the game server indicates
+/// that the current IP address has reached the maximum allowed account logins.
+pub fn is_ip_limit_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    lower.contains("limit of accounts that can be login")
+        || lower.contains("reached the limit of accounts")
+        || lower.contains("limit of accounts that can be logged in")
+}
+
 type Result<T> = std::result::Result<T, LoginError>;
 
 pub fn get_legacy_token(url: &str, username: &str, password: &str) -> Result<String> {
@@ -185,4 +194,18 @@ fn extract_csrf_token(html: &str) -> Option<String> {
         .value()
         .attr("value")
         .map(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_ip_limit_error() {
+        let msg = "Token validation failed: {\"accountAge\":2,\"accountType\":\"growtopia\",\"message\":\"Oops! You have reached the limit of accounts that can be login from this IP address. Please try again later.\",\"status\":\"failed\",\"token\":\"\",\"url\":\"\"}";
+        assert!(is_ip_limit_error(msg));
+
+        let generic_err = "Token validation failed: {\"status\":\"failed\",\"message\":\"Invalid token\"}";
+        assert!(!is_ip_limit_error(generic_err));
+    }
 }

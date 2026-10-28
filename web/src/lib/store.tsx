@@ -35,6 +35,7 @@ export interface LiveBot {
   collect_radius_tiles: number
   collect_blacklist: number[]
   auto_reconnect: boolean
+  auto_rotate_reconnect: boolean
   proxy: ProxyInfo | null
   chat: string[]
   active_dialog: WsDialog | null
@@ -55,6 +56,7 @@ export function makeBot(id: number, username: string): LiveBot {
     collect_radius_tiles: 3,
     collect_blacklist: [],
     auto_reconnect: true,
+    auto_rotate_reconnect: true,
     proxy: null,
     chat: [],
     active_dialog: null,

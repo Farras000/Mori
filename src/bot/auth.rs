@@ -36,7 +36,7 @@ pub(super) fn fetch_credentials(
             Err(e) => {
                 alternate = !alternate;
                 log(format!(
-                    "[Bot] fetch: server_data failed: {e} - retrying in 5s"
+                    "[Bot] fetch: server_data failed: {e} — retrying in 5s"
                 ));
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;

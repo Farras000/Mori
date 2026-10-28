@@ -95,6 +95,7 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
           collect_radius_tiles: s.collect_radius_tiles,
           collect_blacklist: s.collect_blacklist,
           auto_reconnect: s.auto_reconnect,
+          auto_rotate_reconnect: s.auto_rotate_reconnect ?? true,
           proxy: s.proxy ?? null,
         });
       });
@@ -200,6 +201,7 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
             delays={bot.delays}
             autoCollect={bot.auto_collect}
             autoReconnect={bot.auto_reconnect}
+            autoRotateReconnect={bot.auto_rotate_reconnect ?? true}
             proxy={bot.proxy}
             botStatus={bot.status}
           />
@@ -733,6 +735,7 @@ function ConfigTab({
   delays,
   autoCollect,
   autoReconnect,
+  autoRotateReconnect,
   proxy,
   botStatus,
 }: {
@@ -749,6 +752,7 @@ function ConfigTab({
   };
   autoCollect: boolean;
   autoReconnect: boolean;
+  autoRotateReconnect: boolean;
   proxy: ProxyInfo | null;
   botStatus: BotStatus;
 }) {
@@ -1069,7 +1073,8 @@ function ConfigTab({
             });
             api
               .sendCmd(botId, { type: "set_auto_collect", enabled })
-              .catch(() => {
+              .catch((err) => {
+                console.error("Failed to set_auto_collect:", err);
                 setBots((m) => {
                   const bot = m.get(botId);
                   if (!bot) return m;
@@ -1097,7 +1102,8 @@ function ConfigTab({
             });
             api
               .sendCmd(botId, { type: "set_auto_reconnect", enabled })
-              .catch(() => {
+              .catch((err) => {
+                console.error("Failed to set_auto_reconnect:", err);
                 setBots((m) => {
                   const bot = m.get(botId);
                   if (!bot) return m;
@@ -1111,6 +1117,35 @@ function ConfigTab({
         />
         <span className="text-xs text-muted-foreground">
           Auto-reconnect on disconnect
+        </span>
+      </label>
+      <label className="flex items-center gap-2 cursor-pointer">
+        <Switch
+          size="sm"
+          checked={autoRotateReconnect ?? true}
+          onCheckedChange={(enabled) => {
+            setBots((m) => {
+              const bot = m.get(botId);
+              if (!bot) return m;
+              return new Map(m).set(botId, { ...bot, auto_rotate_reconnect: enabled });
+            });
+            api
+              .sendCmd(botId, { type: "set_auto_rotate_reconnect", enabled })
+              .catch((err) => {
+                console.error("Failed to set_auto_rotate_reconnect:", err);
+                setBots((m) => {
+                  const bot = m.get(botId);
+                  if (!bot) return m;
+                  return new Map(m).set(botId, {
+                    ...bot,
+                    auto_rotate_reconnect: !enabled,
+                  });
+                });
+              });
+          }}
+        />
+        <span className="text-xs text-muted-foreground">
+          Auto-rotate proxy on reconnect / 403 / IP limit
         </span>
       </label>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">

@@ -29,6 +29,7 @@ pub enum ScriptRequest {
     // Network / connection
     Reconnect,
     Disconnect,
+    RollProxy,
     SendRaw { pkt: GameUpdatePacket },
     SendPacket { ptype: u8, text: String },
 
@@ -83,6 +84,8 @@ pub enum ScriptRequest {
     GetCollectPathCheck,
     SetReconnectInterval { ms: u64 },
     GetReconnectInterval,
+    SetAutoRotateReconnect { enabled: bool },
+    GetAutoRotateReconnect,
     SetPlaceDelay { ms: u64 },
     SetWalkDelay { ms: u64 },
 

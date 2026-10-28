@@ -428,8 +428,10 @@ enum CmdRequest {
         blacklist: Vec<u16>,
     },
     SetAutoReconnect { enabled: bool },
+    SetAutoRotateReconnect { enabled: bool },
     Disconnect,
     Reconnect,
+    RollProxy,
     SetProxy {
         #[serde(default)]
         proxy_host:     Option<String>,
@@ -573,8 +575,10 @@ async fn bot_cmd(
             blacklist,
         },
         CmdRequest::SetAutoReconnect { enabled } => BotCommand::SetAutoReconnect { enabled },
+        CmdRequest::SetAutoRotateReconnect { enabled } => BotCommand::SetAutoRotateReconnect { enabled },
         CmdRequest::Disconnect => BotCommand::Disconnect,
         CmdRequest::Reconnect => BotCommand::Reconnect,
+        CmdRequest::RollProxy => BotCommand::RollProxy,
         CmdRequest::SetProxy { proxy_host, proxy_port, proxy_username, proxy_password } => {
             BotCommand::SetProxy {
                 proxy: proxy_from_parts(proxy_host, proxy_port, proxy_username, proxy_password),
@@ -588,7 +592,7 @@ async fn bot_cmd(
         CmdRequest::Warp { name, id } => BotCommand::Warp { name, id },
         CmdRequest::Say { text } => BotCommand::Say { text },
     };
-    let mut mgr = s.manager.lock().unwrap();
+    let mgr = s.manager.lock().unwrap();
     // Remember configuration changes right away (the bot may be offline).
     mgr.record_config_cmd(id, &cmd);
     if mgr.send_cmd(id, cmd) {
