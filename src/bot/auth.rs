@@ -89,9 +89,17 @@ pub(super) fn fetch_credentials(
             }
         };
 
-        let addr: SocketAddr = format!("{}:{}", server_data.server, server_data.port)
-            .parse()
-            .expect("Invalid server address");
+        let addr: SocketAddr = match format!("{}:{}", server_data.server, server_data.port).parse() {
+            Ok(a) => a,
+            Err(e) => {
+                log(format!(
+                    "[Bot] fetch: Invalid server address {}:{}: {e} — retrying in 5s",
+                    server_data.server, server_data.port
+                ));
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                continue;
+            }
+        };
 
         log(format!("[Bot] Got token: {ltoken}"));
         return Credentials {

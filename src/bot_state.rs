@@ -218,7 +218,7 @@ impl Default for BotState {
             auto_ban: false,
             collect_path_check: true,
             auto_reconnect: true,
-            auto_rotate_reconnect: true,
+            auto_rotate_reconnect: crate::vsproxy::VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
             proxy: None,
             active_dialog: None,
         }

@@ -121,7 +121,7 @@ impl BotConfig {
             auto_ban: false,
             collect_path_check: true,
             auto_reconnect: true,
-            auto_rotate_reconnect: true,
+            auto_rotate_reconnect: crate::vsproxy::VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
             auto_spawn: false,
             saved_at: now_secs(),
         }

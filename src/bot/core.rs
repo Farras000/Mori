@@ -30,6 +30,7 @@ use super::shared::{BotEventRaw, Socks5Config, TemporaryData};
 enum BotHost {
     Direct(enet::Host<UdpSocket>),
     Socks5(enet::Host<Socks5UdpSocket>),
+    None,
 }
 
 impl BotHost {
@@ -49,17 +50,23 @@ impl BotHost {
                 .ok()
                 .flatten()
             }
+            Self::None => None,
         }
     }
 
     fn connect(&mut self, addr: SocketAddr, channels: usize, data: u32) {
         match self {
             Self::Direct(h) => {
-                h.connect(addr, channels, data).expect("connect failed");
+                if let Err(e) = h.connect(addr, channels, data) {
+                    eprintln!("[Bot] Direct host connect error: {e}");
+                }
             }
             Self::Socks5(h) => {
-                h.connect(addr, channels, data).expect("connect failed");
+                if let Err(e) = h.connect(addr, channels, data) {
+                    eprintln!("[Bot] SOCKS5 host connect error: {e}");
+                }
             }
+            Self::None => {}
         }
     }
 
@@ -67,6 +74,7 @@ impl BotHost {
         match self {
             Self::Direct(h) => h.peer_mut(id).round_trip_time(),
             Self::Socks5(h) => h.peer_mut(id).round_trip_time(),
+            Self::None => std::time::Duration::ZERO,
         }
     }
 
@@ -78,6 +86,7 @@ impl BotHost {
             Self::Socks5(h) => {
                 h.peer_mut(id).send(channel, packet).ok();
             }
+            Self::None => {}
         }
     }
 
@@ -89,6 +98,7 @@ impl BotHost {
             Self::Socks5(h) => {
                 h.peer_mut(id).disconnect(data);
             }
+            Self::None => {}
         }
     }
 
@@ -100,6 +110,7 @@ impl BotHost {
             Self::Socks5(h) => {
                 h.peer_mut(id).disconnect_now(data);
             }
+            Self::None => {}
         }
     }
 }
@@ -298,7 +309,31 @@ impl Bot {
         let wk = random_hex(32);
         let rid = generate_rid();
 
-        let host = Self::create_host(proxy.as_ref());
+        let mut host_res = Self::create_host(proxy.as_ref());
+        if host_res.is_err() && proxy.is_some() {
+            log_fn(format!(
+                "[Bot] Warning: Failed to create SOCKS5 UDP socket: {:?} — retrying in 2s...",
+                host_res.as_ref().err()
+            ));
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            host_res = Self::create_host(proxy.as_ref());
+        }
+        let (host, startup_failed) = match host_res {
+            Ok(h) => (h, false),
+            Err(e) => {
+                log_fn(format!(
+                    "[Bot] Failed to create host/SOCKS5 UDP socket: {e} — bot will retry in reconnect loop"
+                ));
+                (BotHost::None, true)
+            }
+        };
+        let auto_rotate_reconnect = state
+            .read()
+            .ok()
+            .map(|s| s.auto_rotate_reconnect)
+            .unwrap_or_else(|| {
+                VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true)
+            });
         let mut bot = Bot {
             host,
             proxy,
@@ -366,7 +401,7 @@ impl Bot {
             last_proxy_roll: None,
             current_proxy_ip: None,
             vsproxy_cfg: VsProxyConfig::from_env(),
-            auto_rotate_reconnect: VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
+            auto_rotate_reconnect,
         };
 
         {
@@ -378,7 +413,12 @@ impl Bot {
             s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
             s.auto_rotate_reconnect = bot.auto_rotate_reconnect;
         }
-        bot.host.connect(creds.addr, 2, 0);
+        if startup_failed {
+            bot.consecutive_reconnect_failures = 1;
+            bot.reconnect_after = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+        } else {
+            bot.host.connect(creds.addr, 2, 0);
+        }
         bot
     }
 
@@ -455,8 +495,13 @@ impl Bot {
                         "[Bot] fetch: server_data failed: {err_str} — retrying in 5s"
                     ));
                     if is_403 || sd_failures >= 3 {
+                        let auto_rotate = state
+                            .read()
+                            .ok()
+                            .map(|s| s.auto_rotate_reconnect)
+                            .unwrap_or(true);
                         if let Some(cfg) = VsProxyConfig::from_env() {
-                            if cfg.auto_roll {
+                            if cfg.auto_roll && auto_rotate {
                                 log_fn("[Bot] server_data HTTP 403 / failure during startup — rolling proxy...".to_string());
                                 match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None) {
                                     Ok(new_p) => {
@@ -468,6 +513,8 @@ impl Bot {
                                         log_fn(format!("[Bot] Proxy roll skipped/failed: {err}"));
                                     }
                                 }
+                            } else {
+                                log_fn("[Bot] Proxy rolling skipped during startup: auto_rotate_reconnect is disabled".to_string());
                             }
                         }
                     }
@@ -497,9 +544,14 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
                 Err(e) => {
                     let err_str = e.to_string();
                     if is_ip_limit_error(&err_str) {
-                        log_fn("[Bot] check_token IP limit reached during startup — rolling proxy...".to_string());
+                        let auto_rotate = state
+                            .read()
+                            .ok()
+                            .map(|s| s.auto_rotate_reconnect)
+                            .unwrap_or(true);
                         if let Some(cfg) = VsProxyConfig::from_env() {
-                            if cfg.auto_roll {
+                            if cfg.auto_roll && auto_rotate {
+                                log_fn("[Bot] check_token IP limit reached during startup — rolling proxy...".to_string());
                                 match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None) {
                                     Ok(new_p) => {
                                         log_fn(format!("[Bot] Rolled proxy to: {}", new_p.to_url()));
@@ -510,6 +562,8 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
                                         log_fn(format!("[Bot] Proxy roll skipped/failed: {err}"));
                                     }
                                 }
+                            } else {
+                                log_fn("[Bot] Proxy rolling skipped during startup: auto_rotate_reconnect is disabled".to_string());
                             }
                         }
                     }
@@ -524,11 +578,42 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
         }
         let ltoken = final_ltoken;
 
-        let addr: SocketAddr = format!("{}:{}", server_data.server, server_data.port)
-            .parse()
-            .expect("Invalid server address");
+        let addr: SocketAddr = match format!("{}:{}", server_data.server, server_data.port).parse() {
+            Ok(a) => a,
+            Err(e) => {
+                log_fn(format!(
+                    "[Bot] Invalid server address {}:{}: {e} — defaulting to dummy address",
+                    server_data.server, server_data.port
+                ));
+                "127.0.0.1:17091".parse().unwrap()
+            }
+        };
 
-        let host = Self::create_host(proxy.as_ref());
+        let mut host_res = Self::create_host(proxy.as_ref());
+        if host_res.is_err() && proxy.is_some() {
+            log_fn(format!(
+                "[Bot] Warning: Failed to create SOCKS5 UDP socket: {:?} — retrying in 2s...",
+                host_res.as_ref().err()
+            ));
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            host_res = Self::create_host(proxy.as_ref());
+        }
+        let (host, startup_failed) = match host_res {
+            Ok(h) => (h, false),
+            Err(e) => {
+                log_fn(format!(
+                    "[Bot] Failed to create host/SOCKS5 UDP socket: {e} — bot will retry in reconnect loop"
+                ));
+                (BotHost::None, true)
+            }
+        };
+        let auto_rotate_reconnect = state
+            .read()
+            .ok()
+            .map(|s| s.auto_rotate_reconnect)
+            .unwrap_or_else(|| {
+                VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true)
+            });
         let mut bot = Bot {
             host,
             proxy,
@@ -594,7 +679,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             last_proxy_roll: None,
             current_proxy_ip: None,
             vsproxy_cfg: VsProxyConfig::from_env(),
-            auto_rotate_reconnect: VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
+            auto_rotate_reconnect,
         };
 
         {
@@ -605,12 +690,26 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             s.proxy = bot.proxy.as_ref().map(ProxyInfo::from_config);
             s.auto_rotate_reconnect = bot.auto_rotate_reconnect;
         }
-        bot.host.connect(addr, 2, 0);
+        if startup_failed {
+            bot.consecutive_reconnect_failures = 1;
+            bot.reconnect_after = Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+        } else {
+            bot.host.connect(addr, 2, 0);
+        }
         bot
     }
 
     pub fn vsproxy_max_retries(&self) -> u32 {
         self.vsproxy_cfg.as_ref().map(|c| c.max_retries).unwrap_or(3)
+    }
+
+    pub fn effective_reconnect_interval(&self) -> u64 {
+        let eff = if self.reconnect_interval == 45000 {
+            30000
+        } else {
+            self.reconnect_interval
+        };
+        eff.max(8000)
     }
 
     pub fn try_roll_proxy(&mut self, reason: &str) -> bool {
@@ -754,9 +853,6 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
                         } else {
                             "server_data failed repeatedly"
                         };
-                        self.log_console(format!(
-                            "[Bot] {reason} — attempting proxy roll..."
-                        ));
                         if self.try_roll_proxy(reason) {
                             proxy_url = self.proxy.as_ref().map(|p| p.to_url());
                             sd_failures = 0;
@@ -770,14 +866,51 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
         };
         self.meta = server_data.meta.clone();
 
-        let addr: SocketAddr = format!("{}:{}", server_data.server, server_data.port)
-            .parse()
-            .expect("Invalid server address");
-        self.host = Self::create_host(self.proxy.as_ref());
-        self.host.connect(addr, 2, 0);
+        let addr: SocketAddr = match format!("{}:{}", server_data.server, server_data.port).parse() {
+            Ok(a) => a,
+            Err(e) => {
+                self.log_console(format!(
+                    "[Bot] reconnect: Invalid server address {}:{}: {e}",
+                    server_data.server, server_data.port
+                ));
+                self.reconnect_after = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                return;
+            }
+        };
+
+        let mut host_res = Self::create_host(self.proxy.as_ref());
+        if host_res.is_err() && self.proxy.is_some() {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            host_res = Self::create_host(self.proxy.as_ref());
+        }
+
+        match host_res {
+            Ok(host) => {
+                self.host = host;
+                self.host.connect(addr, 2, 0);
+            }
+            Err(e) => {
+                self.log_console(format!(
+                    "[Bot] reconnect: Failed to create host/SOCKS5 UDP socket: {e}"
+                ));
+                self.consecutive_reconnect_failures += 1;
+                let max_retries = self.vsproxy_max_retries();
+                if self.consecutive_reconnect_failures >= max_retries {
+                    if self.try_roll_proxy("Failed to create SOCKS5 UDP socket") {
+                        self.consecutive_reconnect_failures = 0;
+                    }
+                }
+                if self.reconnect_after.is_none() {
+                    let interval = self.effective_reconnect_interval();
+                    self.reconnect_after = Some(
+                        std::time::Instant::now() + std::time::Duration::from_millis(interval),
+                    );
+                }
+            }
+        }
     }
 
-    fn create_host(proxy: Option<&Socks5Config>) -> BotHost {
+    fn create_host(proxy: Option<&Socks5Config>) -> std::io::Result<BotHost> {
         let settings = enet::HostSettings {
             peer_limit: 1,
             channel_limit: 2,
@@ -788,10 +921,10 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
         };
         match proxy {
             None => {
-                let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind UDP socket");
-                BotHost::Direct(
-                    enet::Host::new(socket, settings).expect("Failed to create ENet host"),
-                )
+                let socket = UdpSocket::bind("0.0.0.0:0")?;
+                let host = enet::Host::new(socket, settings)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create ENet host: {e:?}")))?;
+                Ok(BotHost::Direct(host))
             }
             Some(cfg) => {
                 let local: SocketAddr = "0.0.0.0:0".parse().unwrap();
@@ -800,11 +933,10 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
                     cfg.proxy_addr,
                     cfg.username.as_deref(),
                     cfg.password.as_deref(),
-                )
-                .expect("Failed to create SOCKS5 UDP socket");
-                BotHost::Socks5(
-                    enet::Host::new(socket, settings).expect("Failed to create ENet host"),
-                )
+                )?;
+                let host = enet::Host::new(socket, settings)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create SOCKS5 ENet host: {e:?}")))?;
+                Ok(BotHost::Socks5(host))
             }
         }
     }
@@ -1133,12 +1265,52 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                 .to_string(),
                         );
                     } else if let Some(r) = self.redirect.as_ref() {
-                        let addr: SocketAddr = format!("{}:{}", r.server, r.port)
-                            .parse()
-                            .expect("Invalid redirect address");
+                        let addr: SocketAddr = match format!("{}:{}", r.server, r.port).parse() {
+                            Ok(a) => a,
+                            Err(e) => {
+                                self.log_console(format!(
+                                    "[Bot] Invalid redirect address {}:{}: {e}",
+                                    r.server, r.port
+                                ));
+                                self.redirect = None;
+                                self.reconnect_after = Some(
+                                    std::time::Instant::now() + std::time::Duration::from_secs(5),
+                                );
+                                continue;
+                            }
+                        };
                         self.log_console(format!("[Bot] Redirecting to {}:{}", r.server, r.port));
-                        self.host = Self::create_host(self.proxy.as_ref());
-                        self.host.connect(addr, 2, 0);
+                        let mut host_res = Self::create_host(self.proxy.as_ref());
+                        if host_res.is_err() && self.proxy.is_some() {
+                            std::thread::sleep(std::time::Duration::from_millis(1500));
+                            host_res = Self::create_host(self.proxy.as_ref());
+                        }
+
+                        match host_res {
+                            Ok(host) => {
+                                self.host = host;
+                                self.host.connect(addr, 2, 0);
+                            }
+                            Err(e) => {
+                                self.log_console(format!(
+                                    "[Bot] Failed to create host for redirect: {e} — scheduling reconnect"
+                                ));
+                                self.redirect = None;
+                                self.consecutive_reconnect_failures += 1;
+                                let max_retries = self.vsproxy_max_retries();
+                                if self.consecutive_reconnect_failures >= max_retries {
+                                    if self.try_roll_proxy("Failed to create host for redirect") {
+                                        self.consecutive_reconnect_failures = 0;
+                                    }
+                                }
+                                if self.reconnect_after.is_none() {
+                                    let interval = self.effective_reconnect_interval();
+                                    self.reconnect_after = Some(
+                                        std::time::Instant::now() + std::time::Duration::from_millis(interval),
+                                    );
+                                }
+                            }
+                        }
                     } else if self.reconnect_after.is_some() {
                         // Delayed reconnect already scheduled (e.g. 2FA cooldown) — do nothing here.
                     } else if self.auto_reconnect {
@@ -1151,20 +1323,13 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         ));
 
                         if self.consecutive_reconnect_failures >= max_retries {
-                            self.log_console(format!(
-                                "[Bot] Consecutive reconnect failures reached limit ({max_retries}) — rolling proxy..."
-                            ));
                             if self.try_roll_proxy("Consecutive reconnect failures limit reached") {
                                 self.consecutive_reconnect_failures = 0;
                             }
                         }
 
                         if self.reconnect_after.is_none() {
-                            let interval = if self.reconnect_interval > 0 {
-                                self.reconnect_interval
-                            } else {
-                                8000 // Safe minimum floor to prevent IP soft bans
-                            };
+                            let interval = self.effective_reconnect_interval();
                             self.log_console(format!(
                                 "[Bot] Server disconnected — reconnecting in {}ms",
                                 interval
@@ -1318,10 +1483,6 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                     });
                                 } else if self.pending_ip_limit {
                                     self.pending_ip_limit = false;
-                                    self.log_console(
-                                        "[Bot] Logon failed — IP account limit reached. Rolling proxy..."
-                                            .to_string(),
-                                    );
                                     if self.try_roll_proxy("IP account limit reached on logon") {
                                         self.consecutive_reconnect_failures = 0;
                                         self.reconnect_after = Some(
@@ -1329,7 +1490,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                                 + std::time::Duration::from_secs(3),
                                         );
                                     } else {
-                                        let interval = self.reconnect_interval.max(8000);
+                                        let interval = self.effective_reconnect_interval();
                                         self.reconnect_after = Some(
                                             std::time::Instant::now()
                                                 + std::time::Duration::from_millis(interval),
@@ -1344,15 +1505,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                         max_retries
                                     ));
                                     if self.consecutive_reconnect_failures >= max_retries {
-                                        self.log_console(format!(
-                                            "[Bot] Consecutive reconnect failures reached limit ({max_retries}) — rolling proxy..."
-                                        ));
                                         if self.try_roll_proxy("Consecutive reconnect failures limit reached") {
                                             self.consecutive_reconnect_failures = 0;
                                         }
                                     }
                                     if self.reconnect_after.is_none() {
-                                        let interval = self.reconnect_interval.max(8000);
+                                        let interval = self.effective_reconnect_interval();
                                         self.reconnect_after = Some(
                                             std::time::Instant::now()
                                                 + std::time::Duration::from_millis(interval),
@@ -3080,7 +3238,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             Req::GetCollectPathCheck => Rep::Bool(self.collect_path_check),
             Req::SetReconnectInterval { ms } => {
-                self.reconnect_interval = ms;
+                let adjusted = if ms == 45000 { 30000 } else { ms };
+                self.reconnect_interval = adjusted;
                 Rep::Ack
             }
             Req::GetReconnectInterval => Rep::U32(self.reconnect_interval as u32),
@@ -3365,7 +3524,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.state.write().unwrap().collect_path_check = enabled;
             }
             BotCommand::SetReconnectInterval { ms } => {
-                self.reconnect_interval = ms;
+                let adjusted = if ms == 45000 { 30000 } else { ms };
+                self.reconnect_interval = adjusted;
             }
             BotCommand::SetPlaceDelay { ms } => {
                 self.delays.place_ms = ms;

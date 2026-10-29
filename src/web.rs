@@ -595,7 +595,8 @@ async fn bot_cmd(
     let mgr = s.manager.lock().unwrap();
     // Remember configuration changes right away (the bot may be offline).
     mgr.record_config_cmd(id, &cmd);
-    if mgr.send_cmd(id, cmd) {
+    let sent = mgr.send_cmd(id, cmd);
+    if sent || mgr.store.get(id).is_some() {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND

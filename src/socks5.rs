@@ -198,7 +198,23 @@ impl Socks5UdpSocket {
                 let port = u16::from_be_bytes([ipv6_response[16], ipv6_response[17]]);
                 Ok(SocketAddr::from((ip, port)))
             }
-            0x03 => Err(Socks5Error::InvalidResponse),
+            0x03 => {
+                let mut len = [0u8; 1];
+                stream.read_exact(&mut len)?;
+                let mut domain = vec![0u8; len[0] as usize];
+                stream.read_exact(&mut domain)?;
+                let mut port_bytes = [0u8; 2];
+                stream.read_exact(&mut port_bytes)?;
+                let port = u16::from_be_bytes(port_bytes);
+                let domain_str = std::str::from_utf8(&domain)
+                    .map_err(|_| Socks5Error::InvalidResponse)?;
+                use std::net::ToSocketAddrs;
+                let addr = format!("{}:{}", domain_str, port)
+                    .to_socket_addrs()?
+                    .next()
+                    .ok_or(Socks5Error::HostUnreachable)?;
+                Ok(addr)
+            }
             _ => Err(Socks5Error::AddressTypeNotSupported),
         }
     }

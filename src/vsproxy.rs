@@ -26,7 +26,7 @@ impl Default for VsProxyConfig {
             invoice: None,
             country: "us".into(),
             mode: "sticky".into(),
-            base_rotation: 45,
+            base_rotation: 50,
             anon: true,
             max_retries: 3,
             auto_roll: true,
@@ -63,7 +63,7 @@ impl VsProxyConfig {
         let base_rotation = std::env::var("VSPROXY_ROTATION")
             .ok()
             .and_then(|s| s.trim().parse::<u32>().ok())
-            .unwrap_or(45)
+            .unwrap_or(50)
             .clamp(1, 120);
 
         let anon = std::env::var("VSPROXY_ANON")
@@ -76,11 +76,20 @@ impl VsProxyConfig {
             .and_then(|s| s.trim().parse::<u32>().ok())
             .unwrap_or(3);
 
-        let auto_roll = std::env::var("AUTO_ROTATE_RECONNECT")
-            .or_else(|_| std::env::var("VSPROXY_AUTO_ROLL"))
-            .ok()
-            .map(|s| s.trim().to_lowercase() == "true" || s.trim() == "1")
-            .unwrap_or(true);
+        let auto_roll = match (
+            std::env::var("AUTO_ROTATE_RECONNECT"),
+            std::env::var("VSPROXY_AUTO_ROLL"),
+        ) {
+            (Ok(v1), Ok(v2)) => {
+                let b1 = v1.trim().to_lowercase() == "true" || v1.trim() == "1";
+                let b2 = v2.trim().to_lowercase() == "true" || v2.trim() == "1";
+                b1 && b2
+            }
+            (Ok(v), Err(_)) | (Err(_), Ok(v)) => {
+                v.trim().to_lowercase() == "true" || v.trim() == "1"
+            }
+            (Err(_), Err(_)) => true,
+        };
 
         let cooldown_secs = std::env::var("VSPROXY_COOLDOWN_SECS")
             .ok()
@@ -127,18 +136,27 @@ impl std::fmt::Display for VsProxyError {
 
 impl std::error::Error for VsProxyError {}
 
+pub const ROTATION_MIN: u32 = 50;
+pub const ROTATION_MAX: u32 = 60;
+
 /// Calculates the next rotation minutes to force VSProxy to generate a fresh IP.
-/// Strictly cycles between: base -> base + 1 -> base + 2 -> base (e.g. 45 -> 46 -> 47 -> 45 -> ...).
+/// Strictly cycles between: 50 -> 51 -> 52 -> ... -> 60 -> 50 -> ...
 pub fn calculate_next_rotation(base_rotation: u32, current_proxy: Option<&Socks5Config>) -> u32 {
     let current_val = current_proxy
         .and_then(|p| p.username.as_deref())
         .and_then(extract_sessttl_from_username);
 
+    let min_rot = if base_rotation >= ROTATION_MIN && base_rotation <= ROTATION_MAX {
+        base_rotation
+    } else {
+        ROTATION_MIN
+    };
+    let max_rot = ROTATION_MAX;
+
     match current_val {
-        Some(val) if val == base_rotation => base_rotation + 1,
-        Some(val) if val == base_rotation + 1 => base_rotation + 2,
-        Some(val) if val == base_rotation + 2 => base_rotation,
-        _ => base_rotation,
+        Some(val) if val >= min_rot && val < max_rot => val + 1,
+        Some(val) if val >= max_rot => min_rot,
+        _ => min_rot,
     }
 }
 
@@ -429,31 +447,40 @@ mod tests {
         let uname = "acd0495816223c2984b0__cr.us;sessttl.45:b4c2f01cc617cda0";
         assert_eq!(extract_sessttl_from_username(uname), Some(45));
 
-        let mock_cfg = Socks5Config {
+        let mock_cfg_45 = Socks5Config {
             proxy_addr: "127.0.0.1:10000".parse().unwrap(),
             username: Some(uname.to_string()),
             password: Some("pass".into()),
         };
 
-        assert_eq!(calculate_next_rotation(45, Some(&mock_cfg)), 46);
+        // Old sessttl.45 jumps into the 50..=60 range at 50
+        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_45)), 50);
 
-        let mock_cfg_46 = Socks5Config {
+        let mock_cfg_50 = Socks5Config {
             proxy_addr: "127.0.0.1:10000".parse().unwrap(),
-            username: Some("acd0495816223c2984b0__cr.us;sessttl.46:b4c2f01cc617cda0".to_string()),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.50:b4c2f01cc617cda0".to_string()),
             password: Some("pass".into()),
         };
-        assert_eq!(calculate_next_rotation(45, Some(&mock_cfg_46)), 47);
+        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_50)), 51);
 
-        let mock_cfg_47 = Socks5Config {
+        let mock_cfg_59 = Socks5Config {
             proxy_addr: "127.0.0.1:10000".parse().unwrap(),
-            username: Some("acd0495816223c2984b0__cr.us;sessttl.47:b4c2f01cc617cda0".to_string()),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.59:b4c2f01cc617cda0".to_string()),
             password: Some("pass".into()),
         };
-        assert_eq!(calculate_next_rotation(45, Some(&mock_cfg_47)), 45);
+        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_59)), 60);
 
-        let bumped = bump_vsproxy_session(&mock_cfg, 45).expect("Should bump");
+        let mock_cfg_60 = Socks5Config {
+            proxy_addr: "127.0.0.1:10000".parse().unwrap(),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.60:b4c2f01cc617cda0".to_string()),
+            password: Some("pass".into()),
+        };
+        // 60 wraps around to 50
+        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_60)), 50);
+
+        let bumped = bump_vsproxy_session(&mock_cfg_50, 50).expect("Should bump");
         let bumped_uname = bumped.username.unwrap();
-        assert!(bumped_uname.contains("sessttl.46"));
+        assert!(bumped_uname.contains("sessttl.51"));
         assert!(bumped_uname.contains("anon.1"));
     }
 
@@ -496,5 +523,30 @@ mod tests {
         };
         let res = check_proxy_ip(&mock_cfg);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_auto_roll_env_parsing() {
+        // If either AUTO_ROTATE_RECONNECT or VSPROXY_AUTO_ROLL is false, auto_roll should be false
+        unsafe {
+            std::env::set_var("AUTO_ROTATE_RECONNECT", "true");
+            std::env::set_var("VSPROXY_AUTO_ROLL", "false");
+        }
+        let cfg = VsProxyConfig::from_env().unwrap();
+        assert_eq!(cfg.auto_roll, false);
+
+        unsafe {
+            std::env::set_var("AUTO_ROTATE_RECONNECT", "false");
+            std::env::set_var("VSPROXY_AUTO_ROLL", "true");
+        }
+        let cfg2 = VsProxyConfig::from_env().unwrap();
+        assert_eq!(cfg2.auto_roll, false);
+
+        unsafe {
+            std::env::set_var("AUTO_ROTATE_RECONNECT", "true");
+            std::env::set_var("VSPROXY_AUTO_ROLL", "true");
+        }
+        let cfg3 = VsProxyConfig::from_env().unwrap();
+        assert_eq!(cfg3.auto_roll, true);
     }
 }
