@@ -237,7 +237,7 @@ function createColorTileLayer(
   }
 }
 
-function MinimapInner({ bot }: { bot: LiveBot }) {
+function MinimapInner({ bot, className }: { bot: LiveBot; className?: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const itemNames = useAtomValue(itemNamesAtom)
   const itemColors = useAtomValue(itemColorsAtom)
@@ -1125,7 +1125,7 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
   }, [handleWheel])
 
   return (
-    <div className="relative w-full aspect-video">
+    <div className={cn("relative w-full", className ?? "aspect-video")}>
       <div
         ref={containerRef}
         className="w-full h-full rounded border border-border bg-[#080c10] cursor-crosshair overflow-hidden"
@@ -1244,5 +1244,6 @@ export const Minimap = memo(MinimapInner, (prev, next) => (
   prev.bot.players === next.bot.players &&
   prev.bot.objects === next.bot.objects &&
   prev.bot.pos_x === next.bot.pos_x &&
-  prev.bot.pos_y === next.bot.pos_y
+  prev.bot.pos_y === next.bot.pos_y &&
+  prev.className === next.className
 ))

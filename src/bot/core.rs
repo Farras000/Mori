@@ -1683,28 +1683,40 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         }
                         Some(IncomingPacket::Track(s)) => {
                             self.log_console(format!("[Bot] Track: {s}"));
-                            let fields: std::collections::HashMap<&str, &str> =
-                                s.lines().filter_map(|line| line.split_once('|')).collect();
-                            let level = fields
-                                .get("Level")
-                                .and_then(|v| v.parse::<u32>().ok())
-                                .unwrap_or(0);
-                            let grow_id = fields
-                                .get("GrowId")
-                                .and_then(|v| v.parse::<u64>().ok())
-                                .unwrap_or(0);
-                            let install_date = fields
-                                .get("installDate")
-                                .and_then(|v| v.parse::<u64>().ok())
-                                .unwrap_or(0);
-                            let global_playtime = fields
-                                .get("Global_Playtime")
-                                .and_then(|v| v.parse::<u64>().ok())
-                                .unwrap_or(0);
-                            let awesomeness = fields
-                                .get("Awesomeness")
-                                .and_then(|v| v.parse::<u32>().ok())
-                                .unwrap_or(0);
+                            // Payload bisa berbentuk baris-baris "Key|Value"
+                            // atau satu baris "K|V|K2|V2". Key dinormalisasi
+                            // (lowercase, tanpa spasi/_/-) supaya case dan
+                            // pemisah bebas.
+                            let mut fields: std::collections::HashMap<String, String> =
+                                std::collections::HashMap::new();
+                            for seg in s.split(['\n', '\r']) {
+                                let parts: Vec<&str> = seg.split('|').collect();
+                                for pair in parts.chunks(2) {
+                                    if let [k, v] = pair {
+                                        let key = k
+                                            .trim()
+                                            .to_lowercase()
+                                            .replace([' ', '_', '-'], "");
+                                        fields.insert(key, v.trim().to_string());
+                                    }
+                                }
+                            }
+                            let get_u64 = |keys: &[&str]| {
+                                keys.iter()
+                                    .find_map(|k| fields.get(*k))
+                                    .and_then(|v| v.parse::<u64>().ok())
+                            };
+                            let level = get_u64(&["level"]).unwrap_or(0) as u32;
+                            let grow_id = get_u64(&["growid"]).unwrap_or(0);
+                            let install_date = get_u64(&["installdate"]).unwrap_or(0);
+                            let global_playtime =
+                                get_u64(&["globalplaytime", "playtime"]).unwrap_or(0);
+                            let awesomeness = get_u64(&["awesomeness"]).unwrap_or(0) as u32;
+                            if level == 0 && grow_id == 0 && global_playtime == 0 {
+                                self.log_console(
+                                    "[Bot] Track info kosong / format tidak dikenal (lihat baris [Bot] Track di atas)".to_string(),
+                                );
+                            }
                             self.state.write().unwrap().track_info =
                                 Some(crate::bot_state::TrackInfo {
                                     level,
