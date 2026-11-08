@@ -135,6 +135,42 @@ struct RedirectData {
     tank_id_name: String,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct HoldTarget {
+    pub x: i32,
+    pub y: i32,
+    pub item: u32,
+}
+
+pub struct InteractiveState {
+    pub enabled: bool,
+    pub input: crate::physics::MovementInput,
+    pub hold: Option<HoldTarget>,
+    pub action_reach: u8,
+    pub last_tick: std::time::Instant,
+    pub last_state_sent: std::time::Instant,
+    pub last_beat: std::time::Instant,
+    pub last_hit: std::time::Instant,
+    pub hit_interval_ms: u64,
+}
+
+impl Default for InteractiveState {
+    fn default() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            enabled: false,
+            input: crate::physics::MovementInput::default(),
+            hold: None,
+            action_reach: 4,
+            last_tick: now,
+            last_state_sent: now,
+            last_beat: now,
+            last_hit: now,
+            hit_interval_ms: 180,
+        }
+    }
+}
+
 pub struct Bot {
     host: BotHost,
     pub proxy: Option<Socks5Config>,
@@ -262,6 +298,7 @@ pub struct Bot {
     vsproxy_cfg: Option<VsProxyConfig>,
     /// Whether the bot should automatically rotate proxy on reconnect failures / IP limit / HTTP 403.
     pub auto_rotate_reconnect: bool,
+    pub interactive: InteractiveState,
 }
 
 fn sorted_blacklist_vec(set: &HashSet<u16>) -> Vec<u16> {
@@ -402,6 +439,7 @@ impl Bot {
             current_proxy_ip: None,
             vsproxy_cfg: VsProxyConfig::from_env(),
             auto_rotate_reconnect,
+            interactive: InteractiveState::default(),
         };
 
         {
@@ -680,6 +718,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             current_proxy_ip: None,
             vsproxy_cfg: VsProxyConfig::from_env(),
             auto_rotate_reconnect,
+            interactive: InteractiveState::default(),
         };
 
         {
@@ -1164,7 +1203,13 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.collect_timer = std::time::Instant::now();
                 self.collect(None, None);
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            let sleep_duration = if self.interactive.enabled {
+                self.tick_interactive();
+                std::time::Duration::from_millis(5)
+            } else {
+                std::time::Duration::from_millis(10)
+            };
+            std::thread::sleep(sleep_duration);
         }
     }
 
@@ -1214,7 +1259,13 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
         while std::time::Instant::now() < deadline {
             self.service_once();
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            let sleep_duration = if self.interactive.enabled {
+                self.tick_interactive();
+                std::time::Duration::from_millis(5)
+            } else {
+                std::time::Duration::from_millis(10)
+            };
+            std::thread::sleep(sleep_duration);
         }
     }
 
@@ -1534,6 +1585,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                         pkt.animation_type.saturating_sub(126);
                                     self.local.gravity = pkt.vector_x2;
                                     self.local.velocity = pkt.vector_y2;
+                                    if pkt.vector_x2 > 0.0 {
+                                        self.local.physics_cfg.gravity = pkt.vector_x2;
+                                    }
+                                    if pkt.vector_y2 > 0.0 {
+                                        self.local.physics_cfg.walk_speed = pkt.vector_y2;
+                                    }
                                 }
                                 GamePacketType::CallFunction => {
                                     let extra = pkt.extra_data.clone();
@@ -1918,6 +1975,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     {
                         let mut s = self.state.write().unwrap();
                         s.status = BotStatus::InGame;
+                        s.net_id = self.local.net_id;
                     }
                     self.emit(WsEvent::BotStatus {
                         bot_id: self.bot_id,
@@ -2020,6 +2078,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 let (x, y) = vl.get(1).map(|v| v.as_vec2()).unwrap_or((0.0, 0.0));
                 self.pos_x = x;
                 self.pos_y = y;
+                self.local.physics.pos = (x, y);
+                self.local.physics.vel = (0.0, 0.0);
+                self.local.physics.on_ground = true;
                 if self.pathfind_target.is_some() {
                     self.pathfind_recalc = true;
                 }
@@ -2171,6 +2232,14 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
 
             "OnRequestWorldSelectMenu" => {
+                let raw_menu = vl.get(1).map(|v| v.as_string()).unwrap_or_default();
+                let sections = parse_world_select_menu(&raw_menu);
+                let raw_snippet: String = raw_menu.chars().take(2048).collect();
+                self.log_console(format!(
+                    "[Bot] OnRequestWorldSelectMenu ({} sections parsed) raw={}",
+                    sections.len(),
+                    raw_snippet
+                ));
                 self.world = None;
                 self.captcha_active = false;
                 self.pathfind_target = None;
@@ -2179,6 +2248,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     let mut s = self.state.write().unwrap();
                     s.world_name = "EXIT".to_string();
                     s.status = BotStatus::InGame;
+                    s.world_menu = sections.clone();
                     self.inventory.remove_temp_items()
                 };
                 if removed {
@@ -2199,7 +2269,10 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     height: 0,
                     tiles: vec![],
                 });
-                self.log_console("[Bot] OnRequestWorldSelectMenu → cleared world".to_string());
+                self.emit(WsEvent::WorldMenu {
+                    bot_id: self.bot_id,
+                    sections,
+                });
             }
             _ => {}
         }
@@ -2698,40 +2771,120 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let target_x = tile_x as f32 * 32.0;
         let target_y = tile_y as f32 * 32.0;
 
-        let facing_left = target_x < self.pos_x;
-        self.pos_x = target_x;
-        self.pos_y = target_y + 2.0;
-
+        // Ensure physics position aligns with bot coordinate
+        if (self.local.physics.pos.0 - self.pos_x).abs() > 48.0
+            || (self.local.physics.pos.1 - self.pos_y).abs() > 48.0
         {
-            let mut s = self.state.write().unwrap();
-            s.pos_x = target_x / 32.0;
-            s.pos_y = target_y / 32.0;
+            self.local.physics.pos = (self.pos_x, self.pos_y);
         }
-        self.emit(WsEvent::BotMove {
-            bot_id: self.bot_id,
-            x: target_x / 32.0,
-            y: target_y / 32.0,
-        });
 
-        let mut flags = packet::PacketFlags::WALK | packet::PacketFlags::STANDING;
-        flags.set(packet::PacketFlags::FACING_LEFT, facing_left);
+        let total_delay = self.get_walk_delay().max(40);
+        let step_ms = 20;
+        let num_steps = (total_delay / step_ms).max(1);
+        let dt = (total_delay as f32 / num_steps as f32) / 1000.0;
 
-        let pkt = GameUpdatePacket {
-            packet_type: GamePacketType::State,
-            vector_x: target_x,
-            vector_y: target_y + 2.0,
-            int_x: -1,
-            int_y: -1,
-            flags,
-            ..Default::default()
-        };
+        let engine = crate::physics::PhysicsEngine::new(self.local.physics_cfg.clone());
 
-        self.send_game_packet(&pkt, false);
-        let d = self.get_walk_delay();
-        self.sleep_ms(d);
+        for step_idx in 0..num_steps {
+            let dx = target_x - self.local.physics.pos.0;
+            let dy = target_y - self.local.physics.pos.1;
+
+            let move_left = dx < -2.0;
+            let move_right = dx > 2.0;
+            let jump = dy < -10.0;
+            let drop_down = dy > 10.0;
+
+            let input = crate::physics::MovementInput {
+                move_left,
+                move_right,
+                jump,
+                drop_down,
+            };
+
+            if let Some(w) = &self.world {
+                let collision = crate::physics::BotWorldCollision::new(
+                    &w.tile_map,
+                    &self.items_dat,
+                    self.local.user_id,
+                );
+                engine.step(&mut self.local.physics, input, &collision, dt);
+            } else {
+                let collision = crate::physics::SimpleCollisionMap::new(100, 60);
+                engine.step(&mut self.local.physics, input, &collision, dt);
+            }
+
+            self.pos_x = self.local.physics.pos.0;
+            self.pos_y = self.local.physics.pos.1;
+
+            // Emit dashboard movement update
+            {
+                let mut s = self.state.write().unwrap();
+                s.pos_x = self.pos_x / 32.0;
+                s.pos_y = self.pos_y / 32.0;
+            }
+            self.emit(WsEvent::BotMove {
+                bot_id: self.bot_id,
+                x: self.pos_x / 32.0,
+                y: self.pos_y / 32.0,
+            });
+
+            // Send movement packet roughly every ~40ms or on final step
+            if step_idx % 2 == 1 || step_idx == num_steps - 1 {
+                let flags = self.local.physics.to_packet_flags();
+                let pkt = GameUpdatePacket {
+                    packet_type: GamePacketType::State,
+                    vector_x: self.pos_x,
+                    vector_y: self.pos_y,
+                    vector_x2: self.local.physics.vel.0,
+                    vector_y2: self.local.physics.vel.1,
+                    int_x: -1,
+                    int_y: -1,
+                    flags,
+                    ..Default::default()
+                };
+                self.send_game_packet(&pkt, false);
+            }
+
+            self.sleep_ms(step_ms);
+        }
+
+        // Final resting snap to target tile if within close proximity
+        if (self.pos_x - target_x).abs() <= 16.0 && (self.pos_y - target_y).abs() <= 24.0 {
+            self.pos_x = target_x;
+            self.pos_y = target_y + 2.0;
+            self.local.physics.pos = (self.pos_x, self.pos_y);
+            self.local.physics.vel = (0.0, 0.0);
+            self.local.physics.on_ground = true;
+            self.local.physics.is_jumping = false;
+
+            {
+                let mut s = self.state.write().unwrap();
+                s.pos_x = target_x / 32.0;
+                s.pos_y = target_y / 32.0;
+            }
+            self.emit(WsEvent::BotMove {
+                bot_id: self.bot_id,
+                x: target_x / 32.0,
+                y: target_y / 32.0,
+            });
+
+            let final_flags = self.local.physics.to_packet_flags();
+            let final_pkt = GameUpdatePacket {
+                packet_type: GamePacketType::State,
+                vector_x: self.pos_x,
+                vector_y: self.pos_y,
+                vector_x2: 0.0,
+                vector_y2: 0.0,
+                int_x: -1,
+                int_y: -1,
+                flags: final_flags,
+                ..Default::default()
+            };
+            self.send_game_packet(&final_pkt, false);
+        }
     }
 
-    pub fn place(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
+    pub fn send_tile_action(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
         if self.captcha_active {
             return;
         }
@@ -2744,8 +2897,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let tile_x = base_x + offset_x;
         let tile_y = base_y + offset_y;
 
-        if tile_x > base_x + 4 || tile_x < base_x - 4 || tile_y > base_y + 4 || tile_y < base_y - 4
-        {
+        let reach = self.interactive.action_reach as i32;
+        if offset_x.abs() > reach || offset_y.abs() > reach {
             return;
         }
 
@@ -2770,13 +2923,17 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         pkt.packet_type = GamePacketType::State;
         pkt.flags = flags;
         self.send_game_packet(&pkt, true);
-        let d = self.get_place_delay();
-        self.sleep_ms(d);
 
         if !is_punch && item_id != 18 && item_id != 32 {
             self.inventory.sub_item(item_id as u16, 1);
             self.emit_inventory_update();
         }
+    }
+
+    pub fn place(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
+        self.send_tile_action(offset_x, offset_y, item_id, is_punch);
+        let d = self.get_place_delay();
+        self.sleep_ms(d);
     }
 
     pub fn punch(&mut self, offset_x: i32, offset_y: i32) {
@@ -3227,7 +3384,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             Req::GetCollectInterval => Rep::U32(self.collect_interval as u32),
             Req::SetCollectRange { tiles } => {
-                self.collect_radius_tiles = tiles.clamp(1, 5);
+                self.collect_radius_tiles = tiles.clamp(1, 20);
                 Rep::Ack
             }
             Req::GetCollectRange => Rep::U32(self.collect_radius_tiles as u32),
@@ -3318,7 +3475,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 let cx = ((self.pos_x / 32.0).round() as i32) + x;
                 let cy = ((self.pos_y / 32.0).round() as i32) + y;
                 if cx < 0 || cy < 0 { return; }
-                self.walk((cx + x) as u32, (cy + y) as u32);
+                self.walk(cx as u32, cy as u32);
             }
             BotCommand::WalkTo { x, y } => {
                 self.find_path(x, y);
@@ -3516,7 +3673,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.collect_interval = ms;
             }
             BotCommand::SetCollectRange { tiles } => {
-                self.collect_radius_tiles = tiles.clamp(1, 5);
+                self.collect_radius_tiles = tiles.clamp(1, 20);
                 self.state.write().unwrap().collect_radius_tiles = self.collect_radius_tiles;
             }
             BotCommand::SetCollectPathCheck { enabled } => {
@@ -3539,7 +3696,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 radius_tiles,
                 blacklist,
             } => {
-                self.collect_radius_tiles = radius_tiles.clamp(1, 5);
+                self.collect_radius_tiles = radius_tiles.clamp(1, 20);
                 self.collect_blacklist = blacklist.into_iter().collect();
                 let mut st = self.state.write().unwrap();
                 st.collect_radius_tiles = self.collect_radius_tiles;
@@ -3605,6 +3762,48 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.state.write().unwrap().active_dialog = None;
                 self.emit(WsEvent::DialogClose { bot_id: self.bot_id });
                 self.log_console("[Bot] Dialog ditutup / dismissed".to_string());
+            }
+            BotCommand::SetInteractive { enabled } => {
+                self.interactive.enabled = enabled;
+                self.interactive.last_tick = std::time::Instant::now();
+                self.interactive.last_beat = std::time::Instant::now();
+                if !enabled {
+                    self.interactive.input = crate::physics::MovementInput::default();
+                    self.interactive.hold = None;
+                }
+                if let Ok(mut s) = self.state.write() {
+                    s.interactive = enabled;
+                }
+            }
+            BotCommand::SetInput { left, right, jump, down } => {
+                self.interactive.input.move_left = left;
+                self.interactive.input.move_right = right;
+                self.interactive.input.jump = jump;
+                self.interactive.input.drop_down = down;
+                if left {
+                    self.local.physics.facing_left = true;
+                } else if right {
+                    self.local.physics.facing_left = false;
+                }
+                self.interactive.last_beat = std::time::Instant::now();
+            }
+            BotCommand::HoldAction { active, x, y, item } => {
+                if active {
+                    self.interactive.hold = Some(HoldTarget { x, y, item });
+                } else {
+                    self.interactive.hold = None;
+                }
+                self.interactive.last_beat = std::time::Instant::now();
+            }
+            BotCommand::SetActionReach { tiles } => {
+                let clamped = tiles.clamp(1, 20);
+                self.interactive.action_reach = clamped;
+                if let Ok(mut s) = self.state.write() {
+                    s.action_reach = clamped;
+                }
+            }
+            BotCommand::InteractiveHeartbeat => {
+                self.interactive.last_beat = std::time::Instant::now();
             }
         }
     }
@@ -3881,6 +4080,142 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
         }
     }
+    pub fn tick_interactive(&mut self) {
+        if !self.interactive.enabled {
+            return;
+        }
+
+        // Heartbeat timeout: if client disconnected / tab closed for > 3s, disable interactive
+        if self.interactive.last_beat.elapsed() > std::time::Duration::from_secs(3) {
+            self.interactive.enabled = false;
+            self.interactive.input = crate::physics::MovementInput::default();
+            self.interactive.hold = None;
+            if let Ok(mut s) = self.state.write() {
+                s.interactive = false;
+            }
+            let flags = packet::PacketFlags::STANDING;
+            let pkt = GameUpdatePacket {
+                packet_type: GamePacketType::State,
+                vector_x: self.pos_x,
+                vector_y: self.pos_y,
+                vector_x2: 0.0,
+                vector_y2: 0.0,
+                int_x: -1,
+                int_y: -1,
+                flags,
+                ..Default::default()
+            };
+            self.send_game_packet(&pkt, false);
+            return;
+        }
+
+        // Must be connected and not solving captcha
+        if self.peer_id.is_none() || self.captcha_active {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+        let dt = (now.duration_since(self.interactive.last_tick).as_secs_f32()).clamp(0.001, 0.05);
+        self.interactive.last_tick = now;
+
+        // Ensure physics position is synchronized
+        if (self.local.physics.pos.0 - self.pos_x).abs() > 48.0
+            || (self.local.physics.pos.1 - self.pos_y).abs() > 48.0
+        {
+            self.local.physics.pos = (self.pos_x, self.pos_y);
+        }
+
+        let old_x = self.pos_x;
+        let old_y = self.pos_y;
+        let old_on_ground = self.local.physics.on_ground;
+
+        let engine = crate::physics::PhysicsEngine::new(self.local.physics_cfg.clone());
+
+        if let Some(w) = &self.world {
+            let collision = crate::physics::BotWorldCollision::new(
+                &w.tile_map,
+                &self.items_dat,
+                self.local.user_id,
+            );
+            engine.step(&mut self.local.physics, self.interactive.input, &collision, dt);
+        } else {
+            let collision = crate::physics::SimpleCollisionMap::new(100, 60);
+            engine.step(&mut self.local.physics, self.interactive.input, &collision, dt);
+        }
+
+        self.pos_x = self.local.physics.pos.0;
+        self.pos_y = self.local.physics.pos.1;
+
+        let dx = (self.pos_x - old_x).abs();
+        let dy = (self.pos_y - old_y).abs();
+        let ground_changed = old_on_ground != self.local.physics.on_ground;
+
+        if dx > 0.2 || dy > 0.2 || ground_changed {
+            if let Ok(mut s) = self.state.write() {
+                s.pos_x = self.pos_x / 32.0;
+                s.pos_y = self.pos_y / 32.0;
+            }
+            self.emit(WsEvent::BotMove {
+                bot_id: self.bot_id,
+                x: self.pos_x / 32.0,
+                y: self.pos_y / 32.0,
+            });
+        }
+
+        // Send network State packet when velocity/ground state changes or every ~100ms
+        let is_moving = self.local.physics.vel.0.abs() > 1.0 || self.local.physics.vel.1.abs() > 1.0;
+        let landed = !old_on_ground && self.local.physics.on_ground;
+        let time_for_state = self.interactive.last_state_sent.elapsed() >= std::time::Duration::from_millis(100);
+
+        if landed || (is_moving && time_for_state) || ground_changed {
+            self.interactive.last_state_sent = now;
+            let flags = self.local.physics.to_packet_flags();
+            let pkt = GameUpdatePacket {
+                packet_type: GamePacketType::State,
+                vector_x: self.pos_x,
+                vector_y: self.pos_y,
+                vector_x2: self.local.physics.vel.0,
+                vector_y2: self.local.physics.vel.1,
+                int_x: -1,
+                int_y: -1,
+                flags,
+                ..Default::default()
+            };
+            self.send_game_packet(&pkt, false);
+        }
+
+        // Continuous Hold Action Scheduler (for punching / placing)
+        if let Some(hold) = self.interactive.hold.clone() {
+            if self.interactive.last_hit.elapsed() >= std::time::Duration::from_millis(self.interactive.hit_interval_ms) {
+                self.interactive.last_hit = now;
+                let center_x = self.pos_x + 10.0;
+                let center_y = self.pos_y + 15.0;
+                let bot_tile_x = (center_x / 32.0).floor() as i32;
+                let bot_tile_y = (center_y / 32.0).floor() as i32;
+                let ox = hold.x - bot_tile_x;
+                let oy = hold.y - bot_tile_y;
+                let reach = self.interactive.action_reach as i32;
+
+                if ox.abs() <= reach && oy.abs() <= reach {
+                    if ox < 0 {
+                        self.local.physics.facing_left = true;
+                    } else if ox > 0 {
+                        self.local.physics.facing_left = false;
+                    }
+
+                    if hold.item == 18 {
+                        self.send_tile_action(ox, oy, 18, true);
+                    } else if hold.item == 32 {
+                        self.send_tile_action(ox, oy, 32, false);
+                        self.interactive.hold = None;
+                    } else {
+                        self.send_tile_action(ox, oy, hold.item, false);
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 
@@ -4061,6 +4396,70 @@ pub fn parse_quick_dialog(raw: &str) -> crate::events::WsDialog {
 
 
 
+
+pub fn parse_world_select_menu(raw: &str) -> Vec<crate::bot_state::WorldMenuSection> {
+    let mut sections: Vec<crate::bot_state::WorldMenuSection> = Vec::new();
+    let mut current_section = crate::bot_state::WorldMenuSection {
+        heading: "Recommended Worlds".to_string(),
+        worlds: Vec::new(),
+    };
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('|').collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        match parts[0] {
+            "add_heading" => {
+                if !current_section.worlds.is_empty() {
+                    sections.push(current_section);
+                }
+                let heading = parts.get(1).unwrap_or(&"Worlds").trim().to_string();
+                current_section = crate::bot_state::WorldMenuSection {
+                    heading: if heading.is_empty() { "Worlds".to_string() } else { heading },
+                    worlds: Vec::new(),
+                };
+            }
+            "add_floater" | "add_button" => {
+                if let Some(name) = parts.get(1) {
+                    let wname = name.trim();
+                    if !wname.is_empty() && !wname.starts_with('_') {
+                        let count = parts.get(2).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                        current_section.worlds.push(crate::bot_state::WorldMenuEntry {
+                            name: wname.to_string(),
+                            count,
+                        });
+                    }
+                }
+            }
+            _ => {
+                if parts.len() >= 2 {
+                    if let Ok(count) = parts[1].trim().parse::<u32>() {
+                        let wname = parts[0].trim();
+                        if !wname.is_empty() && wname.len() <= 30 && !wname.contains(' ') {
+                            current_section.worlds.push(crate::bot_state::WorldMenuEntry {
+                                name: wname.to_string(),
+                                count,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !current_section.worlds.is_empty() {
+        sections.push(current_section);
+    }
+
+    sections
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4108,5 +4507,88 @@ mod tests {
         let number_raw = "add_textbox|Please enter the number you see above|left|\nadd_text_input|ans|||5|\nend_dialog|verify|Submit||";
         let number_dialog = parse_quick_dialog(number_raw);
         assert_eq!(classify_dialog(number_raw, &number_dialog), DialogClassification::Threat);
+    }
+
+    #[test]
+    fn test_parse_world_select_menu() {
+        let raw = "default|START\nadd_heading|Recently Visited Worlds|\nadd_floater|BUYGHC|15|0|0\nadd_floater|SEEDS|40|0|0\nadd_heading|My Worlds|\nadd_floater|FARM1|1|0|0\n";
+        let sections = parse_world_select_menu(raw);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].heading, "Recently Visited Worlds");
+        assert_eq!(sections[0].worlds.len(), 2);
+        assert_eq!(sections[0].worlds[0].name, "BUYGHC");
+        assert_eq!(sections[0].worlds[0].count, 15);
+        assert_eq!(sections[1].heading, "My Worlds");
+        assert_eq!(sections[1].worlds.len(), 1);
+        assert_eq!(sections[1].worlds[0].name, "FARM1");
+        assert_eq!(sections[1].worlds[0].count, 1);
+
+        // Empty and corrupt inputs should not panic
+        let empty_sections = parse_world_select_menu("");
+        assert!(empty_sections.is_empty());
+        let corrupt_sections = parse_world_select_menu("||||\n\nfoo\n");
+        assert!(corrupt_sections.is_empty());
+    }
+
+    #[test]
+    fn test_interactive_physics_jump_and_gravity_landing() {
+        use crate::physics::{PhysicsConfig, PhysicsEngine, PhysicsState, MovementInput, SimpleCollisionMap, TileCollisionKind};
+        let cfg = PhysicsConfig::default();
+        let engine = PhysicsEngine::new(cfg);
+        let mut map = SimpleCollisionMap::new(10, 10);
+        for x in 0..10 {
+            map.set(x, 5, TileCollisionKind::Solid);
+        }
+        let mut state = PhysicsState::new(32.0, 128.0);
+        state.on_ground = true;
+
+        // Jump impulse
+        let jump_input = MovementInput { jump: true, ..Default::default() };
+        engine.step(&mut state, jump_input, &map, 0.02);
+        assert!(state.vel.1 < -200.0, "Velocity should be negative (upward) on jump: {}", state.vel.1);
+        assert!(!state.on_ground, "State should be airborne");
+
+        // Release jump and simulate 1.5 seconds (75 steps of 20ms)
+        let idle_input = MovementInput::default();
+        let initial_y = 128.0;
+        let mut min_y = initial_y;
+        for _ in 0..75 {
+            engine.step(&mut state, idle_input, &map, 0.02);
+            if state.pos.1 < min_y {
+                min_y = state.pos.1;
+            }
+        }
+        // Apex was reached higher (lower Y coordinate)
+        assert!(min_y < initial_y - 20.0, "Character should have risen significantly: min_y={}", min_y);
+        // Character fell back down to ground
+        assert!(state.on_ground, "Character must fall back to ground under gravity");
+        assert!((state.pos.1 - initial_y).abs() < 0.1, "Character should rest on ground, got {}", state.pos.1);
+    }
+
+    #[test]
+    fn test_interactive_tap_vs_hold_subpixel_motion() {
+        use crate::physics::{PhysicsConfig, PhysicsEngine, PhysicsState, MovementInput, SimpleCollisionMap};
+        let cfg = PhysicsConfig::default();
+        let engine = PhysicsEngine::new(cfg);
+        let mut state = PhysicsState::new(100.0, 100.0);
+        state.on_ground = true;
+        let collision = SimpleCollisionMap::new(100, 60);
+
+        // 80ms tap (4 steps of 20ms)
+        let right_input = MovementInput { move_right: true, ..Default::default() };
+        for _ in 0..4 {
+            engine.step(&mut state, right_input, &collision, 0.02);
+        }
+        let tap_displacement = state.pos.0 - 100.0;
+        // 80ms tap should be sub-tile (< 32 pixels)
+        assert!(tap_displacement < 32.0, "Tap should move less than 1 tile: displacement={}", tap_displacement);
+
+        // Continuous 1s hold
+        for _ in 0..50 {
+            engine.step(&mut state, right_input, &collision, 0.02);
+        }
+        let total_displacement = state.pos.0 - 100.0;
+        // 1 second walk should move several tiles (~250-300 px)
+        assert!(total_displacement > 200.0, "1s walk should cover several tiles: displacement={}", total_displacement);
     }
 }

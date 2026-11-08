@@ -1,4 +1,4 @@
-import type { BotStatus, WorldObject, InventoryItem, WsDialog } from './api'
+import type { BotStatus, WorldObject, InventoryItem, WsDialog, WorldMenuSection } from './api'
 import { authStore } from './auth'
 
 // ── Event payload types ────────────────────────────────────────────────────
@@ -40,6 +40,7 @@ export type WsEventMap = {
   Chat: { bot_id: number; message: string; kind: "incoming" | "outgoing" }
   DialogRequest: { bot_id: number; dialog: WsDialog }
   DialogClose: { bot_id: number }
+  WorldMenu: { bot_id: number; sections: WorldMenuSection[] }
 }
 
 type Listener<K extends keyof WsEventMap> = (data: WsEventMap[K]) => void
@@ -79,6 +80,21 @@ class EventBus {
 class MoriWebSocket {
   readonly bus = new EventBus()
   private ws: WebSocket | null = null
+  private posSubscribers = new Map<number, Set<(x: number, y: number) => void>>()
+
+  subscribePos(botId: number, cb: (x: number, y: number) => void): () => void {
+    if (!this.posSubscribers.has(botId)) {
+      this.posSubscribers.set(botId, new Set())
+    }
+    this.posSubscribers.get(botId)!.add(cb)
+    return () => {
+      this.posSubscribers.get(botId)?.delete(cb)
+    }
+  }
+
+  notifyPos(botId: number, x: number, y: number) {
+    this.posSubscribers.get(botId)?.forEach((cb) => cb(x, y))
+  }
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private destroyed = false
 
@@ -91,6 +107,10 @@ class MoriWebSocket {
     this.ws.onmessage = (e) => {
       try {
         const { event, data } = JSON.parse(e.data) as { event: string; data: unknown }
+        if (event === 'BotMove') {
+          const move = data as { bot_id: number; x: number; y: number }
+          this.notifyPos(move.bot_id, move.x, move.y)
+        }
         this.bus.emit(event as keyof WsEventMap, data as never)
       } catch {
         // ignore malformed frames

@@ -472,6 +472,91 @@ Warp the bot to a world by name. `id` is the door ID to enter through and defaul
 { "type": "warp", "name": "START", "id": "" }
 ```
 
+#### `hit`
+Punches or breaks a block/tree at the specified tile coordinates.
+```json
+{ "type": "hit", "x": 10, "y": 20 }
+```
+
+#### `place`
+Places a block or activates an item at the specified tile coordinates.
+```json
+{ "type": "place", "x": 10, "y": 20, "item_id": 2 }
+```
+
+#### `wrench`
+Wrenches a tile (e.g. vending machine, world lock, door, seed) at the specified tile coordinates.
+```json
+{ "type": "wrench", "x": 10, "y": 20 }
+```
+
+#### `wrench_player`
+Wrenches a player by their in-game `net_id`, opening their interactive profile or access dialog.
+```json
+{ "type": "wrench_player", "net_id": 1 }
+```
+
+#### `set_collect_config`
+Configures the auto-collect radius and item blacklist. Supports standard physics reach (1–5 tiles) and non-physics extended reach (up to 20 tiles).
+```json
+{ "type": "set_collect_config", "radius_tiles": 5, "blacklist": [242] }
+```
+
+#### `set_collect_path_check`
+Enables or disables line-of-sight obstacle raycasting for item collection. When set to `false`, the bot collects floating items through solid walls and barriers (Non-Physics Through-Wall mode).
+```json
+{ "type": "set_collect_path_check", "enabled": false }
+```
+#### `set_interactive`
+Enables or disables the real-time 50 Hz interactive physics engine for `/game` browser play.
+```json
+{ "type": "set_interactive", "enabled": true }
+```
+
+#### `set_input`
+Sends the active directional input bitmask (`1 = Up / Jump`, `2 = Right`, `4 = Down`, `8 = Left`).
+```json
+{ "type": "set_input", "keys": 2 }
+```
+
+#### `hold_action`
+Starts or stops a continuous hold punch or block placement action at the target tile coordinates.
+```json
+{ "type": "hold_action", "holding": true, "tool": 18, "x": 10, "y": 20 }
+```
+
+#### `set_action_reach`
+Configures the maximum tile reach distance for hitting, placing, and wrenching (default `4`, adjustable up to `20`).
+```json
+{ "type": "set_action_reach", "reach": 4 }
+```
+
+#### `interactive_heartbeat`
+Refreshes the interactive session watchdog timer, preventing interactive state from lingering if the browser disconnects.
+```json
+{ "type": "interactive_heartbeat" }
+```
+
+#### `respawn`
+Forces player respawn (equivalent to the native client suicide / respawn action).
+```json
+{ "type": "respawn" }
+```
+
+#### `leave_world`
+Leaves the current world and returns to the `EXIT` world selection state.
+```json
+{ "type": "leave_world" }
+```
+
+---
+
+## Game Client & Native Web Play Specifications
+
+For in-depth architecture, formulas, and user guide:
+* [Growtopia Client Physics Specification](docs/PHYSICS.md): Detailed 2D platformer physics model, swept AABB collision, gravity constants, and protocol bitflags.
+* [Native Web Play & Browser Client Specification](docs/WEB_PLAY.md): Guide to playing Growtopia natively in browser via `/game`, keybinds, overhead nametags, vending machine interaction, world lock management, and non-physics controls.
+
 ---
 
 ### GET `/growtopia-cdn/{*path}`
@@ -1077,3 +1162,9 @@ Notes:
 * `place`/`hit`/`wrench`/`active` `x`/`y` are offsets from the bot's tile, like Lua.
 * Reads come from the shared `BotState` snapshot; writes go through the `BotCommand` queue. Unknown `bot_id` → `NOT_FOUND`.
 * `GetWorld` returns full tile lists — poll `GetTile`/`GetObject` for hot loops instead.
+
+---
+
+## Physics Engine
+
+For client-accurate movement physics, velocity curves, gravity integration, and collision detection specifications, see [`docs/PHYSICS.md`](docs/PHYSICS.md).

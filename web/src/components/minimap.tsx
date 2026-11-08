@@ -237,7 +237,25 @@ function createColorTileLayer(
   }
 }
 
-function MinimapInner({ bot }: { bot: LiveBot }) {
+export interface MinimapProps {
+  bot: LiveBot
+  isGameMode?: boolean
+  activeTool?: 'punch' | 'wrench' | 'place'
+  selectedItemId?: number | null
+  onTileClick?: (tileX: number, tileY: number, e: React.MouseEvent) => void
+  onHoverTileChange?: (tile: { x: number; y: number; inReach: boolean } | null) => void
+  className?: string
+}
+
+function MinimapInner({
+  bot,
+  isGameMode = false,
+  activeTool = 'punch',
+  selectedItemId = null,
+  onTileClick,
+  onHoverTileChange,
+  className,
+}: MinimapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const itemNames = useAtomValue(itemNamesAtom)
   const itemColors = useAtomValue(itemColorsAtom)
@@ -1015,6 +1033,50 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
     }
   }, [showNames])
 
+  // Auto-center camera in Game Mode
+  useEffect(() => {
+    if (isGameMode) {
+      centerOnBot()
+    }
+  }, [isGameMode, bot.pos_x, bot.pos_y, centerOnBot])
+
+  // In Game Mode: handle WASD keyboard movement
+  useEffect(() => {
+    if (!isGameMode) return
+    let lastMoveTime = 0
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
+
+      const now = Date.now()
+      if (now - lastMoveTime < 90) return
+
+      let moved = false
+      if (e.code === 'KeyA' || e.code === 'ArrowLeft') {
+        api.sendCmd(bot.id, { type: 'move', x: -1, y: 0 }).catch(() => {})
+        moved = true
+      } else if (e.code === 'KeyD' || e.code === 'ArrowRight') {
+        api.sendCmd(bot.id, { type: 'move', x: 1, y: 0 }).catch(() => {})
+        moved = true
+      } else if (e.code === 'KeyW' || e.code === 'ArrowUp' || e.code === 'Space') {
+        api.sendCmd(bot.id, { type: 'move', x: 0, y: -1 }).catch(() => {})
+        moved = true
+      } else if (e.code === 'KeyS' || e.code === 'ArrowDown') {
+        api.sendCmd(bot.id, { type: 'move', x: 0, y: 1 }).catch(() => {})
+        moved = true
+      }
+
+      if (moved) {
+        lastMoveTime = now
+        e.preventDefault()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isGameMode, bot.id])
+
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = containerRef.current!.getBoundingClientRect()
     const mx = e.clientX - rect.left
@@ -1026,7 +1088,13 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
       return
     }
     const tile = bot.tiles[tileY * bot.world_width + tileX]
-    if (!tile) { setTooltip(null); return }
+    if (!tile) {
+      setTooltip(null)
+      onHoverTileChange?.(null)
+      return
+    }
+    const dist = Math.max(Math.abs(tileX - Math.floor(bot.pos_x)), Math.abs(tileY - Math.floor(bot.pos_y)))
+    onHoverTileChange?.({ x: tileX, y: tileY, inReach: dist <= 4 })
     setTooltip({ screenX: e.clientX, screenY: e.clientY, tileX, tileY, tile })
   }
 
@@ -1036,11 +1104,31 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
       const rect = containerRef.current!.getBoundingClientRect()
       const mx = e.clientX - rect.left
       const my = e.clientY - rect.top
-      const worldX = (mx - offset.current.x) / (zoom.current * TILE_PX)
-      const worldY = (my - offset.current.y) / (zoom.current * TILE_PX)
-      api.sendCmd(bot.id, { type: 'walk_to', x: Math.floor(worldX), y: Math.floor(worldY) }).catch(() => {})
+      const tileX = Math.floor((mx - offset.current.x) / (zoom.current * TILE_PX))
+      const tileY = Math.floor((my - offset.current.y) / (zoom.current * TILE_PX))
+
+      if (onTileClick) {
+        onTileClick(tileX, tileY, e)
+        return
+      }
+
+      if (isGameMode) {
+        const ox = tileX - Math.floor(bot.pos_x)
+        const oy = tileY - Math.floor(bot.pos_y)
+        if (activeTool === 'punch') {
+          api.sendCmd(bot.id, { type: 'hit', x: ox, y: oy }).catch(() => {})
+        } else if (activeTool === 'wrench') {
+          api.sendCmd(bot.id, { type: 'wrench', x: ox, y: oy }).catch(() => {})
+        } else if (activeTool === 'place' && selectedItemId) {
+          api.sendCmd(bot.id, { type: 'place', x: ox, y: oy, item: selectedItemId }).catch(() => {})
+        } else {
+          api.sendCmd(bot.id, { type: 'walk_to', x: tileX, y: tileY }).catch(() => {})
+        }
+      } else {
+        api.sendCmd(bot.id, { type: 'walk_to', x: tileX, y: tileY }).catch(() => {})
+      }
     },
-    [bot.id],
+    [bot.id, bot.pos_x, bot.pos_y, isGameMode, activeTool, selectedItemId, onTileClick],
   )
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -1125,14 +1213,30 @@ function MinimapInner({ bot }: { bot: LiveBot }) {
   }, [handleWheel])
 
   return (
-    <div className="relative w-full aspect-video">
+    <div className={cn("relative w-full", isGameMode ? "h-full" : "aspect-video", className)}>
       <div
         ref={containerRef}
         className="w-full h-full rounded border border-border bg-[#080c10] cursor-crosshair overflow-hidden"
         onClick={handleClick}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setTooltip(null)}
+        onMouseLeave={() => {
+          setTooltip(null)
+          onHoverTileChange?.(null)
+        }}
+        onContextMenu={(e) => {
+          if (isGameMode) {
+            e.preventDefault()
+            const rect = containerRef.current!.getBoundingClientRect()
+            const mx = e.clientX - rect.left
+            const my = e.clientY - rect.top
+            const tileX = Math.floor((mx - offset.current.x) / (zoom.current * TILE_PX))
+            const tileY = Math.floor((my - offset.current.y) / (zoom.current * TILE_PX))
+            const ox = tileX - Math.floor(bot.pos_x)
+            const oy = tileY - Math.floor(bot.pos_y)
+            api.sendCmd(bot.id, { type: 'wrench', x: ox, y: oy }).catch(() => {})
+          }
+        }}
       />
 
       {loadingProgress && (
@@ -1244,5 +1348,8 @@ export const Minimap = memo(MinimapInner, (prev, next) => (
   prev.bot.players === next.bot.players &&
   prev.bot.objects === next.bot.objects &&
   prev.bot.pos_x === next.bot.pos_x &&
-  prev.bot.pos_y === next.bot.pos_y
+  prev.bot.pos_y === next.bot.pos_y &&
+  prev.isGameMode === next.isGameMode &&
+  prev.activeTool === next.activeTool &&
+  prev.selectedItemId === next.selectedItemId
 ))

@@ -6,7 +6,7 @@ import { BotDetail } from '@/components/bot-detail'
 import { Monitor, Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export function BotsPage() {
+export function BotsPage({ onGoToGame }: { onGoToGame?: () => void }) {
 
 
   const selected = useAtomValue(selectedBotAtom)
@@ -45,7 +45,7 @@ export function BotsPage() {
         </div>
 
         {selected ? (
-          <BotDetail bot={selected} />
+          <BotDetail bot={selected} onGoToGame={onGoToGame} />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground select-none">
             <Monitor className="w-10 h-10 opacity-20" />

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Bot, Package, BookOpen, Network, ShieldCheck, LogOut } from 'lucide-react'
+import { Bot, Package, BookOpen, Network, ShieldCheck, LogOut, Gamepad2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BotsPage } from '@/pages/BotsPage'
 import { ItemsPage } from '@/pages/ItemsPage'
@@ -13,8 +13,9 @@ import { api } from '@/lib/api'
 import { useAtomValue } from 'jotai'
 import { botsAtom, useMoriStore } from '@/lib/store'
 import { GameDialogModal } from '@/components/game-dialog-modal'
+import { GamePage } from '@/pages/GamePage'
 
-type Page = 'bots' | 'items' | 'proxy' | 'docs' | 'grpc'
+type Page = 'bots' | 'items' | 'proxy' | 'docs' | 'grpc' | 'game'
 type AuthState = 'loading' | 'setup' | 'login' | 'authenticated'
 
 export default function App() {
@@ -22,7 +23,12 @@ export default function App() {
   const bots = useAtomValue(botsAtom)
   const dialogBot = Array.from(bots.values()).find((b) => b.active_dialog != null)
   const [authState, setAuthState] = useState<AuthState>('loading')
-  const [page, setPage] = useState<Page>('bots')
+  const [page, setPage] = useState<Page>(() => {
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/game')) {
+      return 'game'
+    }
+    return 'bots'
+  })
   const isPublicGrpcRoute =
     typeof window !== 'undefined' && window.location.pathname.startsWith('/docs/grpc')
 
@@ -88,7 +94,8 @@ export default function App() {
           Mori<span className="text-primary">.</span>
         </span>
         <nav className="flex gap-0.5">
-          <NavBtn active={page === 'bots'} onClick={() => setPage('bots')} icon={<Bot className="w-3 h-3" />} label="Bots" />
+          <NavBtn active={page === 'bots'} onClick={() => { setPage('bots'); window.history.pushState({}, '', '/'); }} icon={<Bot className="w-3 h-3" />} label="Bots" />
+          <NavBtn active={page === 'game'} onClick={() => { setPage('game'); window.history.pushState({}, '', '/game'); }} icon={<Gamepad2 className="w-3.5 h-3.5 text-emerald-400" />} label="Game" />
           <NavBtn active={page === 'items'} onClick={() => setPage('items')} icon={<Package className="w-3 h-3" />} label="Items" />
           <NavBtn active={page === 'proxy'} onClick={() => setPage('proxy')} icon={<ShieldCheck className="w-3 h-3" />} label="Proxy" />
           <NavBtn active={page === 'docs'} onClick={() => setPage('docs')} icon={<BookOpen className="w-3 h-3" />} label="Docs" />
@@ -103,13 +110,14 @@ export default function App() {
         </nav>
       </header>
       <div className="flex-1 overflow-hidden">
-        {page === 'bots' && <BotsPage />}
+        {page === 'bots' && <BotsPage onGoToGame={() => { setPage('game'); window.history.pushState({}, '', '/game'); }} />}
+        {page === 'game' && <GamePage onBack={() => { setPage('bots'); window.history.pushState({}, '', '/'); }} />}
         {page === 'items' && <ItemsPage />}
         {page === 'proxy' && <ProxyPage />}
         {page === 'docs' && <DocsPage />}
         {page === 'grpc' && <GrpcDocsPage />}
       </div>
-      {dialogBot && <GameDialogModal bot={dialogBot} />}
+      {dialogBot && page !== 'game' && <GameDialogModal bot={dialogBot} />}
     </div>
   )
 }

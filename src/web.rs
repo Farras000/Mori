@@ -452,6 +452,18 @@ enum CmdRequest {
     DismissDialog,
     Warp { name: String, id: String },
     Say { text: String },
+    Hit { x: i32, y: i32 },
+    Place { x: i32, y: i32, item: u32 },
+    Wrench { x: i32, y: i32 },
+    WrenchPlayer { net_id: u32 },
+    SetCollectPathCheck { enabled: bool },
+    SetInteractive { enabled: bool },
+    SetInput { left: bool, right: bool, jump: bool, down: bool },
+    HoldAction { active: bool, x: i32, y: i32, item: u32 },
+    SetActionReach { tiles: u8 },
+    InteractiveHeartbeat,
+    Respawn,
+    LeaveWorld,
 }
 
 #[derive(Deserialize)]
@@ -591,6 +603,18 @@ async fn bot_cmd(
         CmdRequest::DismissDialog => BotCommand::DismissDialog,
         CmdRequest::Warp { name, id } => BotCommand::Warp { name, id },
         CmdRequest::Say { text } => BotCommand::Say { text },
+        CmdRequest::Hit { x, y } => BotCommand::Hit { x, y },
+        CmdRequest::Place { x, y, item } => BotCommand::Place { x, y, item },
+        CmdRequest::Wrench { x, y } => BotCommand::Wrench { x, y },
+        CmdRequest::WrenchPlayer { net_id } => BotCommand::WrenchPlayer { net_id },
+        CmdRequest::SetCollectPathCheck { enabled } => BotCommand::SetCollectPathCheck { enabled },
+        CmdRequest::SetInteractive { enabled } => BotCommand::SetInteractive { enabled },
+        CmdRequest::SetInput { left, right, jump, down } => BotCommand::SetInput { left, right, jump, down },
+        CmdRequest::HoldAction { active, x, y, item } => BotCommand::HoldAction { active, x, y, item },
+        CmdRequest::SetActionReach { tiles } => BotCommand::SetActionReach { tiles },
+        CmdRequest::InteractiveHeartbeat => BotCommand::InteractiveHeartbeat,
+        CmdRequest::Respawn => BotCommand::Respawn,
+        CmdRequest::LeaveWorld => BotCommand::LeaveWorld,
     };
     let mgr = s.manager.lock().unwrap();
     // Remember configuration changes right away (the bot may be offline).

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::physics::{PhysicsConfig, PhysicsState};
 
 /// The bot's own identity in the current world.
 #[derive(Debug, Default, Clone)]
@@ -15,6 +16,10 @@ pub struct LocalPlayer {
     pub gravity:      f32,
     /// From SetCharacterState: vector_y2 (velocity).
     pub velocity:     f32,
+    /// Active physics simulation state.
+    pub physics:      PhysicsState,
+    /// Active physics configuration parameters.
+    pub physics_cfg:  PhysicsConfig,
 }
 
 /// Another player present in the same world.

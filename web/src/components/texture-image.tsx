@@ -3,7 +3,7 @@ import { useEffect, useState, memo } from "react";
 import { textureCacheManager } from "@/lib/texture-cache";
 import { TILE_RENDER_TYPE, LUT_4BIT, LUT_8BIT, TILE_FLAGS } from "@/lib/constants";
 
-function getIsolatedSpriteCoords(item: ItemRecord, flags: number = 0): { x: number; y: number } {
+export function getIsolatedSpriteCoords(item: ItemRecord, flags: number = 0): { x: number; y: number } {
   let coordX = item.texture_x;
   let coordY = item.texture_y;
 

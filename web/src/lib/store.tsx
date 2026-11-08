@@ -1,7 +1,7 @@
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { moriWs, type TileData } from './ws'
-import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo, WsDialog } from './api'
+import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo, WsDialog, WorldMenuSection } from './api'
 import { api } from './api'
 
 export interface TrackInfo {
@@ -14,6 +14,7 @@ export interface TrackInfo {
 
 export interface LiveBot {
   id: number
+  net_id: number
   username: string
   status: BotStatus
   world_name: string
@@ -34,16 +35,20 @@ export interface LiveBot {
   auto_collect: boolean
   collect_radius_tiles: number
   collect_blacklist: number[]
+  collect_path_check: boolean
   auto_reconnect: boolean
   auto_rotate_reconnect: boolean
   proxy: ProxyInfo | null
   chat: string[]
   active_dialog: WsDialog | null
+  world_menu: WorldMenuSection[]
+  action_reach: number
+  interactive: boolean
 }
 
 export function makeBot(id: number, username: string): LiveBot {
   return {
-    id, username,
+    id, net_id: 0, username,
     status: 'connecting',
     world_name: '', pos_x: 0, pos_y: 0,
     gems: 0, ping_ms: 0,
@@ -55,11 +60,15 @@ export function makeBot(id: number, username: string): LiveBot {
     auto_collect: true,
     collect_radius_tiles: 3,
     collect_blacklist: [],
+    collect_path_check: true,
     auto_reconnect: true,
     auto_rotate_reconnect: true,
     proxy: null,
     chat: [],
     active_dialog: null,
+    world_menu: [],
+    action_reach: 4,
+    interactive: false,
   }
 }
 
@@ -265,6 +274,9 @@ export function useMoriStore() {
 
       ['DialogClose', (d: { bot_id: number }) =>
         setBots((m) => patchBot(m, d.bot_id, { active_dialog: null }))],
+
+      ['WorldMenu', (d: { bot_id: number; sections: WorldMenuSection[] }) =>
+        setBots((m) => patchBot(m, d.bot_id, { world_menu: d.sections }))],
     ]
 
     for (const [event, handler] of handlers) {

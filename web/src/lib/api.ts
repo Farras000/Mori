@@ -101,7 +101,18 @@ export interface ProxyInfo {
   password?: string;
 }
 
+export interface WorldMenuEntry {
+  name: string;
+  count: number;
+}
+
+export interface WorldMenuSection {
+  heading: string;
+  worlds: WorldMenuEntry[];
+}
+
 export interface BotState {
+  net_id?: number;
   status: BotStatus;
   world_name: string;
   pos_x: number;
@@ -139,10 +150,14 @@ export interface BotState {
   auto_collect: boolean;
   collect_radius_tiles: number;
   collect_blacklist: number[];
+  collect_path_check?: boolean;
   auto_reconnect: boolean;
   auto_rotate_reconnect: boolean;
   proxy: ProxyInfo | null;
   active_dialog?: WsDialog | null;
+  world_menu?: WorldMenuSection[];
+  action_reach?: number;
+  interactive?: boolean;
 }
 
 export interface SpawnBotBody {
@@ -201,6 +216,18 @@ export type BotCmd =
   | { type: "accept_access" }
   | { type: "warp"; name: string; id: string }
   | { type: "say"; text: string }
+  | { type: "hit"; x: number; y: number }
+  | { type: "place"; x: number; y: number; item: number }
+  | { type: "wrench"; x: number; y: number }
+  | { type: "wrench_player"; net_id: number }
+  | { type: "set_collect_path_check"; enabled: boolean }
+  | { type: "set_interactive"; enabled: boolean }
+  | { type: "set_input"; left: boolean; right: boolean; jump: boolean; down: boolean }
+  | { type: "hold_action"; active: boolean; x: number; y: number; item: number }
+  | { type: "set_action_reach"; tiles: number }
+  | { type: "interactive_heartbeat" }
+  | { type: "respawn" }
+  | { type: "leave_world" }
   | {
       type: "dialog_return";
       dialog_name: string;

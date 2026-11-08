@@ -28,6 +28,8 @@ pub mod world;
 mod web;
 pub mod script_channel;
 pub mod vsproxy;
+pub mod physics;
+
 
 use std::sync::{Arc, Mutex};
 use bot_manager::BotManager;

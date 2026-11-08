@@ -29,6 +29,23 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
         t.toLowerCase().includes("verify")
       ))
 
+  const isInteractive =
+    Boolean(dialog) &&
+    (dialog!.inputs.length > 0 ||
+      dialog!.dialog_name.toLowerCase().includes("vend") ||
+      dialog!.dialog_name.toLowerCase().includes("lock") ||
+      dialog!.dialog_name.toLowerCase().includes("door") ||
+      dialog!.dialog_name.toLowerCase().includes("storage") ||
+      dialog!.dialog_name.toLowerCase().includes("phone") ||
+      dialog!.dialog_name.toLowerCase().includes("wrench") ||
+      dialog!.dialog_name.toLowerCase().includes("trade") ||
+      dialog!.dialog_name.toLowerCase().includes("friend") ||
+      dialog!.dialog_name.toLowerCase().includes("drop") ||
+      dialog!.dialog_name.toLowerCase().includes("trash") ||
+      dialog!.dialog_name.toLowerCase().includes("popup") ||
+      dialog!.dialog_name.toLowerCase().includes("info") ||
+      dialog!.buttons.length > 1)
+
   useEffect(() => {
     if (dialog) {
       const initial: Record<string, string> = {}
@@ -83,7 +100,7 @@ export function GameDialogModal({ bot }: { bot: LiveBot }) {
 
   // Countdown timer effect: auto-dismiss safe dialogs after 5s if not paused
   useEffect(() => {
-    if (!dialog || isCaptcha || isPaused) return
+    if (!dialog || isCaptcha || isInteractive || isPaused) return
     if (timeLeft <= 0) {
       if (!dismissedRef.current) {
         dismissedRef.current = true

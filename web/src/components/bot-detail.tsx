@@ -9,6 +9,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Gamepad2,
+  Zap,
 } from "lucide-react";
 import { useSetAtom, useAtomValue } from "jotai";
 import {
@@ -56,7 +58,13 @@ const STATUS_DOT: Record<BotStatus, string> = {
   maintenance: "bg-amber-500",
 };
 
-export function BotDetail({ bot }: { bot: LiveBot }) {
+export function BotDetail({
+  bot,
+  onGoToGame,
+}: {
+  bot: LiveBot;
+  onGoToGame?: () => void;
+}) {
   const setSelectedId = useSetAtom(selectedBotIdAtom);
   const setBots = useSetAtom(botsAtom);
 
@@ -126,6 +134,17 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
           </>
         )}
         <div className="flex-1" />
+        {onGoToGame && (
+          <Button
+            size="sm"
+            variant="default"
+            onClick={onGoToGame}
+            className="h-6 px-2.5 text-[11px] font-medium bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5 shadow-sm"
+          >
+            <Gamepad2 className="w-3.5 h-3.5" />
+            Play in Game
+          </Button>
+        )}
         {bot.gems > 0 && (
           <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium">
             <Gem className="w-3 h-3" />
@@ -178,7 +197,7 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
         </TabsList>
 
         <TabsContent value="overview" className="flex-1 overflow-hidden m-0">
-          <OverviewTab bot={bot} />
+          <OverviewTab bot={bot} onGoToGame={onGoToGame} />
         </TabsContent>
 
         <TabsContent
@@ -246,7 +265,13 @@ function WarpInput({ botId }: { botId: number }) {
   )
 }
 
-function OverviewTab({ bot }: { bot: LiveBot }) {
+function OverviewTab({
+  bot,
+  onGoToGame,
+}: {
+  bot: LiveBot;
+  onGoToGame?: () => void;
+}) {
   const players = [...bot.players.values()];
   const itemNames = useAtomValue(itemNamesAtom);
   const itemLabel = (id: number) => {
@@ -255,7 +280,42 @@ function OverviewTab({ bot }: { bot: LiveBot }) {
   };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden p-4 gap-4">
+    <div className="h-full flex flex-col overflow-hidden p-4 gap-3.5">
+      {/* Hero Banner: Go to Native Web Game */}
+      {onGoToGame && (
+        <div className="shrink-0 rounded-lg border border-emerald-500/30 bg-gradient-to-r from-emerald-950/40 via-card to-background p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-md bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0 text-emerald-400">
+              <Gamepad2 className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-foreground">
+                  Native Web Game Mode
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 font-medium">
+                  {bot.world_name ? `World: ${bot.world_name}` : "Not in world"}
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground font-mono">
+                  Pos: {bot.pos_x.toFixed(0)}, {bot.pos_y.toFixed(0)}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                Mainkan langsung di browser dengan WASD/Space, overhead nametag, vending dialog, wrench & inventory quickbar.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            onClick={onGoToGame}
+            className="shrink-0 h-7 px-3 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5 shadow"
+          >
+            <Gamepad2 className="w-3.5 h-3.5" />
+            Go to Game
+          </Button>
+        </div>
+      )}
+
       {/* Top PiP Dock: Minimap + Chat side-by-side (Pinned / Always visible) */}
       <div className="shrink-0 flex flex-col sm:flex-row gap-4 items-start">
         <div className="w-full sm:w-[440px] shrink-0">
@@ -334,6 +394,7 @@ function OverviewTab({ bot }: { bot: LiveBot }) {
               botId={bot.id}
               collectRadiusTiles={bot.collect_radius_tiles}
               collectBlacklist={bot.collect_blacklist}
+              collectPathCheck={bot.collect_path_check}
             />
 
             <Section label="Movement">
@@ -393,21 +454,34 @@ function AutoCollectRangePanel({
   botId,
   collectRadiusTiles,
   collectBlacklist,
+  collectPathCheck,
 }: {
   botId: number
   collectRadiusTiles: number
   collectBlacklist: number[]
+  collectPathCheck?: boolean
 }) {
   const [collectRadius, setCollectRadius] = useState(collectRadiusTiles)
   const [blacklist, setBlacklist] = useState<number[]>(() => [...collectBlacklist])
   const [blacklistInput, setBlacklistInput] = useState('')
+  const [extendedRangeMode, setExtendedRangeMode] = useState(collectRadiusTiles > 5)
+  const [pathCheck, setPathCheck] = useState(collectPathCheck ?? true)
   const setBots = useSetAtom(botsAtom)
   const itemNames = useAtomValue(itemNamesAtom)
 
   useEffect(() => {
     setCollectRadius(collectRadiusTiles)
     setBlacklist([...collectBlacklist].sort((a, b) => a - b))
+    if (collectRadiusTiles > 5) {
+      setExtendedRangeMode(true)
+    }
   }, [collectRadiusTiles, collectBlacklist.join(',')])
+
+  useEffect(() => {
+    if (collectPathCheck !== undefined) {
+      setPathCheck(collectPathCheck)
+    }
+  }, [collectPathCheck])
 
   const itemLabel = (id: number) => {
     const name = itemNames[String(id)]
@@ -449,6 +523,29 @@ function AutoCollectRangePanel({
     }
   }
 
+  async function toggleExtendedRange(enabled: boolean) {
+    setExtendedRangeMode(enabled)
+    if (!enabled && collectRadius > 5) {
+      await sendCollectConfig(5, blacklist)
+    }
+  }
+
+  async function toggleThroughWall(enabled: boolean) {
+    // enabled = true means through-wall is active (so path_check is disabled/false)
+    const newPathCheck = !enabled
+    setPathCheck(newPathCheck)
+    setBots((m) => {
+      const b = m.get(botId)
+      if (!b) return m
+      return new Map(m).set(botId, { ...b, collect_path_check: newPathCheck })
+    })
+    try {
+      await api.sendCmd(botId, { type: 'set_collect_path_check', enabled: newPathCheck })
+    } catch {
+      setPathCheck(!newPathCheck)
+    }
+  }
+
   function onCollectCellClick(row: number, col: number) {
     const next = collectRadiusFromCell(row, col)
     void sendCollectConfig(next, blacklist)
@@ -472,40 +569,130 @@ function AutoCollectRangePanel({
     <>
       <Section
         label="Auto-collect range"
-        hint="square in tiles"
+        hint={extendedRangeMode ? "extended mode (hingga 20 tiles)" : "square in tiles (standar ≤5)"}
       >
-        <div className="flex flex-col items-center gap-2 w-full">
-          <div
-            className="grid gap-0.5 w-fit shrink-0 p-1 rounded border border-border bg-muted/30"
-            style={{ gridTemplateColumns: `repeat(${COLLECT_GRID}, minmax(0, 1fr))` }}
-          >
-            {Array.from({ length: COLLECT_GRID * COLLECT_GRID }, (_, i) => {
-              const row = Math.floor(i / COLLECT_GRID)
-              const col = i % COLLECT_GRID
-              const inRange = cellInsideCollectRadius(row, col, collectRadius)
-              const isCenter = row === COLLECT_MID && col === COLLECT_MID
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  title={`Set radius ${collectRadiusFromCell(row, col)}`}
-                  onClick={() => onCollectCellClick(row, col)}
-                  className={cn(
-                    'w-6 h-6 rounded-sm border text-[9px] font-medium transition-colors',
-                    inRange
-                      ? 'bg-primary/35 border-primary/50 text-foreground'
-                      : 'bg-background/80 border-border text-muted-foreground',
-                    isCenter && 'ring-1 ring-primary ring-inset',
-                  )}
-                >
-                  {isCenter ? '●' : ''}
-                </button>
-              )
-            })}
+        <div className="flex flex-col gap-3 w-full">
+          {/* Extended Range Non-Physics Switch */}
+          <div className="flex items-center justify-between p-2 rounded-md border border-border bg-card/60">
+            <div className="flex flex-col gap-0.5 pr-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-foreground">Non-Physics Extended Range</span>
+                {extendedRangeMode && (
+                  <span className="px-1.5 py-0.2 rounded text-[9px] bg-amber-500/20 text-amber-400 font-semibold border border-amber-500/30">
+                    &gt; 5 Tiles
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Ambil floating item melebihi jangkauan fisik asli game (hingga 20 tiles)
+              </p>
+            </div>
+            <Switch
+              checked={extendedRangeMode}
+              onCheckedChange={toggleExtendedRange}
+            />
           </div>
-          <p className="text-xs text-muted-foreground text-center">
-            Radius: <span className="text-foreground font-medium tabular-nums">{collectRadius}</span> tile{collectRadius === 1 ? '' : 's'}
-          </p>
+
+          {extendedRangeMode ? (
+            <div className="flex flex-col gap-2.5 p-3 rounded-md border border-amber-500/30 bg-amber-950/15">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5" />
+                  Jangkauan: <span className="text-foreground text-sm font-bold tabular-nums">{collectRadius}</span> tiles
+                </span>
+                <span className="text-[10px] text-muted-foreground font-medium">Batas Maks: 20 tiles</span>
+              </div>
+
+              {/* Range Quick Preset Buttons */}
+              <div className="grid grid-cols-5 gap-1.5">
+                {[5, 8, 10, 15, 20].map((r) => (
+                  <Button
+                    key={r}
+                    type="button"
+                    size="sm"
+                    variant={collectRadius === r ? "default" : "outline"}
+                    className={cn(
+                      "h-7 text-xs px-1 font-medium transition-all",
+                      collectRadius === r
+                        ? "bg-amber-600 hover:bg-amber-500 text-white shadow-sm font-bold"
+                        : "hover:bg-amber-500/10 hover:border-amber-500/40"
+                    )}
+                    onClick={() => void sendCollectConfig(r, blacklist)}
+                  >
+                    {r} {r === 20 ? "★" : "t"}
+                  </Button>
+                ))}
+              </div>
+
+              {/* Slider Input */}
+              <div className="flex flex-col gap-1 pt-1">
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>1 tile</span>
+                  <span>10 tiles</span>
+                  <span>20 tiles</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={collectRadius}
+                  onChange={(e) => void sendCollectConfig(parseInt(e.target.value, 10), blacklist)}
+                  className="w-full accent-amber-500 h-1.5 bg-muted rounded-lg cursor-pointer"
+                />
+              </div>
+
+              {/* Through-Wall Collection Toggle */}
+              <div className="mt-1 pt-2 border-t border-amber-500/20 flex items-center justify-between">
+                <div className="flex flex-col gap-0.5 pr-2">
+                  <span className="text-[11px] font-medium text-foreground">
+                    Tembus Dinding (Through-Wall Collection)
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    Abaikan rintangan blok & dinding saat mengumpulkan floating item
+                  </span>
+                </div>
+                <Switch
+                  checked={!pathCheck}
+                  onCheckedChange={toggleThroughWall}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2 w-full">
+              <div
+                className="grid gap-0.5 w-fit shrink-0 p-1 rounded border border-border bg-muted/30"
+                style={{ gridTemplateColumns: `repeat(${COLLECT_GRID}, minmax(0, 1fr))` }}
+              >
+                {Array.from({ length: COLLECT_GRID * COLLECT_GRID }, (_, i) => {
+                  const row = Math.floor(i / COLLECT_GRID)
+                  const col = i % COLLECT_GRID
+                  const inRange = cellInsideCollectRadius(row, col, collectRadius)
+                  const isCenter = row === COLLECT_MID && col === COLLECT_MID
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      title={`Set radius ${collectRadiusFromCell(row, col)}`}
+                      onClick={() => onCollectCellClick(row, col)}
+                      className={cn(
+                        'w-6 h-6 rounded-sm border text-[9px] font-medium transition-colors',
+                        inRange
+                          ? 'bg-primary/35 border-primary/50 text-foreground'
+                          : 'bg-background/80 border-border text-muted-foreground',
+                        isCenter && 'ring-1 ring-primary ring-inset',
+                      )}
+                    >
+                      {isCenter ? '●' : ''}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground text-center">
+                Radius: <span className="text-foreground font-medium tabular-nums">{collectRadius}</span> tile{collectRadius === 1 ? '' : 's'} (Standar Fisika ≤5)
+              </p>
+            </div>
+          )}
         </div>
       </Section>
       <Section label="Do not auto-collect" hint="item IDs">

@@ -138,8 +138,21 @@ impl ProxyInfo {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct WorldMenuEntry {
+    pub name: String,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct WorldMenuSection {
+    pub heading: String,
+    pub worlds: Vec<WorldMenuEntry>,
+}
+
 #[derive(Clone, Serialize)]
 pub struct BotState {
+    pub net_id:          u32,
     pub status:          BotStatus,
     pub username:        String,
     pub mac:             String,
@@ -186,11 +199,18 @@ pub struct BotState {
     pub proxy: Option<ProxyInfo>,
     /// Active modal game dialog or captcha requested by server, if any.
     pub active_dialog: Option<crate::events::WsDialog>,
+    /// Sections and worlds currently available from the server's world select menu.
+    pub world_menu: Vec<WorldMenuSection>,
+    /// Interaction / hit reach in tiles (default 4, up to 20 in extended mode).
+    pub action_reach: u8,
+    /// Whether the bot is in interactive real-time control mode.
+    pub interactive: bool,
 }
 
 impl Default for BotState {
     fn default() -> Self {
         Self {
+            net_id: 0,
             status: BotStatus::default(),
             username: String::new(),
             mac: String::new(),
@@ -221,6 +241,9 @@ impl Default for BotState {
             auto_rotate_reconnect: crate::vsproxy::VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
             proxy: None,
             active_dialog: None,
+            world_menu: Vec::new(),
+            action_reach: 4,
+            interactive: false,
         }
     }
 }
@@ -285,6 +308,11 @@ pub enum BotCommand {
         fields: std::collections::HashMap<String, String>,
     },
     DismissDialog,
+    SetInteractive { enabled: bool },
+    SetInput { left: bool, right: bool, jump: bool, down: bool },
+    HoldAction { active: bool, x: i32, y: i32, item: u32 },
+    SetActionReach { tiles: u8 },
+    InteractiveHeartbeat,
 }
 
 pub type CmdSender   = mpsc::Sender<BotCommand>;

@@ -103,6 +103,8 @@ pub enum WsEvent {
     DialogRequest { bot_id: u32, dialog: WsDialog },
     /// Active dialog closed or answered.
     DialogClose { bot_id: u32 },
+    /// World select menu received with sections/worlds.
+    WorldMenu { bot_id: u32, sections: Vec<crate::bot_state::WorldMenuSection> },
 }
 
 /// Direction of a chat message.

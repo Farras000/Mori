@@ -273,7 +273,8 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::BotProxy { bot_id, .. }
         | WsEvent::Chat { bot_id, .. }
         | WsEvent::DialogRequest { bot_id, .. }
-        | WsEvent::DialogClose { bot_id } => *bot_id,
+        | WsEvent::DialogClose { bot_id }
+        | WsEvent::WorldMenu { bot_id, .. } => *bot_id,
     }
 }
 
@@ -498,6 +499,12 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             mori::bot_event::Event::Console(mori::ConsoleEvent {
                 bot_id: *bot_id,
                 message: "[Dialog] Closed".into(),
+            })
+        }
+        WsEvent::WorldMenu { bot_id, sections } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[WorldMenu] {} sections received", sections.len()),
             })
         }
     };
