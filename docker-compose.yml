@@ -5,8 +5,8 @@ services:
       - .env
     restart: unless-stopped
     ports:
-      - "3003:3000"
-      - "50051:50051"
+      - "127.0.0.1:3003:3000"
+      - "127.0.0.1:50051:50051"
     volumes:
       # Persists data/user.json + data/google_oauth_tokens.jsonl (0600).
       - mori-data:/app/data

@@ -1047,13 +1047,24 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
         .with_state(state)
         .fallback_service(ServeDir::new(&dist).fallback(ServeFile::new(dist.join("index.html"))));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Dashboard  http://localhost:3000");
-    println!("WebSocket  ws://localhost:3000/ws");
-    println!("API        http://localhost:3000/bots");
+    // Bind address & port are env-configurable so a host that already serves
+    // something on :3000 (e.g. a co-located app) can move Mori elsewhere.
+    let http_bind = std::env::var("MORI_HTTP_BIND").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let http_port: u16 = std::env::var("MORI_HTTP_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    let listener = tokio::net::TcpListener::bind(format!("{http_bind}:{http_port}"))
+        .await
+        .unwrap();
+    println!("Dashboard  http://{http_bind}:{http_port}");
+    println!("WebSocket  ws://{http_bind}:{http_port}/ws");
+    println!("API        http://{http_bind}:{http_port}/bots");
     // LAN address, so a phone on the same network can open the dashboard.
-    for ip in lan_addresses() {
-        println!("LAN        http://{ip}:3000");
+    if http_bind == "0.0.0.0" {
+        for ip in lan_addresses() {
+            println!("LAN        http://{ip}:{http_port}");
+        }
     }
     axum::serve(listener, app).await.unwrap();
 }
