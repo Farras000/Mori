@@ -124,12 +124,12 @@ impl BotManager {
     }
 
     /// Spawn a bot from a stored record (same id, same settings).
-    pub fn spawn_saved(&mut self, cfg: &BotConfig) -> u32 {
+    pub fn spawn_saved(&mut self, cfg: &BotConfig, fallback_proxy: Option<Socks5Config>) -> u32 {
         let id = cfg.id;
         if id >= self.next_id {
             self.next_id = id + 1;
         }
-        let proxy = cfg.proxy.as_ref().and_then(proxy_from_config);
+        let proxy = cfg.proxy.as_ref().and_then(proxy_from_config).or(fallback_proxy);
         let mac = cfg.mac.clone();
         let (kind, username, password, ltoken) = match &cfg.kind {
             BotKind::Legacy { username, password } => {
@@ -223,7 +223,7 @@ impl BotManager {
     }
 
     /// Spawn every stored bot that is flagged for auto-start.
-    pub fn restore_saved(&mut self) {
+    pub fn restore_saved(&mut self, fallback_proxy: Option<Socks5Config>) {
         let configs = self.store.list();
         if configs.is_empty() {
             return;
@@ -236,7 +236,7 @@ impl BotManager {
                 continue;
             }
             println!("[Bot] restoring saved bot {} ({})", cfg.id, cfg.kind.label());
-            self.spawn_saved(cfg);
+            self.spawn_saved(cfg, fallback_proxy.clone());
         }
     }
 

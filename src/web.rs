@@ -22,9 +22,11 @@ use crate::bot_state::{BotCommand, BotDelays, BotState};
 use crate::events::WsTx;
 use crate::items::ItemInfo;
 use crate::oauth_session::{OAuthSessionView, OAuthStore};
-use crate::proxy_test::{ProxyTestResult, run_proxy_test};
+use crate::proxy_test::{ProxyTestResult, quick_proxy_check, run_proxy_test};
+use crate::settings::AppSettings;
 
 pub type SharedManager = Arc<Mutex<BotManager>>;
+pub type SharedSettings = Arc<Mutex<AppSettings>>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -32,6 +34,7 @@ pub struct AppState {
     pub ws_tx:   WsTx,
     pub auth:    AuthState,
     pub oauth:   OAuthStore,
+    pub settings: SharedSettings,
 }
 
 fn proxy_from_parts(
@@ -45,6 +48,60 @@ fn proxy_from_parts(
         format!("{host}:{port}").to_socket_addrs().ok().and_then(|mut a| a.next())
     })?;
     Some(Socks5Config { proxy_addr: addr, username, password })
+}
+
+/// Resolve the proxy for an outbound login path: explicit wins, otherwise the
+/// app-wide general proxy (when enabled). A configured-but-broken general
+/// proxy is an **error**, never a silent direct connection — the VPS IP is
+/// blocked anyway, and going direct would mint against a 403 and burn a
+/// single-use OAuth state or trigger a ban-shaped failure.
+async fn resolve_proxy(
+    s: &AppState,
+    explicit: Option<Socks5Config>,
+) -> Result<Option<Socks5Config>, (StatusCode, Json<serde_json::Value>)> {
+    if explicit.is_some() {
+        return Ok(explicit);
+    }
+    let gp = s.settings.lock().unwrap().general_proxy.clone();
+    if !gp.enabled {
+        return Ok(None);
+    }
+    if gp.host.trim().is_empty() || gp.port == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "general proxy is enabled but host/port is missing — fill it in on the Proxy page" })),
+        ));
+    }
+    let cfg = proxy_from_parts(
+        Some(gp.host.trim().to_string()),
+        Some(gp.port),
+        gp.username.clone(),
+        gp.password.clone(),
+    )
+    .ok_or_else(|| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("general proxy {}:{} tidak bisa di-resolve", gp.host.trim(), gp.port) })),
+        )
+    })?;
+    // Fail fast: a dead general proxy would otherwise turn into 3×
+    // server_data retries or a bounced login.
+    let guard = cfg.clone();
+    let res = tokio::task::spawn_blocking(move || quick_proxy_check(&guard))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        })?;
+    res.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("general proxy tidak bisa diakses: {e}") })),
+        )
+    })?;
+    Ok(Some(cfg))
 }
 
 // ── Auth middleware ────────────────────────────────────────────────────────────
@@ -192,11 +249,11 @@ async fn list_bots(State(s): State<AppState>) -> Json<Vec<BotInfo>> {
 async fn restart_saved_bot(
     State(s): State<AppState>,
     Path(id): Path<u32>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> ApiResult<serde_json::Value> {
     {
         let mut mgr = s.manager.lock().unwrap();
         if mgr.store.get(id).is_none() {
-            return Err(StatusCode::NOT_FOUND);
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "saved bot not found" }))));
         }
         if mgr.bots.contains_key(&id) {
             let reason = format!("restart (POST /bots/saved/{id}/restart)");
@@ -206,11 +263,16 @@ async fn restart_saved_bot(
     // Give the old connection a moment to close: logging the same account in
     // twice at once is what triggers Growtopia's "too many logins".
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let mut mgr = s.manager.lock().unwrap();
-    let Some(cfg) = mgr.store.get(id) else {
-        return Err(StatusCode::NOT_FOUND);
+    let cfg = {
+        let mgr = s.manager.lock().unwrap();
+        let Some(cfg) = mgr.store.get(id) else {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "saved bot not found" }))));
+        };
+        cfg
     };
-    let bot_id = mgr.spawn_saved(&cfg);
+    let fallback = resolve_proxy(&s, None).await?;
+    let mut mgr = s.manager.lock().unwrap();
+    let bot_id = mgr.spawn_saved(&cfg, fallback);
     Ok(Json(serde_json::json!({ "id": bot_id })))
 }
 
@@ -237,15 +299,22 @@ async fn list_saved_bots(State(s): State<AppState>) -> Json<serde_json::Value> {
 async fn spawn_saved_bot(
     State(s): State<AppState>,
     Path(id): Path<u32>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut mgr = s.manager.lock().unwrap();
-    let Some(cfg) = mgr.store.get(id) else {
-        return Err(StatusCode::NOT_FOUND);
+) -> ApiResult<serde_json::Value> {
+    let cfg = {
+        let mgr = s.manager.lock().unwrap();
+        let Some(cfg) = mgr.store.get(id) else {
+            return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "saved bot not found" }))));
+        };
+        if mgr.bots.contains_key(&id) {
+            return Err((StatusCode::CONFLICT, Json(serde_json::json!({ "error": "bot already running" }))));
+        }
+        cfg
     };
-    if mgr.bots.contains_key(&id) {
-        return Err(StatusCode::CONFLICT);
-    }
-    let bot_id = mgr.spawn_saved(&cfg);
+    // A stored bot with its own proxy uses it; otherwise the general proxy
+    // (fail fast when it is configured but unreachable).
+    let fallback = resolve_proxy(&s, None).await?;
+    let mut mgr = s.manager.lock().unwrap();
+    let bot_id = mgr.spawn_saved(&cfg, fallback);
     Ok(Json(serde_json::json!({ "id": bot_id })))
 }
 
@@ -310,26 +379,8 @@ async fn spawn_bot(
     Json(req): Json<SpawnRequest>,
 ) -> ApiResult<serde_json::Value> {
     let mac = validated_mac(req.mac)?;
-    let proxy = match (req.proxy_host, req.proxy_port) {
-        (Some(host), Some(port)) => {
-            let addr = format!("{}:{}", host, port)
-            .parse()
-            .or_else(|_| {
-                // Try to resolve the host if it's not a valid socket address
-                let mut addrs = format!("{}:{}", host, port)
-                    .to_socket_addrs()
-                    .map_err(|_| StatusCode::BAD_REQUEST)?;
-                addrs.next().ok_or(StatusCode::BAD_REQUEST)
-            })
-            .ok();
-            addr.map(|proxy_addr| Socks5Config {
-                proxy_addr,
-                username: req.proxy_username,
-                password: req.proxy_password,
-            })
-        }
-        _ => None,
-    };
+    let explicit = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    let proxy = resolve_proxy(&s, explicit).await?;
     let id = s.manager.lock().unwrap().spawn(req.username, req.password, proxy, mac);
     Ok(Json(serde_json::json!({ "id": id })))
 }
@@ -357,17 +408,8 @@ async fn spawn_ltoken_bot(
             return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "mac does not match ltoken bundle" }))));
         }
     }
-    let proxy = match (req.proxy_host, req.proxy_port) {
-        (Some(host), Some(port)) => {
-            let addr = format!("{}:{}", host, port).parse().ok();
-            addr.map(|proxy_addr| Socks5Config {
-                proxy_addr,
-                username: req.proxy_username,
-                password: req.proxy_password,
-            })
-        }
-        _ => None,
-    };
+    let explicit = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    let proxy = resolve_proxy(&s, explicit).await?;
     let id = s.manager.lock().unwrap().spawn_ltoken(req.ltoken, proxy);
     Ok(Json(serde_json::json!({ "id": id })))
 }
@@ -663,8 +705,11 @@ async fn oauth_google_start(
     State(s): State<AppState>,
     Json(req): Json<OAuthStartRequest>,
 ) -> ApiResult<OAuthSessionView> {
-    let proxy = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    let explicit = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
     let mac = validated_mac(req.mac)?;
+    // No proxy in the request → fall back to the app-wide general proxy
+    // (fail fast if it is configured but unreachable).
+    let proxy = resolve_proxy(&s, explicit).await?;
     s.oauth
         .start(proxy, req.watch_timeout_secs.unwrap_or(600).clamp(60, 3600), mac)
         .await
@@ -763,7 +808,8 @@ async fn oauth_google_spawn(
             (StatusCode::CONFLICT, Json(serde_json::json!({ "error": "session not validated yet" })))
         }
     })?;
-    let proxy = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    let explicit = proxy_from_parts(req.proxy_host, req.proxy_port, req.proxy_username, req.proxy_password);
+    let proxy = resolve_proxy(&s, explicit).await?;
     let bot_id = s.manager.lock().unwrap().spawn_ltoken(ltoken, proxy);
     Ok(Json(serde_json::json!({ "id": bot_id, "oauth_id": id })))
 }
@@ -991,9 +1037,67 @@ async fn index_html() -> impl IntoResponse {
     axum::response::Html(injected)
 }
 
+// ── General proxy (app-wide default) ───────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GeneralProxyRequest {
+    enabled: bool,
+    host: String,
+    port: u16,
+    username: Option<String>,
+    password: Option<String>,
+}
+
+/// GET /settings/proxy — the app-wide general proxy. Credentials are
+/// included (the single-user dashboard already shows proxy passwords elsewhere).
+async fn get_general_proxy(State(s): State<AppState>) -> Json<serde_json::Value> {
+    let gp = s.settings.lock().unwrap().general_proxy.clone();
+    Json(serde_json::json!({
+        "enabled": gp.enabled,
+        "host": gp.host,
+        "port": gp.port,
+        "username": gp.username,
+        "password": gp.password,
+    }))
+}
+
+/// POST /settings/proxy — save the general proxy. Written atomically to
+/// `data/settings.json` (0600) and effective immediately.
+async fn set_general_proxy(
+    State(s): State<AppState>,
+    Json(req): Json<GeneralProxyRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let host = req.host.trim().to_string();
+    if req.enabled && (host.is_empty() || req.port == 0) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "host and port are required when enabled" })),
+        ));
+    }
+    let snapshot = {
+        let mut settings = s.settings.lock().unwrap();
+        settings.general_proxy = crate::settings::GeneralProxy {
+            enabled: req.enabled,
+            host,
+            port: req.port,
+            username: req.username.filter(|u| !u.trim().is_empty()),
+            password: req.password.filter(|p| !p.is_empty()),
+        };
+        settings.clone()
+    };
+    snapshot.save().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("save failed: {e}") })),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
     let auth = AuthState::new();
-    let state = AppState { manager, ws_tx, auth, oauth: OAuthStore::new() };
+    let settings = Arc::new(Mutex::new(AppSettings::load()));
+    let state = AppState { manager, ws_tx, auth, oauth: OAuthStore::new(), settings };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1027,6 +1131,7 @@ pub async fn serve(manager: SharedManager, ws_tx: WsTx) {
         .route("/items/names", get(item_names))
         .route("/items/colors", get(item_colors))
         .route("/proxy/test", post(proxy_check))
+        .route("/settings/proxy", get(get_general_proxy).post(set_general_proxy))
         .route("/oauth/google/start", post(oauth_google_start))
         .route("/oauth/google/{id}", get(oauth_google_status))
         .route("/oauth/google/{id}/callback", post(oauth_google_callback))

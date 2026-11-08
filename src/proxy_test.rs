@@ -24,6 +24,23 @@ pub struct ProxyTestResult {
     pub enet: CheckResult,
 }
 
+/// Dead-simple liveness check: SOCKS5 connect + UDP associate only.
+///
+/// Used to fail *fast* before a login (or a bot spawn that relies on the
+/// general proxy) instead of burning a full login retry cycle through a dead
+/// proxy. Cheap: a couple of UDP packets.
+pub fn quick_proxy_check(cfg: &Socks5Config) -> Result<(), String> {
+    let local: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    Socks5UdpSocket::bind_through_proxy(
+        local,
+        cfg.proxy_addr,
+        cfg.username.as_deref(),
+        cfg.password.as_deref(),
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
 pub fn run_proxy_test(cfg: Socks5Config) -> ProxyTestResult {
     let login_info = LoginInfo {
         protocol: PROTOCOL,

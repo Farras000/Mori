@@ -253,6 +253,14 @@ export interface ProxyTestResult {
   enet: CheckResult;
 }
 
+export interface GeneralProxy {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username?: string | null;
+  password?: string | null;
+}
+
 export interface ItemRecord {
   id: number;
   flags: number;
@@ -412,6 +420,10 @@ export const api = {
     req<ItemRecord[]>("GET", `/items?get-items=${ids.join(",")}`),
   testProxy: (body: ProxyTestRequest) =>
     req<ProxyTestResult>("POST", "/proxy/test", body),
+  getGeneralProxy: () =>
+    req<GeneralProxy>("GET", "/settings/proxy"),
+  setGeneralProxy: (body: GeneralProxy) =>
+    req<{ ok: boolean }>("POST", "/settings/proxy", body),
   oauthGoogleStart: (body: OAuthProxy & { watch_timeout_secs?: number }) =>
     req<OAuthSession>("POST", "/oauth/google/start", body),
   oauthGoogleStatus: (id: string) =>

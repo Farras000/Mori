@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { CheckCircle2, XCircle, Loader2, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
@@ -36,6 +38,84 @@ export function ProxyPage() {
   const [input, setInput] = useState('')
   const [entries, setEntries] = useState<ProxyEntry[]>([])
   const [running, setRunning] = useState(false)
+
+  // App-wide general proxy (applied to every login when the form is empty)
+  const [gpEnabled, setGpEnabled] = useState(false)
+  const [gpStr, setGpStr] = useState('')
+  const [gpStatus, setGpStatus] = useState('')
+  const [gpSaving, setGpSaving] = useState(false)
+  const [gpTesting, setGpTesting] = useState(false)
+
+  useEffect(() => {
+    api.getGeneralProxy()
+      .then((p) => {
+        setGpEnabled(p.enabled)
+        if (p.host) {
+          let s = `${p.host}:${p.port}`
+          if (p.username) s += `:${p.username}`
+          if (p.password) s += `:${p.password}`
+          setGpStr(s)
+        }
+      })
+        .catch(() => {})
+  }, [])
+
+  async function saveGp() {
+    const parsed = gpStr.trim() ? parseProxyLine(gpStr) : null
+    if (gpStr.trim() && !parsed) {
+      setGpStatus('Format: host:port:user:pass')
+      return
+    }
+    if (gpEnabled && !parsed) {
+      setGpStatus('Isi host:port dulu kalau mau di-enable')
+      return
+    }
+    setGpSaving(true)
+    setGpStatus('')
+    try {
+      await api.setGeneralProxy({
+        enabled: gpEnabled,
+        host: parsed?.host ?? '',
+        port: parsed?.port ?? 0,
+        username: parsed?.username ?? null,
+        password: parsed?.password ?? null,
+      })
+      setGpStatus('Saved')
+      setTimeout(() => setGpStatus(''), 2000)
+    } catch {
+      setGpStatus('Save failed')
+    } finally {
+      setGpSaving(false)
+    }
+  }
+
+  async function testGp() {
+    const parsed = parseProxyLine(gpStr)
+    if (!parsed) {
+      setGpStatus('Format: host:port:user:pass')
+      return
+    }
+    setGpTesting(true)
+    setGpStatus('')
+    try {
+      const r = await api.testProxy({
+        proxy_host: parsed.host,
+        proxy_port: parsed.port,
+        proxy_username: parsed.username,
+        proxy_password: parsed.password,
+      })
+      const ok = r.socks5.ok && r.server_data.ok
+      setGpStatus(
+        ok
+          ? 'OK — proxy hidup'
+          : `Gagal: ${r.socks5.error ?? r.server_data.error ?? 'tidak responsif'}`,
+      )
+    } catch (err) {
+      setGpStatus(err instanceof Error && /400/.test(err.message) ? 'Format tidak valid' : 'Test gagal')
+    } finally {
+      setGpTesting(false)
+    }
+  }
 
   function updateEntry(i: number, patch: Partial<ProxyEntry>) {
     setEntries(prev => prev.map((e, j) => (j === i ? { ...e, ...patch } : e)))
@@ -86,7 +166,7 @@ export function ProxyPage() {
     <div className="h-full flex flex-col overflow-hidden">
       <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-border bg-card">
         <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium text-foreground">Proxy Tester</span>
+        <span className="text-xs font-medium text-foreground">Proxy</span>
         {total > 0 && (
           <span className="ml-auto text-xs text-muted-foreground">
             {done}/{total}&nbsp;tested&nbsp;·&nbsp;
@@ -95,6 +175,32 @@ export function ProxyPage() {
             <span className="text-destructive">{done - ok} failed</span>
           </span>
         )}
+      </div>
+
+      {/* ── General proxy (app-wide default) ─────────────────────────── */}
+      <div className="shrink-0 flex flex-wrap items-center gap-x-2 gap-y-1.5 px-4 py-2 border-b border-border bg-card/50">
+        <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">
+          General proxy
+        </span>
+        <Switch checked={gpEnabled} onCheckedChange={setGpEnabled} size="sm" />
+        <Input
+          value={gpStr}
+          onChange={(e) => setGpStr(e.target.value)}
+          placeholder="host:port:user:pass"
+          spellCheck={false}
+          className="h-7 text-xs font-mono flex-1 min-w-[180px] max-w-sm"
+        />
+        <Button size="sm" className="h-7 text-xs shrink-0" onClick={saveGp} disabled={gpSaving}>
+          {gpSaving ? 'Saving…' : 'Save'}
+        </Button>
+        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={testGp} disabled={gpTesting || !gpStr.trim()}>
+          {gpTesting ? 'Testing…' : 'Test'}
+        </Button>
+        {gpStatus && <span className="text-[10px] text-muted-foreground">{gpStatus}</span>}
+        <p className="basis-full text-[9px] text-muted-foreground/70 leading-snug">
+          Dipakai untuk semua login (Google / Legacy / Ltoken) saat form proxy kosong.
+          Form proxy tetap menang kalau diisi.
+        </p>
       </div>
 
       <div className="flex-1 flex overflow-hidden">

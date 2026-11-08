@@ -19,6 +19,7 @@ mod oauth_session;
 mod player;
 mod protocol;
 mod proxy_test;
+mod settings;
 pub mod save_dat;
 mod remote_view;
 mod server_data;
@@ -37,8 +38,10 @@ async fn main() {
     let (ws_tx, _) = tokio::sync::broadcast::channel(2048);
     let mgr = Arc::new(Mutex::new(BotManager::new(ws_tx.clone())));
     // Bring back the bots that were flagged for auto-start, with the settings
-    // they had before the restart (data/bots.json).
-    mgr.lock().unwrap().restore_saved();
+    // they had before the restart (data/bots.json). Bots without their own
+    // proxy fall back to the general proxy (data/settings.json).
+    let boot_fallback = crate::settings::AppSettings::load().general_proxy_config();
+    mgr.lock().unwrap().restore_saved(boot_fallback);
     let grpc_handle = tokio::spawn(grpc::serve(mgr.clone(), ws_tx.clone()));
     tokio::select! {
         _ = web::serve(mgr, ws_tx) => {},
