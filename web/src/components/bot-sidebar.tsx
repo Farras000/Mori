@@ -3,7 +3,7 @@ import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, X, ExternalLink, Copy
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { botsAtom, selectedBotIdAtom } from '@/lib/store'
 import { authStore } from '@/lib/auth'
-import { api, type BotStatus, type BrowserStatus, type OAuthProxy, type OAuthSession, type ProxyInfo, type WsDialog, type SavedBot, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
+import { api, type BotStatus, type BrowserStatus, type GeneralProxy, type OAuthProxy, type OAuthSession, type ProxyInfo, type WsDialog, type SavedBot, type SpawnBotBody, type SpawnLtokenBody } from '@/lib/api'
 import { GoogleBrowserModal } from '@/components/GoogleBrowserModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -292,6 +292,11 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [method, setMethod] = useState<'legacy' | 'ltoken' | 'google'>('legacy')
+  const [generalProxy, setGeneralProxy] = useState<GeneralProxy | null>(null)
+
+  useEffect(() => {
+    api.getGeneralProxy().then(setGeneralProxy).catch(() => {})
+  }, [])
 
   const macValid = isValidMac(mac)
   const ltokenMac = (() => {
@@ -431,6 +436,13 @@ function AddBotForm({ onDone }: { onDone: () => void }) {
           className="h-7 text-xs font-mono"
         />
       )}
+      <p className="text-[9px] text-muted-foreground/80 leading-snug -mt-0.5">
+        {generalProxy?.enabled && generalProxy.host ? (
+          <>General proxy: <span className="font-mono">{generalProxy.host}:{generalProxy.port}</span> — dipakai kalau form kosong</>
+        ) : (
+          <>General proxy belum di-set (halaman Proxy → General proxy)</>
+        )}
+      </p>
 
       {method !== 'google' && (
         <Button type="submit" size="sm" className="w-full text-xs" disabled={loading || !macValid || ltokenMismatch}>

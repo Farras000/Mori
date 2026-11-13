@@ -1,8 +1,65 @@
+use std::collections::BTreeMap;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use crate::bot::Socks5Config;
+
+#[derive(Default, Debug)]
+pub struct VsProxyCoordinator {
+    /// Active bots registered in the system: bot_id -> auto_rotate_reconnect
+    pub bots: BTreeMap<u32, bool>,
+    /// Global last roll instant across the pool (to respect cooldown)
+    pub last_roll: Option<Instant>,
+    /// Cached pool of proxies from the latest generation, indexed by slot
+    pub cached_proxies: Vec<Socks5Config>,
+}
+
+static COORDINATOR: LazyLock<Mutex<VsProxyCoordinator>> = LazyLock::new(|| {
+    Mutex::new(VsProxyCoordinator::default())
+});
+
+/// Registers a bot with the VSProxy coordinator.
+pub fn register_bot(bot_id: u32, auto_rotate: bool) {
+    if let Ok(mut coord) = COORDINATOR.lock() {
+        coord.bots.insert(bot_id, auto_rotate);
+    }
+}
+
+/// Unregisters a bot when stopped.
+pub fn unregister_bot(bot_id: u32) {
+    if let Ok(mut coord) = COORDINATOR.lock() {
+        coord.bots.remove(&bot_id);
+    }
+}
+
+/// Updates a bot's auto_rotate setting in the coordinator.
+pub fn set_bot_auto_rotate(bot_id: u32, auto_rotate: bool) {
+    if let Ok(mut coord) = COORDINATOR.lock() {
+        coord.bots.insert(bot_id, auto_rotate);
+    }
+}
+
+/// Returns the number of active bots with auto_rotate enabled and the slot index for the given bot_id.
+/// If target_bot_id is None, returns (count.max(1), 0).
+pub fn get_active_auto_roll_slots(target_bot_id: Option<u32>) -> (u32, usize) {
+    if let Ok(coord) = COORDINATOR.lock() {
+        let active_ids: Vec<u32> = coord.bots.iter()
+            .filter(|(_, ar)| **ar)
+            .map(|(id, _)| *id)
+            .collect();
+        let count = (active_ids.len() as u32).max(1);
+        let slot = if let Some(id) = target_bot_id {
+            active_ids.iter().position(|&x| x == id).unwrap_or(0)
+        } else {
+            0
+        };
+        (count, slot)
+    } else {
+        (1, 0)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VsProxyConfig {
@@ -26,7 +83,7 @@ impl Default for VsProxyConfig {
             invoice: None,
             country: "us".into(),
             mode: "sticky".into(),
-            base_rotation: 50,
+            base_rotation: 110,
             anon: true,
             max_retries: 3,
             auto_roll: true,
@@ -63,7 +120,7 @@ impl VsProxyConfig {
         let base_rotation = std::env::var("VSPROXY_ROTATION")
             .ok()
             .and_then(|s| s.trim().parse::<u32>().ok())
-            .unwrap_or(50)
+            .unwrap_or(110)
             .clamp(1, 120);
 
         let anon = std::env::var("VSPROXY_ANON")
@@ -136,11 +193,11 @@ impl std::fmt::Display for VsProxyError {
 
 impl std::error::Error for VsProxyError {}
 
-pub const ROTATION_MIN: u32 = 50;
-pub const ROTATION_MAX: u32 = 60;
+pub const ROTATION_MIN: u32 = 110;
+pub const ROTATION_MAX: u32 = 120;
 
 /// Calculates the next rotation minutes to force VSProxy to generate a fresh IP.
-/// Strictly cycles between: 50 -> 51 -> 52 -> ... -> 60 -> 50 -> ...
+/// Strictly cycles between: 110 -> 111 -> 112 -> ... -> 120 -> 110 -> ...
 pub fn calculate_next_rotation(base_rotation: u32, current_proxy: Option<&Socks5Config>) -> u32 {
     let current_val = current_proxy
         .and_then(|p| p.username.as_deref())
@@ -278,9 +335,26 @@ pub fn build_socks5_config(
     })
 }
 
-/// Directly mutates the `sessttl` tag in an existing VSProxy username.
+/// Parses multiple proxy lines from the VSProxy `list` response.
+pub fn parse_proxy_list(list_str: &str) -> Vec<Socks5Config> {
+    let mut list = Vec::new();
+    for line in list_str.lines() {
+        if let Some((host, port, u, p)) = parse_proxy_line(line) {
+            if let Ok(cfg) = build_socks5_config(&host, port, Some(u), Some(p)) {
+                list.push(cfg);
+            }
+        }
+    }
+    list
+}
+
+/// Directly mutates the `sessttl` tag in an existing VSProxy username with port offset for multi-bot slots.
 /// Used as a fallback or instant bumper.
-pub fn bump_vsproxy_session(current: &Socks5Config, base_rotation: u32) -> Option<Socks5Config> {
+pub fn bump_vsproxy_session_with_slot(
+    current: &Socks5Config,
+    base_rotation: u32,
+    slot_offset: usize,
+) -> Option<Socks5Config> {
     let uname = current.username.as_ref()?;
     let next_ttl = calculate_next_rotation(base_rotation, Some(current));
 
@@ -313,23 +387,41 @@ pub fn bump_vsproxy_session(current: &Socks5Config, base_rotation: u32) -> Optio
     }
 
     let new_username = new_parts.join(";");
+    let new_port = current.proxy_addr.port().saturating_add(slot_offset as u16);
+    let new_addr = SocketAddr::new(current.proxy_addr.ip(), new_port);
 
     Some(Socks5Config {
-        proxy_addr: current.proxy_addr,
+        proxy_addr: new_addr,
         username: Some(new_username),
         password: current.password.clone(),
     })
 }
 
+/// Directly mutates the `sessttl` tag in an existing VSProxy username.
+/// Used as a fallback or instant bumper.
+pub fn bump_vsproxy_session(current: &Socks5Config, base_rotation: u32) -> Option<Socks5Config> {
+    bump_vsproxy_session_with_slot(current, base_rotation, 0)
+}
+
 /// Core function to perform proxy rolling.
 /// Enforces cooldown (default 65s), contacts the VSProxy API, and returns new `Socks5Config`.
+/// The `ports` parameter is dynamically derived from the count of active bots with auto-rotate.
 pub fn roll_proxy(
     cfg: &VsProxyConfig,
     current_proxy: Option<&Socks5Config>,
     last_roll: Option<Instant>,
+    bot_id: Option<u32>,
 ) -> Result<Socks5Config, VsProxyError> {
-    // 1. Enforce cooldown guard
-    if let Some(last) = last_roll {
+    // 1. Enforce cooldown guard (check bot's last_roll and coordinator last_roll)
+    let coord_last_roll = COORDINATOR.lock().ok().and_then(|c| c.last_roll);
+    let eff_last_roll = match (last_roll, coord_last_roll) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+
+    if let Some(last) = eff_last_roll {
         let elapsed = last.elapsed();
         let cooldown = Duration::from_secs(cfg.cooldown_secs);
         if elapsed < cooldown {
@@ -340,6 +432,7 @@ pub fn roll_proxy(
         }
     }
 
+    let (num_ports, slot_idx) = get_active_auto_roll_slots(bot_id);
     let next_rotation = calculate_next_rotation(cfg.base_rotation, current_proxy);
     let subuser_opt = resolve_subuser_id(cfg, current_proxy);
 
@@ -357,7 +450,7 @@ pub fn roll_proxy(
             ));
         }
 
-        payload_map.insert("ports".into(), json!(1));
+        payload_map.insert("ports".into(), json!(num_ports));
         payload_map.insert("country".into(), json!(cfg.country));
         payload_map.insert("mode".into(), json!(cfg.mode));
         payload_map.insert("rotation".into(), json!(next_rotation));
@@ -391,10 +484,18 @@ pub fn roll_proxy(
             if let Ok(val) = serde_json::from_str::<Value>(&body_str) {
                 if val["ok"].as_bool() == Some(true) {
                     if let Some(list_str) = val["list"].as_str() {
-                        if let Some(first_line) = list_str.lines().next() {
-                            if let Some((host, port, u, p)) = parse_proxy_line(first_line) {
-                                return build_socks5_config(&host, port, Some(u), Some(p));
+                        let parsed_list = parse_proxy_list(list_str);
+                        if !parsed_list.is_empty() {
+                            if let Ok(mut coord) = COORDINATOR.lock() {
+                                coord.last_roll = Some(Instant::now());
+                                coord.cached_proxies = parsed_list.clone();
                             }
+                            let chosen = if slot_idx < parsed_list.len() {
+                                parsed_list[slot_idx].clone()
+                            } else {
+                                parsed_list.last().cloned().unwrap()
+                            };
+                            return Ok(chosen);
                         }
                     }
                 }
@@ -406,7 +507,10 @@ pub fn roll_proxy(
 
         // If API returned error (e.g. 429), try fallback bumper if current proxy exists
         if let Some(curr) = current_proxy {
-            if let Some(bumped) = bump_vsproxy_session(curr, cfg.base_rotation) {
+            if let Some(bumped) = bump_vsproxy_session_with_slot(curr, cfg.base_rotation, slot_idx) {
+                if let Ok(mut coord) = COORDINATOR.lock() {
+                    coord.last_roll = Some(Instant::now());
+                }
                 return Ok(bumped);
             }
         }
@@ -418,7 +522,10 @@ pub fn roll_proxy(
 
     // If API key is not yet set, fallback to tag bumper if current proxy format is valid
     if let Some(curr) = current_proxy {
-        if let Some(bumped) = bump_vsproxy_session(curr, cfg.base_rotation) {
+        if let Some(bumped) = bump_vsproxy_session_with_slot(curr, cfg.base_rotation, slot_idx) {
+            if let Ok(mut coord) = COORDINATOR.lock() {
+                coord.last_roll = Some(Instant::now());
+            }
             return Ok(bumped);
         }
     }
@@ -453,35 +560,76 @@ mod tests {
             password: Some("pass".into()),
         };
 
-        // Old sessttl.45 jumps into the 50..=60 range at 50
-        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_45)), 50);
+        // Old sessttl.45 jumps into the 110..=120 range at 110
+        assert_eq!(calculate_next_rotation(110, Some(&mock_cfg_45)), 110);
 
-        let mock_cfg_50 = Socks5Config {
+        let mock_cfg_110 = Socks5Config {
             proxy_addr: "127.0.0.1:10000".parse().unwrap(),
-            username: Some("acd0495816223c2984b0__cr.us;sessttl.50:b4c2f01cc617cda0".to_string()),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.110:b4c2f01cc617cda0".to_string()),
             password: Some("pass".into()),
         };
-        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_50)), 51);
+        assert_eq!(calculate_next_rotation(110, Some(&mock_cfg_110)), 111);
 
-        let mock_cfg_59 = Socks5Config {
+        let mock_cfg_119 = Socks5Config {
             proxy_addr: "127.0.0.1:10000".parse().unwrap(),
-            username: Some("acd0495816223c2984b0__cr.us;sessttl.59:b4c2f01cc617cda0".to_string()),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.119:b4c2f01cc617cda0".to_string()),
             password: Some("pass".into()),
         };
-        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_59)), 60);
+        assert_eq!(calculate_next_rotation(110, Some(&mock_cfg_119)), 120);
 
-        let mock_cfg_60 = Socks5Config {
+        let mock_cfg_120 = Socks5Config {
             proxy_addr: "127.0.0.1:10000".parse().unwrap(),
-            username: Some("acd0495816223c2984b0__cr.us;sessttl.60:b4c2f01cc617cda0".to_string()),
+            username: Some("acd0495816223c2984b0__cr.us;sessttl.120:b4c2f01cc617cda0".to_string()),
             password: Some("pass".into()),
         };
-        // 60 wraps around to 50
-        assert_eq!(calculate_next_rotation(50, Some(&mock_cfg_60)), 50);
+        // 120 wraps around to 110
+        assert_eq!(calculate_next_rotation(110, Some(&mock_cfg_120)), 110);
 
-        let bumped = bump_vsproxy_session(&mock_cfg_50, 50).expect("Should bump");
+        let bumped = bump_vsproxy_session(&mock_cfg_110, 110).expect("Should bump");
         let bumped_uname = bumped.username.unwrap();
-        assert!(bumped_uname.contains("sessttl.51"));
+        assert!(bumped_uname.contains("sessttl.111"));
         assert!(bumped_uname.contains("anon.1"));
+
+        // Slot offset bumps port
+        let bumped_slot1 = bump_vsproxy_session_with_slot(&mock_cfg_110, 110, 1).expect("Should bump");
+        assert_eq!(bumped_slot1.proxy_addr.port(), 10001);
+    }
+
+    #[test]
+    fn test_parse_proxy_list_multiple() {
+        let resp = "gb.vsproxy.org:10000:user1__cr.us;sessttl.120:pass1\ngb.vsproxy.org:10001:user1__cr.us;sessttl.120:pass1\n";
+        let list = parse_proxy_list(resp);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].proxy_addr.port(), 10000);
+        assert_eq!(list[1].proxy_addr.port(), 10001);
+    }
+
+    #[test]
+    fn test_coordinator_slots_and_ports() {
+        register_bot(10, true);
+        register_bot(20, true);
+        register_bot(30, false); // auto_rotate disabled
+
+        let (count, slot_10) = get_active_auto_roll_slots(Some(10));
+        assert_eq!(count, 2);
+        assert_eq!(slot_10, 0);
+
+        let (count2, slot_20) = get_active_auto_roll_slots(Some(20));
+        assert_eq!(count2, 2);
+        assert_eq!(slot_20, 1);
+
+        // Bot 30 is not active for auto roll, gets slot 0 fallback
+        let (count3, slot_30) = get_active_auto_roll_slots(Some(30));
+        assert_eq!(count3, 2);
+        assert_eq!(slot_30, 0);
+
+        unregister_bot(10);
+        let (count4, slot_20_after) = get_active_auto_roll_slots(Some(20));
+        assert_eq!(count4, 1);
+        assert_eq!(slot_20_after, 0);
+
+        unregister_bot(20);
+        unregister_bot(30);
     }
 
     #[test]
@@ -505,7 +653,7 @@ mod tests {
         };
 
         let recent = Instant::now() - Duration::from_secs(10);
-        let err = roll_proxy(&cfg, None, Some(recent)).unwrap_err();
+        let err = roll_proxy(&cfg, None, Some(recent), None).unwrap_err();
         match err {
             VsProxyError::Cooldown { remaining_secs } => {
                 assert!(remaining_secs >= 50 && remaining_secs <= 56);

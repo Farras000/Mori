@@ -371,6 +371,7 @@ impl Bot {
             .unwrap_or_else(|| {
                 VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true)
             });
+        crate::vsproxy::register_bot(bot_id, auto_rotate_reconnect);
         let mut bot = Bot {
             host,
             proxy,
@@ -541,7 +542,7 @@ impl Bot {
                         if let Some(cfg) = VsProxyConfig::from_env() {
                             if cfg.auto_roll && auto_rotate {
                                 log_fn("[Bot] server_data HTTP 403 / failure during startup — rolling proxy...".to_string());
-                                match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None) {
+                                match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None, Some(bot_id)) {
                                     Ok(new_p) => {
                                         log_fn(format!("[Bot] Rolled proxy to: {}", new_p.to_url()));
                                         proxy = Some(new_p);
@@ -590,7 +591,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
                         if let Some(cfg) = VsProxyConfig::from_env() {
                             if cfg.auto_roll && auto_rotate {
                                 log_fn("[Bot] check_token IP limit reached during startup — rolling proxy...".to_string());
-                                match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None) {
+                                match vsproxy::roll_proxy(&cfg, proxy.as_ref(), None, Some(bot_id)) {
                                     Ok(new_p) => {
                                         log_fn(format!("[Bot] Rolled proxy to: {}", new_p.to_url()));
                                         proxy = Some(new_p);
@@ -652,6 +653,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             .unwrap_or_else(|| {
                 VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true)
             });
+        crate::vsproxy::register_bot(bot_id, auto_rotate_reconnect);
         let mut bot = Bot {
             host,
             proxy,
@@ -783,7 +785,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
         }
         let old_ip = self.current_proxy_ip.clone();
 
-        match vsproxy::roll_proxy(&cfg, self.proxy.as_ref(), self.last_proxy_roll) {
+        match vsproxy::roll_proxy(&cfg, self.proxy.as_ref(), self.last_proxy_roll, Some(self.bot_id)) {
             Ok(new_proxy) => {
                 // Verify external IP of the candidate proxy
                 self.log_console("[Bot] Checking external IP of rolled proxy...".to_string());
@@ -1211,6 +1213,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             };
             std::thread::sleep(sleep_duration);
         }
+        crate::vsproxy::unregister_bot(self.bot_id);
     }
 
     /// Calculate delay with random humanized jitter (-5% to +15%) to break static timing bot detection.
@@ -1740,28 +1743,40 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         }
                         Some(IncomingPacket::Track(s)) => {
                             self.log_console(format!("[Bot] Track: {s}"));
-                            let fields: std::collections::HashMap<&str, &str> =
-                                s.lines().filter_map(|line| line.split_once('|')).collect();
-                            let level = fields
-                                .get("Level")
-                                .and_then(|v| v.parse::<u32>().ok())
-                                .unwrap_or(0);
-                            let grow_id = fields
-                                .get("GrowId")
-                                .and_then(|v| v.parse::<u64>().ok())
-                                .unwrap_or(0);
-                            let install_date = fields
-                                .get("installDate")
-                                .and_then(|v| v.parse::<u64>().ok())
-                                .unwrap_or(0);
-                            let global_playtime = fields
-                                .get("Global_Playtime")
-                                .and_then(|v| v.parse::<u64>().ok())
-                                .unwrap_or(0);
-                            let awesomeness = fields
-                                .get("Awesomeness")
-                                .and_then(|v| v.parse::<u32>().ok())
-                                .unwrap_or(0);
+                            // Payload bisa berbentuk baris-baris "Key|Value"
+                            // atau satu baris "K|V|K2|V2". Key dinormalisasi
+                            // (lowercase, tanpa spasi/_/-) supaya case dan
+                            // pemisah bebas.
+                            let mut fields: std::collections::HashMap<String, String> =
+                                std::collections::HashMap::new();
+                            for seg in s.split(['\n', '\r']) {
+                                let parts: Vec<&str> = seg.split('|').collect();
+                                for pair in parts.chunks(2) {
+                                    if let [k, v] = pair {
+                                        let key = k
+                                            .trim()
+                                            .to_lowercase()
+                                            .replace([' ', '_', '-'], "");
+                                        fields.insert(key, v.trim().to_string());
+                                    }
+                                }
+                            }
+                            let get_u64 = |keys: &[&str]| {
+                                keys.iter()
+                                    .find_map(|k| fields.get(*k))
+                                    .and_then(|v| v.parse::<u64>().ok())
+                            };
+                            let level = get_u64(&["level"]).unwrap_or(0) as u32;
+                            let grow_id = get_u64(&["growid"]).unwrap_or(0);
+                            let install_date = get_u64(&["installdate"]).unwrap_or(0);
+                            let global_playtime =
+                                get_u64(&["globalplaytime", "playtime"]).unwrap_or(0);
+                            let awesomeness = get_u64(&["awesomeness"]).unwrap_or(0) as u32;
+                            if level == 0 && grow_id == 0 && global_playtime == 0 {
+                                self.log_console(
+                                    "[Bot] Track info kosong / format tidak dikenal (lihat baris [Bot] Track di atas)".to_string(),
+                                );
+                            }
                             self.state.write().unwrap().track_info =
                                 Some(crate::bot_state::TrackInfo {
                                     level,
@@ -3403,6 +3418,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             Req::SetAutoRotateReconnect { enabled } => {
                 self.auto_rotate_reconnect = enabled;
                 self.state.write().unwrap().auto_rotate_reconnect = enabled;
+                crate::vsproxy::set_bot_auto_rotate(self.bot_id, enabled);
                 Rep::Ack
             }
             Req::GetAutoRotateReconnect => Rep::Bool(self.auto_rotate_reconnect),
@@ -3651,6 +3667,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::SetAutoRotateReconnect { enabled } => {
                 self.auto_rotate_reconnect = enabled;
                 self.state.write().unwrap().auto_rotate_reconnect = enabled;
+                crate::vsproxy::set_bot_auto_rotate(self.bot_id, enabled);
                 self.log_console(format!("[Bot] Auto-rotate proxy on reconnect set to: {enabled}"));
             }
             BotCommand::SetIgnoreGems { enabled } => {

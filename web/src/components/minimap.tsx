@@ -1213,7 +1213,7 @@ function MinimapInner({
   }, [handleWheel])
 
   return (
-    <div className={cn("relative w-full", isGameMode ? "h-full" : "aspect-video", className)}>
+    <div className={cn("relative w-full", className ?? (isGameMode ? "h-full" : "aspect-video"))}>
       <div
         ref={containerRef}
         className="w-full h-full rounded border border-border bg-[#080c10] cursor-crosshair overflow-hidden"
@@ -1351,5 +1351,6 @@ export const Minimap = memo(MinimapInner, (prev, next) => (
   prev.bot.pos_y === next.bot.pos_y &&
   prev.isGameMode === next.isGameMode &&
   prev.activeTool === next.activeTool &&
-  prev.selectedItemId === next.selectedItemId
+  prev.selectedItemId === next.selectedItemId &&
+  prev.className === next.className
 ))
