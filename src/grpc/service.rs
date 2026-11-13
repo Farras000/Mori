@@ -261,7 +261,10 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::PlayerSpawn { bot_id, .. }
         | WsEvent::PlayerMove { bot_id, .. }
         | WsEvent::PlayerLeave { bot_id, .. }
+        | WsEvent::PlayerClothes { bot_id, .. }
+        | WsEvent::BotClothes { bot_id, .. }
         | WsEvent::WorldLoaded { bot_id, .. }
+        | WsEvent::WeatherUpdate { bot_id, .. }
         | WsEvent::TileUpdate { bot_id, .. }
         | WsEvent::ObjectsUpdate { bot_id, .. }
         | WsEvent::InventoryUpdate { bot_id, .. }
@@ -272,6 +275,11 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::BotDelays { bot_id, .. }
         | WsEvent::BotProxy { bot_id, .. }
         | WsEvent::Chat { bot_id, .. }
+        | WsEvent::TalkBubble { bot_id, .. }
+        | WsEvent::PlaySfx { bot_id, .. }
+        | WsEvent::TradeStart { bot_id, .. }
+        | WsEvent::TradeStatus { bot_id, .. }
+        | WsEvent::TradeEnd { bot_id, .. }
         | WsEvent::DialogRequest { bot_id, .. }
         | WsEvent::DialogClose { bot_id }
         | WsEvent::WorldMenu { bot_id, .. }
@@ -355,6 +363,7 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             country,
             x,
             y,
+            ..
         } => mori::bot_event::Event::PlayerSpawn(mori::PlayerSpawnEvent {
             bot_id: *bot_id,
             net_id: *net_id,
@@ -380,12 +389,25 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
                 net_id: *net_id,
             })
         }
+        WsEvent::PlayerClothes { bot_id, net_id, .. } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Clothing] Player #{net_id} updated"),
+            })
+        }
+        WsEvent::BotClothes { bot_id, .. } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: "[Clothing] Local clothes updated".into(),
+            })
+        }
         WsEvent::WorldLoaded {
             bot_id,
             name,
             width,
             height,
             tiles,
+            ..
         } => mori::bot_event::Event::WorldLoaded(mori::WorldLoadedEvent {
             bot_id: *bot_id,
             name: name.clone(),
@@ -393,12 +415,19 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             height: *height,
             tiles: tiles.iter().map(|t| ws_tile_to_proto(*bot_id, t)).collect(),
         }),
+        WsEvent::WeatherUpdate { bot_id, weather } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Weather] {weather}"),
+            })
+        }
         WsEvent::TileUpdate {
             bot_id,
             x,
             y,
             fg,
             bg,
+            ..
         } => mori::bot_event::Event::TileUpdate(mori::TileUpdateEvent {
             bot_id: *bot_id,
             x: *x,
@@ -521,6 +550,36 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             mori::bot_event::Event::Console(mori::ConsoleEvent {
                 bot_id: *bot_id,
                 message: format!("[TileDamage] ({x},{y}) {damage}/{max_health}"),
+            })
+        }
+        WsEvent::TalkBubble { bot_id, net_id, text, .. } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Bubble #{net_id}] {text}"),
+            })
+        }
+        WsEvent::PlaySfx { bot_id, file, .. } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[SFX] {file}"),
+            })
+        }
+        WsEvent::TradeStart { bot_id, partner_net_id, partner_name } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Trade] Started with {partner_name} (#{partner_net_id})"),
+            })
+        }
+        WsEvent::TradeStatus { bot_id, trade } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Trade] Status: {}", trade.status_text),
+            })
+        }
+        WsEvent::TradeEnd { bot_id, reason } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Trade] Ended ({reason})"),
             })
         }
     };

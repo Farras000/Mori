@@ -77,6 +77,9 @@ pub struct Player {
     pub m_state:    u32,
     pub sm_state:   u32,
     pub invisible:  bool,
+    /// Equipped item IDs across the 9 Growtopia slots:
+    /// [hair, shirt, pants, feet, face, hand, back, mask, neck].
+    pub equipped_clothes: [u32; 9],
 }
 
 /// Parse a `key|value\nkey|value\n…` string into a map.

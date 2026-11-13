@@ -498,6 +498,14 @@ enum CmdRequest {
     Place { x: i32, y: i32, item: u32 },
     Wrench { x: i32, y: i32 },
     WrenchPlayer { net_id: u32 },
+    WrenchSelf,
+    Active { x: i32, y: i32 },
+    Enter { #[serde(default)] pass: Option<String> },
+    TradeStart { target_net_id: u32 },
+    TradeOfferItem { item_id: u32, count: u32 },
+    TradeAccept { locked: bool },
+    TradeConfirm,
+    TradeCancel,
     SetCollectPathCheck { enabled: bool },
     SetInteractive { enabled: bool },
     SetInput { left: bool, right: bool, jump: bool, down: bool },
@@ -649,6 +657,14 @@ async fn bot_cmd(
         CmdRequest::Place { x, y, item } => BotCommand::Place { x, y, item },
         CmdRequest::Wrench { x, y } => BotCommand::Wrench { x, y },
         CmdRequest::WrenchPlayer { net_id } => BotCommand::WrenchPlayer { net_id },
+        CmdRequest::WrenchSelf => BotCommand::WrenchSelf,
+        CmdRequest::Active { x, y } => BotCommand::Active { x, y },
+        CmdRequest::Enter { pass } => BotCommand::Enter { pass },
+        CmdRequest::TradeStart { target_net_id } => BotCommand::TradeStart { target_net_id },
+        CmdRequest::TradeOfferItem { item_id, count } => BotCommand::TradeOfferItem { item_id, count },
+        CmdRequest::TradeAccept { locked } => BotCommand::TradeAccept { locked },
+        CmdRequest::TradeConfirm => BotCommand::TradeConfirm,
+        CmdRequest::TradeCancel => BotCommand::TradeCancel,
         CmdRequest::SetCollectPathCheck { enabled } => BotCommand::SetCollectPathCheck { enabled },
         CmdRequest::SetInteractive { enabled } => BotCommand::SetInteractive { enabled },
         CmdRequest::SetInput { left, right, jump, down } => BotCommand::SetInput { left, right, jump, down },
@@ -1022,25 +1038,96 @@ async fn handle_socket(
     }
 }
 
+fn sanitize_cdn_rel_path(raw: &str) -> Option<std::path::PathBuf> {
+    let mut clean = std::path::PathBuf::new();
+    for comp in std::path::Path::new(raw.trim_start_matches('/')).components() {
+        match comp {
+            std::path::Component::Normal(seg) => clean.push(seg),
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    if clean.as_os_str().is_empty() {
+        None
+    } else {
+        Some(clean)
+    }
+}
+
+fn cdn_content_type(path: &str) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".ogg") {
+        "audio/ogg"
+    } else if lower.ends_with(".wav") {
+        "audio/wav"
+    } else if lower.ends_with(".png") {
+        "image/png"
+    } else {
+        "application/octet-stream"
+    }
+}
+
 async fn growtopia_cdn(Path(path): Path<String>) -> Response {
-    let url = format!("https://growserver-cache.netlify.app/{}", path);
-    match tokio::task::spawn_blocking(move || ureq::get(&url).call()).await {
-        Ok(Ok(resp)) => {
-            let content_type = resp.headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_owned();
-            let bytes = match resp.into_body().read_to_vec() {
-                Ok(b) => b,
-                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
-            };
+    let Some(rel_path) = sanitize_cdn_rel_path(&path) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let clean_path = rel_path.to_string_lossy().replace('\\', "/");
+    let content_type = cdn_content_type(&clean_path);
+    let cache_root = std::env::var("MORI_CDN_CACHE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("cache").join("growtopia"));
+    let cache_file = cache_root.join(&rel_path);
+
+    if let Ok(cached_bytes) = tokio::fs::read(&cache_file).await {
+        if !cached_bytes.is_empty() {
+            return Response::builder()
+                .header("content-type", content_type)
+                .header("cache-control", "public, max-age=86400")
+                .body(Body::from(cached_bytes))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
+    }
+
+    let primary_base = std::env::var("GROWTOPIA_CDN_URL")
+        .unwrap_or_else(|_| "https://growserver-cache.netlify.app".to_string());
+    let mirror_base = std::env::var("GROWTOPIA_CDN_MIRROR").ok();
+    let mut urls = vec![format!("{}/{}", primary_base.trim_end_matches('/'), clean_path)];
+    if let Some(m) = mirror_base.filter(|s| !s.trim().is_empty()) {
+        urls.push(format!("{}/{}", m.trim_end_matches('/'), clean_path));
+    }
+
+    let fetch_result = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
+        for base_url in &urls {
+            for attempt in 0..3u64 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(150 * attempt));
+                }
+                if let Ok(resp) = ureq::get(base_url).call() {
+                    if let Ok(bytes) = resp.into_body().read_to_vec() {
+                        if !bytes.is_empty() {
+                            return Some(bytes);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    })
+    .await;
+
+    match fetch_result {
+        Ok(Some(bytes)) => {
+            if let Some(parent) = cache_file.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let _ = tokio::fs::write(&cache_file, &bytes).await;
             Response::builder()
                 .header("content-type", content_type)
+                .header("cache-control", "public, max-age=86400")
                 .body(Body::from(bytes))
                 .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
         }
-        Ok(Err(_)) | Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+        _ => StatusCode::BAD_GATEWAY.into_response(),
     }
 }
 

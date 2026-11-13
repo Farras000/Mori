@@ -1,5 +1,6 @@
 import { Container, Graphics, Sprite, Texture } from 'pixi.js'
 import { Color } from '@/lib/color'
+import type { ItemRecord } from '@/lib/api'
 import { textureCacheManager } from '@/lib/texture-cache'
 import { TILE_PX } from '@/lib/tile-layer'
 
@@ -20,6 +21,19 @@ export interface GtWorldUiTextures {
 
 const seedUrlCache = new Map<string, string>()
 const seedTextureCache = new Map<string, Texture>()
+const clothingTextureCache = new Map<number, Promise<Texture | null>>()
+
+/** Load and cache a crisp Pixi texture for an equipped wearable item. */
+function getClothingSpriteTexture(item: ItemRecord): Promise<Texture | null> {
+  const existing = clothingTextureCache.get(item.id)
+  if (existing) return existing
+  const promise = textureCacheManager
+    .getCroppedTile(item.texture_file_name, item.texture_x, item.texture_y)
+    .then((url) => loadCrispTextureFromUrl(url))
+    .catch(() => null)
+  clothingTextureCache.set(item.id, promise)
+  return promise
+}
 
 let charTexturesPromise: Promise<GtCharacterTextures | null> | null = null
 let worldUiTexturesPromise: Promise<GtWorldUiTextures | null> | null = null
@@ -223,6 +237,7 @@ export async function getGtSeedTexture(
 
 export interface GtCharacterRig {
   root: Container
+  setClothes: (clothes: number[] | undefined, itemsMap: Map<number, ItemRecord>) => void
   setPose: (opts: {
     facingLeft: boolean
     airborne: boolean
@@ -400,6 +415,41 @@ export function createGtCharacterRig(
   upperBody.addChild(armContainer)
   upperBody.addChild(gear.parasol)
 
+  // Clothing overlay containers mounted inside upperBody / legs / arm
+  const backClothContainer = new Container()
+  upperBody.addChildAt(backClothContainer, 0)
+  const upperClothContainer = new Container()
+  upperBody.addChild(upperClothContainer)
+  const handClothContainer = new Container()
+  armContainer.addChild(handClothContainer)
+  const shoesClothContainer = new Container()
+  frontLegContainer.addChild(shoesClothContainer)
+
+  let lastClothSig = ''
+  let clothLoadGen = 0
+  let hasCustomBackSprite = false
+
+  // Slot offsets tuned inside the 32x32 GT character frame (feet at y=0, head top at ~y=-32)
+  const SLOT_LAYOUT: Record<number, { parent: Container; x: number; y: number; size: number; ax: number; ay: number }> = {
+    6: { parent: backClothContainer, x: -3.5, y: -15.5, size: 19, ax: 0.5, ay: 0.5 }, // back/wings
+    2: { parent: upperClothContainer, x: 0, y: -8.5, size: 13.5, ax: 0.5, ay: 0.5 }, // pants
+    1: { parent: upperClothContainer, x: 0, y: -12.5, size: 14.5, ax: 0.5, ay: 0.5 }, // shirt
+    8: { parent: upperClothContainer, x: 0, y: -15.8, size: 12.5, ax: 0.5, ay: 0.5 }, // neck
+    4: { parent: upperClothContainer, x: 0, y: -22.2, size: 14, ax: 0.5, ay: 0.5 }, // face
+    7: { parent: upperClothContainer, x: 0.5, y: -18.5, size: 13.5, ax: 0.5, ay: 0.5 }, // mask
+    0: { parent: upperClothContainer, x: 0, y: -27.2, size: 17.5, ax: 0.5, ay: 0.5 }, // hair/hat
+    5: { parent: handClothContainer, x: 2.5, y: 6.5, size: 14, ax: 0.35, ay: 0.65 }, // hand
+    3: { parent: shoesClothContainer, x: 0.2, y: 5.5, size: 10.5, ax: 0.5, ay: 0.5 }, // feet
+  }
+
+  const clearClothContainers = () => {
+    backClothContainer.removeChildren()
+    upperClothContainer.removeChildren()
+    handClothContainer.removeChildren()
+    shoesClothContainer.removeChildren()
+    hasCustomBackSprite = false
+  }
+
   // Draw order: subtle ground contact shadow behind back leg, torso, front leg
   const groundShadow = new Graphics()
   groundShadow.ellipse(0, 0.25, 5.6, 1.35).fill({ color: 0x000000, alpha: 0.34 })
@@ -411,6 +461,45 @@ export function createGtCharacterRig(
 
   return {
     root,
+    setClothes: (clothes, itemsMap) => {
+      const normalized = clothes && clothes.length > 0 ? clothes : []
+      const resolvedKey = normalized
+        .map((id, idx) => (id > 0 && itemsMap.has(id) ? `${idx}:${id}` : `${idx}:0`))
+        .join('|')
+      if (resolvedKey === lastClothSig) return
+      lastClothSig = resolvedKey
+      const gen = ++clothLoadGen
+      clearClothContainers()
+
+      if (normalized.length === 0) return
+
+      const drawOrder = [6, 2, 1, 8, 4, 7, 0, 5, 3]
+      Promise.all(
+        drawOrder.map(async (slotIdx) => {
+          const itemId = normalized[slotIdx] ?? 0
+          if (!itemId) return null
+          const item = itemsMap.get(itemId)
+          if (!item) return null
+          const tex = await getClothingSpriteTexture(item)
+          return tex && !tex.destroyed ? { slotIdx, tex } : null
+        }),
+      ).then((loaded) => {
+        if (gen !== clothLoadGen || root.destroyed) return
+        clearClothContainers()
+        for (const entry of loaded) {
+          if (!entry) continue
+          const cfg = SLOT_LAYOUT[entry.slotIdx]
+          if (!cfg) continue
+          const sp = new Sprite(entry.tex)
+          sp.anchor.set(cfg.ax, cfg.ay)
+          sp.position.set(cfg.x, cfg.y)
+          sp.width = cfg.size
+          sp.height = cfg.size
+          cfg.parent.addChild(sp)
+          if (entry.slotIdx === 6) hasCustomBackSprite = true
+        }
+      })
+    },
     setPose: ({
       facingLeft,
       airborne,
@@ -432,10 +521,10 @@ export function createGtCharacterRig(
         headSprite.texture = airborne ? textures.headAir : textures.head
       }
 
-      gear.wings.visible = hasWings && !hasJetpack
+      gear.wings.visible = hasWings && !hasJetpack && !hasCustomBackSprite
       gear.jetpack.visible = hasJetpack
       gear.flame.visible = hasJetpack && airborne
-      gear.parasol.visible = slowFalling
+      gear.parasol.visible = slowFalling && !hasCustomBackSprite
 
       const phase = walkPhase ?? time * 0.26
       const swing = Math.sin(phase)

@@ -261,6 +261,33 @@ fn extract_chat_display_message(raw: &str) -> Option<String> {
     }
 }
 
+/// Extract audio file path and delay from Growtopia `action|play_sfx` packets.
+fn parse_play_sfx(raw: &str) -> Option<(String, u32)> {
+    let mut is_sfx = false;
+    let mut file = None;
+    let mut delay_ms = 0u32;
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line == "action|play_sfx" {
+            is_sfx = true;
+        } else if let Some(rest) = line.strip_prefix("file|") {
+            let clean = rest.trim().trim_start_matches('/').to_string();
+            if !clean.is_empty() {
+                file = Some(clean);
+            }
+        } else if let Some(rest) = line.strip_prefix("delayMS|") {
+            delay_ms = rest.trim().parse().unwrap_or(0);
+        }
+    }
+
+    if is_sfx {
+        file.map(|f| (f, delay_ms))
+    } else {
+        None
+    }
+}
+
 pub struct Bot {
     host: BotHost,
     pub proxy: Option<Socks5Config>,
@@ -348,6 +375,8 @@ pub struct Bot {
     pub captcha_active: bool,
     /// Currently active modal dialog waiting for user response.
     pub active_dialog: Option<crate::events::WsDialog>,
+    /// Currently active player-to-player trade session state.
+    pub active_trade: Option<crate::events::TradeState>,
     /// When set, the bot will delay reconnecting until this instant (used for 2FA cooldown).
     reconnect_after: Option<std::time::Instant>,
     /// Set when an `action|log` with "Advanced Account Protection" is received,
@@ -513,6 +542,7 @@ impl Bot {
             script_stop: Arc::new(AtomicBool::new(false)),
             captcha_active: false,
             active_dialog: None,
+            active_trade: None,
             reconnect_after: None,
             pending_2fa: false,
             pending_relogon: false,
@@ -793,6 +823,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             script_stop: Arc::new(AtomicBool::new(false)),
             captcha_active: false,
             active_dialog: None,
+            active_trade: None,
             reconnect_after: None,
             pending_2fa: false,
             pending_relogon: false,
@@ -1516,6 +1547,13 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                 })
                                 .ok();
                             }
+                            if let Some((file, delay_ms)) = parse_play_sfx(&s) {
+                                self.emit(WsEvent::PlaySfx {
+                                    bot_id: self.bot_id,
+                                    file,
+                                    delay_ms,
+                                });
+                            }
                             if let Some(display_msg) = extract_chat_display_message(&s) {
                                 self.emit(WsEvent::Chat {
                                     bot_id: self.bot_id,
@@ -1775,6 +1813,10 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                             s.world_name = world.tile_map.world_name.clone();
                                             s.world_width = world.tile_map.width;
                                             s.world_height = world.tile_map.height;
+                                            s.base_weather = world.base_weather;
+                                            s.current_weather = world.current_weather;
+                                            s.active_trade = None;
+                                            self.active_trade = None;
                                             let objects: Vec<WorldObjectInfo> = world
                                                 .objects
                                                 .iter()
@@ -1827,6 +1869,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                                 name: world.tile_map.world_name.clone(),
                                                 width: world.tile_map.width,
                                                 height: world.tile_map.height,
+                                                base_weather: world.base_weather,
+                                                current_weather: world.current_weather,
                                                 tiles: ws_tiles,
                                             });
                                             self.emit(WsEvent::ObjectsUpdate {
@@ -2195,6 +2239,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         m_state,
                         sm_state,
                         invisible,
+                        equipped_clothes: [0; 9],
                     };
 
                     let is_mod = m_state > 0 || sm_state > 0 || invisible;
@@ -2212,20 +2257,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     }
 
                     self.players.insert(net_id, player.clone());
-                    {
-                        let mut s = self.state.write().unwrap();
-                        s.players = self
-                            .players
-                            .values()
-                            .map(|p| PlayerInfo {
-                                net_id: p.net_id,
-                                name: p.name.clone(),
-                                pos_x: p.position.0 / 32.0,
-                                pos_y: p.position.1 / 32.0,
-                                country: p.country.clone(),
-                            })
-                            .collect();
-                    }
+                    self.sync_state_players();
                     self.emit(WsEvent::PlayerSpawn {
                         bot_id: self.bot_id,
                         net_id: player.net_id,
@@ -2233,6 +2265,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         country: player.country.clone(),
                         x: player.position.0 / 32.0,
                         y: player.position.1 / 32.0,
+                        clothes: player.equipped_clothes,
+                        m_state: player.m_state,
+                        sm_state: player.sm_state,
                     });
                 }
             }
@@ -2256,26 +2291,33 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 });
             }
             "OnSetClothing" => {
+                let v1 = vl.get(1).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
+                let v2 = vl.get(2).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
+                let v3 = vl.get(3).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
+                let clothes = [
+                    v1.0.round().max(0.0) as u32,
+                    v1.1.round().max(0.0) as u32,
+                    v1.2.round().max(0.0) as u32,
+                    v2.0.round().max(0.0) as u32,
+                    v2.1.round().max(0.0) as u32,
+                    v2.2.round().max(0.0) as u32,
+                    v3.0.round().max(0.0) as u32,
+                    v3.1.round().max(0.0) as u32,
+                    v3.2.round().max(0.0) as u32,
+                ];
                 let is_local = target_net_id == self.local.net_id
                     || self.local.net_id == 0
                     || target_net_id == 0
                     || target_net_id == u32::MAX;
                 if is_local {
-                    let v1 = vl.get(1).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
-                    let v2 = vl.get(2).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
-                    let v3 = vl.get(3).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
-                    let clothes = [
-                        v1.0.round().max(0.0) as u32,
-                        v1.1.round().max(0.0) as u32,
-                        v1.2.round().max(0.0) as u32,
-                        v2.0.round().max(0.0) as u32,
-                        v2.1.round().max(0.0) as u32,
-                        v2.2.round().max(0.0) as u32,
-                        v3.0.round().max(0.0) as u32,
-                        v3.1.round().max(0.0) as u32,
-                        v3.2.round().max(0.0) as u32,
-                    ];
                     self.local.equipped_clothes = clothes;
+                    if let Ok(mut s) = self.state.write() {
+                        s.local_clothes = clothes;
+                    }
+                    self.emit(WsEvent::BotClothes {
+                        bot_id: self.bot_id,
+                        clothes,
+                    });
                     for item in self.inventory.items.values_mut() {
                         let action_type = self
                             .items_dat
@@ -2291,6 +2333,14 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         }
                     }
                     self.emit_inventory_update();
+                } else if let Some(p) = self.players.get_mut(&target_net_id) {
+                    p.equipped_clothes = clothes;
+                    self.sync_state_players();
+                    self.emit(WsEvent::PlayerClothes {
+                        bot_id: self.bot_id,
+                        net_id: target_net_id,
+                        clothes,
+                    });
                 }
             }
             "OnSuperMainStartAcceptLogonHrdxs47254722215a" => {
@@ -2308,17 +2358,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 let data = parse_pipe_map(&message);
                 let net_id: u32 = data.get("netID").and_then(|s| s.parse().ok()).unwrap_or(0);
                 self.players.remove(&net_id);
-                self.state.write().unwrap().players = self
-                    .players
-                    .values()
-                    .map(|p| PlayerInfo {
-                        net_id: p.net_id,
-                        name: p.name.clone(),
-                        pos_x: p.position.0 / 32.0,
-                        pos_y: p.position.1 / 32.0,
-                        country: p.country.clone(),
-                    })
-                    .collect();
+                self.sync_state_players();
                 self.log_console(format!("[Bot] OnRemove net_id={net_id}"));
                 self.emit(WsEvent::PlayerLeave {
                     bot_id: self.bot_id,
@@ -2337,7 +2377,22 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             "OnTalkBubble" => {
                 let net_id = vl.get(1).map(|v| v.as_int32()).unwrap_or(-1);
                 let text = vl.get(2).map(|v| v.as_string()).unwrap_or_default();
+                let bubble_type = vl
+                    .get(3)
+                    .map(|v| v.as_int32().clamp(0, 255) as u8)
+                    .unwrap_or(0);
+                let resolved_net_id = if net_id >= 0 {
+                    net_id as u32
+                } else {
+                    self.local.net_id
+                };
                 self.log_console(format!("[Bot] TalkBubble (net_id={net_id}): {text}"));
+                self.emit(WsEvent::TalkBubble {
+                    bot_id: self.bot_id,
+                    net_id: resolved_net_id,
+                    text: text.clone(),
+                    bubble_type,
+                });
                 self.emit(WsEvent::Chat {
                     bot_id: self.bot_id,
                     message: format!("[Bubble #{net_id}] {text}"),
@@ -2455,7 +2510,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     let mut s = self.state.write().unwrap();
                     s.world_name = "EXIT".to_string();
                     s.status = BotStatus::InGame;
+                    s.base_weather = 0;
+                    s.current_weather = 0;
+                    s.active_trade = None;
                     s.world_menu = sections.clone();
+                    self.active_trade = None;
                     self.inventory.remove_temp_items()
                 };
                 if removed {
@@ -2474,11 +2533,83 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     name: "EXIT".to_string(),
                     width: 0,
                     height: 0,
+                    base_weather: 0,
+                    current_weather: 0,
                     tiles: vec![],
                 });
                 self.emit(WsEvent::WorldMenu {
                     bot_id: self.bot_id,
                     sections,
+                });
+            }
+            "OnSetCurrentWeather" => {
+                let weather = vl
+                    .get(1)
+                    .map(|v| v.as_int32().max(0) as u16)
+                    .unwrap_or(0);
+                if let Ok(mut s) = self.state.write() {
+                    s.current_weather = weather;
+                }
+                self.emit(WsEvent::WeatherUpdate {
+                    bot_id: self.bot_id,
+                    weather,
+                });
+            }
+            "OnStartTrade" => {
+                let raw_partner = vl.get(1).map(|v| v.as_string()).unwrap_or_default();
+                let partner_net_id = vl
+                    .get(2)
+                    .map(|v| v.as_int32().max(0) as u32)
+                    .unwrap_or(0);
+                let partner_name = if raw_partner.is_empty() && partner_net_id > 0 {
+                    self.players
+                        .get(&partner_net_id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| format!("Player #{partner_net_id}"))
+                } else {
+                    raw_partner
+                };
+                let trade = crate::events::TradeState {
+                    partner_net_id,
+                    partner_name: partner_name.clone(),
+                    status_text: format!("Trading with {partner_name}"),
+                    ..Default::default()
+                };
+                self.active_trade = Some(trade.clone());
+                if let Ok(mut s) = self.state.write() {
+                    s.active_trade = Some(trade.clone());
+                }
+                self.log_console(format!(
+                    "[Bot] OnStartTrade partner='{}' net_id={}",
+                    partner_name, partner_net_id
+                ));
+                self.emit(WsEvent::TradeStart {
+                    bot_id: self.bot_id,
+                    partner_net_id,
+                    partner_name,
+                });
+                self.emit(WsEvent::TradeStatus {
+                    bot_id: self.bot_id,
+                    trade,
+                });
+            }
+            "OnTradeStatus" => {
+                self.handle_on_trade_status(&vl);
+            }
+            "OnForceTradeEnd" => {
+                let reason = vl
+                    .get(1)
+                    .map(|v| v.as_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "Trade closed".to_string());
+                self.active_trade = None;
+                if let Ok(mut s) = self.state.write() {
+                    s.active_trade = None;
+                }
+                self.log_console(format!("[Bot] OnForceTradeEnd: {reason}"));
+                self.emit(WsEvent::TradeEnd {
+                    bot_id: self.bot_id,
+                    reason,
                 });
             }
             _ => {}
@@ -2526,11 +2657,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let y = pkt.int_y as u32;
         let item_id = pkt.value as u16;
 
-        let width = match self.world.as_ref() {
-            Some(w) => w.tile_map.width,
-            None => return,
-        };
-        let idx = (y * width + x) as usize;
+        if self.world.is_none() {
+            return;
+        }
 
         let result = {
             let world = Arc::make_mut(self.world.as_mut().unwrap());
@@ -2558,22 +2687,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
         };
 
-        if let Some((fg, bg)) = result {
+        if result.is_some() {
             self.clear_tile_damage(x, y);
-            {
-                let mut s = self.state.write().unwrap();
-                if let Some(ti) = s.tiles.get_mut(idx) {
-                    ti.fg_item_id = fg;
-                    ti.bg_item_id = bg;
-                }
-            }
-            self.emit(WsEvent::TileUpdate {
-                bot_id: self.bot_id,
-                x,
-                y,
-                fg,
-                bg,
-            });
+            self.sync_and_emit_tile_update(x, y);
         }
         self.log_console(format!("[Bot] TileChange ({x},{y}) item={item_id}"));
     }
@@ -2582,33 +2698,18 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let x = pkt.int_x as u32;
         let y = pkt.int_y as u32;
 
-        let width = match self.world.as_ref() {
-            Some(w) => w.tile_map.width,
-            None => return,
-        };
-        let idx = (y * width + x) as usize;
+        if self.world.is_none() {
+            return;
+        }
 
         let mut cur = Cursor::new(&pkt.extra_data, "tile_update_data");
         let world = Arc::make_mut(self.world.as_mut().unwrap());
         let result = world.update_tile(x, y, &mut cur, world.version);
 
         match result {
-            Ok((fg,bg)) => {
+            Ok((_fg, _bg)) => {
                 self.clear_tile_damage(x, y);
-                {
-                    let mut s = self.state.write().unwrap();
-                    if let Some(ti) = s.tiles.get_mut(idx) {
-                        ti.fg_item_id = fg;
-                        ti.bg_item_id = bg;
-                    }
-                }
-                self.emit(WsEvent::TileUpdate {
-                    bot_id: self.bot_id,
-                    x,
-                    y,
-                    fg,
-                    bg,
-                });
+                self.sync_and_emit_tile_update(x, y);
                 self.log_console(format!("[Bot] TileUpdateData ({x},{y})"));
             }
             Err(e) => {
@@ -2620,7 +2721,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     fn on_send_tile_update_data_multiple(&mut self, pkt: &GameUpdatePacket) {
         // extra_data: u32 count, then for each: i32 x, i32 y, u16 fg, u16 bg, ...
         let data = &pkt.extra_data;
-        if data.len() < 4 {
+        if data.len() < 4 || self.world.is_none() {
             return;
         }
 
@@ -2635,25 +2736,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
             let world = Arc::make_mut(self.world.as_mut().unwrap());
             let result = world.update_tile(x, y, &mut cur, world.version);
-            let idx = (y * world.tile_map.width + x) as usize;
 
             match result {
-                Ok((fg,bg)) => {
+                Ok((_fg, _bg)) => {
                     self.clear_tile_damage(x, y);
-                    {
-                        let mut s = self.state.write().unwrap();
-                        if let Some(ti) = s.tiles.get_mut(idx) {
-                            ti.fg_item_id = fg;
-                            ti.bg_item_id = bg;
-                        }
-                    }
-                    self.emit(WsEvent::TileUpdate {
-                        bot_id: self.bot_id,
-                        x,
-                        y,
-                        fg,
-                        bg,
-                    });
+                    self.sync_and_emit_tile_update(x, y);
                     self.log_console(format!("[Bot] TileUpdateDataMultiple ({x},{y})"));
                 }
                 Err(e) => {
@@ -2668,35 +2755,21 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let x = pkt.int_x as u32;
         let y = pkt.int_y as u32;
 
-        let width = match self.world.as_ref() {
-            Some(w) => w.tile_map.width,
-            None => return,
-        };
-        let idx = (y * width + x) as usize;
+        if self.world.is_none() {
+            return;
+        }
 
         let world = Arc::make_mut(self.world.as_mut().unwrap());
         let cleared = if let Some(tile) = world.get_tile_mut(x, y) {
             tile.fg_item_id = 0;
             tile.tile_type = TileType::Basic;
-            Some(tile.bg_item_id)
+            true
         } else {
-            None
+            false
         };
-        if let Some(bg) = cleared {
+        if cleared {
             self.clear_tile_damage(x, y);
-            {
-                let mut s = self.state.write().unwrap();
-                if let Some(ti) = s.tiles.get_mut(idx) {
-                    ti.fg_item_id = 0;
-                }
-            }
-            self.emit(WsEvent::TileUpdate {
-                bot_id: self.bot_id,
-                x,
-                y,
-                fg: 0,
-                bg,
-            });
+            self.sync_and_emit_tile_update(x, y);
         }
         self.log_console(format!("[Bot] TileTreeState ({x},{y}) harvested"));
     }
@@ -3117,29 +3190,18 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         };
         let width = world.tile_map.width;
 
-        let bg = match world.get_tile_mut(x, y) {
+        let updated = match world.get_tile_mut(x, y) {
             Some(t) => {
                 t.fg_item_id = fg;
-                t.bg_item_id
+                true
             }
-            None => return,
+            None => false,
         };
-
-        {
-            let mut s = self.state.write().unwrap();
-            let idx = (y * width + x) as usize;
-            if let Some(ti) = s.tiles.get_mut(idx) {
-                ti.fg_item_id = fg;
-            }
+        if !updated {
+            return;
         }
-
-        self.emit(WsEvent::TileUpdate {
-            bot_id: self.bot_id,
-            x,
-            y,
-            fg,
-            bg,
-        });
+        let _ = width;
+        self.sync_and_emit_tile_update(x, y);
         self.log_console(format!("[Bot] SendLock tile=({x},{y}) item={fg}"));
     }
 
@@ -3147,35 +3209,41 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         if self.world.is_none() {
             return;
         }
-        let world = match self.world.as_mut() {
-            Some(w) => Arc::make_mut(w),
-            None => return,
-        };
-        let tile_map = &mut world.tile_map;
-        let idx = (pkt.int_y as u32) * tile_map.width + (pkt.int_x as u32);
+        let x = pkt.int_x as u32;
+        let y = pkt.int_y as u32;
+        let mut flags_changed = false;
+        {
+            let world = match self.world.as_mut() {
+                Some(w) => Arc::make_mut(w),
+                None => return,
+            };
+            let tile_map = &mut world.tile_map;
+            let idx = y * tile_map.width + x;
 
-        let Some(tile) = tile_map.tiles.get_mut(idx as usize) else {
-            return;
-        };
+            let Some(tile) = tile_map.tiles.get_mut(idx as usize) else {
+                return;
+            };
 
-        // TODO: find better way than this ugly thing
-        const TOGGLEABLE_ITEM_BY_PUNCH: [u32; 7] = [1226, 6172, 6398, 8348, 8350, 8806, 8808];
-        if TOGGLEABLE_ITEM_BY_PUNCH.contains(&(tile.fg_item_id as u32)) {
-            tile.flags.toggle(TileFlags::IS_ON);
-        }
-
-        let Some(item_info) = self.items_dat.find_by_id(tile.fg_item_id as u32) else {
-            return;
-        };
-
-
-        match item_info.action_type {
-            31 => { // switcheroo
+            // TODO: find better way than this ugly thing
+            const TOGGLEABLE_ITEM_BY_PUNCH: [u32; 7] = [1226, 6172, 6398, 8348, 8350, 8806, 8808];
+            if TOGGLEABLE_ITEM_BY_PUNCH.contains(&(tile.fg_item_id as u32)) {
                 tile.flags.toggle(TileFlags::IS_ON);
+                tile.flags_raw = tile.flags.bits();
+                flags_changed = true;
             }
-            _ => {}
-        }
 
+            if let Some(item_info) = self.items_dat.find_by_id(tile.fg_item_id as u32) {
+                if item_info.action_type == 31 {
+                    // switcheroo
+                    tile.flags.toggle(TileFlags::IS_ON);
+                    tile.flags_raw = tile.flags.bits();
+                    flags_changed = true;
+                }
+            }
+        }
+        if flags_changed {
+            self.sync_and_emit_tile_update(x, y);
+        }
     }
 
     /// Resets local physics at `(x, y)` and immediately probes loaded world tiles
@@ -4085,6 +4153,10 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::WrenchPlayer { net_id } => {
                 self.wrench_player(net_id);
             }
+            BotCommand::WrenchSelf => {
+                let net_id = self.local.net_id;
+                self.wrench_player(net_id);
+            }
             BotCommand::Active { x, y } => {
                 self.active_tile(x, y);
             }
@@ -4092,10 +4164,54 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 if let Some(pw) = pass {
                     self.send_text(&format!("action|input\n|text|{pw}\n"));
                 } else {
-                    let cx = (self.pos_x / 32.0) as i32;
-                    let cy = (self.pos_y / 32.0) as i32;
+                    let cx = (self.pos_x / 32.0).floor() as i32;
+                    let cy = (self.pos_y / 32.0).floor() as i32;
                     self.active_tile(cx, cy);
                 }
+            }
+            BotCommand::TradeStart { target_net_id } => {
+                if let Some(name) = self.players.get(&target_net_id).map(|p| p.name.clone()) {
+                    let clean_name = strip_gt_color_codes(&name);
+                    self.say(&format!("/trade {clean_name}"));
+                    self.log_console(format!("[Bot] Initiated /trade {clean_name} (net_id={target_net_id})"));
+                } else {
+                    self.send_text(&format!("action|trade_started\n|userid|{target_net_id}\n"));
+                }
+            }
+            BotCommand::TradeOfferItem { item_id, count } => {
+                self.send_text(&format!("action|trade_item\n|itemID|{item_id}\n|count|{count}\n"));
+                self.log_console(format!("[Bot] TradeOfferItem item_id={item_id} count={count}"));
+            }
+            BotCommand::TradeAccept { locked } => {
+                let status = if locked { 1 } else { 0 };
+                self.send_text(&format!("action|trade_accept\n|status|{status}\n"));
+                if let Some(t) = self.active_trade.as_mut() {
+                    t.self_locked = locked;
+                    t.self_accepted = locked;
+                    let snapshot = t.clone();
+                    if let Ok(mut s) = self.state.write() {
+                        s.active_trade = Some(snapshot.clone());
+                    }
+                    self.emit(WsEvent::TradeStatus {
+                        bot_id: self.bot_id,
+                        trade: snapshot,
+                    });
+                }
+            }
+            BotCommand::TradeConfirm => {
+                self.send_text("action|trade_accept\n|status|1\n");
+                self.log_console("[Bot] TradeConfirm sent".to_string());
+            }
+            BotCommand::TradeCancel => {
+                self.send_text("action|trade_cancel\n");
+                self.active_trade = None;
+                if let Ok(mut s) = self.state.write() {
+                    s.active_trade = None;
+                }
+                self.emit(WsEvent::TradeEnd {
+                    bot_id: self.bot_id,
+                    reason: "Cancelled by user".to_string(),
+                });
             }
             BotCommand::Wear { item_id } => {
                 self.wear(item_id);
@@ -4263,13 +4379,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::AcceptAccess => self.accept_access(),
 
             BotCommand::DialogReturn { dialog_name, button, fields } => {
-
-                let mut pkt_str = format!("action|dialog_return\ndialog_name|{dialog_name}\nbuttonClicked|{button}\n");
-
+                let mut pkt_str = format!("action|dialog_return\ndialog_name|{dialog_name}\n");
+                if !button.is_empty() {
+                    pkt_str.push_str(&format!("buttonClicked|{button}\n"));
+                }
                 for (k, v) in fields {
-
                     pkt_str.push_str(&format!("{k}|{v}\n"));
-
                 }
 
                 self.send_text(&pkt_str);
@@ -4281,7 +4396,6 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 self.emit(WsEvent::DialogClose { bot_id: self.bot_id });
 
                 self.log_console(format!("[Bot] DialogReturn sent for '{dialog_name}' button='{button}' — actions unfreezed"));
-
             }
             BotCommand::DismissDialog => {
                 self.captcha_active = false;
@@ -4333,7 +4447,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             BotCommand::HoldAction { active, x, y, item } => {
                 if active {
                     let target = HoldTarget { x, y, item };
-                    self.interactive.hold = Some(target.clone());
+                    // Wrench (32) is strictly a single-tap action, never a repeating hold loop.
+                    self.interactive.hold = if item == 32 { None } else { Some(target.clone()) };
                     self.interactive.pending_tap = Some(target);
                     if !self.interactive.enabled {
                         self.interactive.enabled = true;
@@ -4452,6 +4567,82 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         self.send_game_packet(&pkt, true);
     }
 
+    fn sync_state_players(&self) {
+        if let Ok(mut s) = self.state.write() {
+            s.players = self
+                .players
+                .values()
+                .map(|p| PlayerInfo {
+                    net_id: p.net_id,
+                    name: p.name.clone(),
+                    pos_x: p.position.0 / 32.0,
+                    pos_y: p.position.1 / 32.0,
+                    country: p.country.clone(),
+                    clothes: p.equipped_clothes,
+                    m_state: p.m_state,
+                    sm_state: p.sm_state,
+                })
+                .collect();
+        }
+    }
+
+    fn sync_and_emit_tile_update(&mut self, x: u32, y: u32) {
+        let Some(world) = self.world.as_ref() else {
+            return;
+        };
+        let Some(tile) = world.get_tile(x, y) else {
+            return;
+        };
+        let width = world.tile_map.width;
+        let idx = (y * width + x) as usize;
+        let fg = tile.fg_item_id;
+        let bg = tile.bg_item_id;
+        let flags = tile.flags_raw;
+        let tile_type = tile.tile_type.clone();
+        if let Ok(mut s) = self.state.write() {
+            if let Some(ti) = s.tiles.get_mut(idx) {
+                ti.fg_item_id = fg;
+                ti.bg_item_id = bg;
+                ti.flags = flags;
+                ti.tile_type = tile_type.clone();
+            }
+        }
+        self.emit(WsEvent::TileUpdate {
+            bot_id: self.bot_id,
+            x,
+            y,
+            fg,
+            bg,
+            flags,
+            tile_type,
+        });
+    }
+
+    fn handle_on_trade_status(&mut self, vl: &VariantList) {
+        let mut raw_parts = Vec::new();
+        for i in 1..vl.len() {
+            if let Some(v) = vl.get(i) {
+                raw_parts.push(format!("[{i}]={}", v.as_string()));
+            }
+        }
+        let raw_joined = raw_parts.join(" ");
+        self.log_console(format!("[Bot] OnTradeStatus {raw_joined}"));
+
+        let mut trade = self.active_trade.take().unwrap_or_default();
+        apply_trade_status_variants(&mut trade, self.local.net_id, vl);
+        if !raw_joined.is_empty() {
+            trade.status_text = raw_joined;
+        }
+        self.active_trade = Some(trade.clone());
+        if let Ok(mut s) = self.state.write() {
+            s.active_trade = Some(trade.clone());
+        }
+        self.emit(WsEvent::TradeStatus {
+            bot_id: self.bot_id,
+            trade,
+        });
+    }
+
     pub fn active_tile(&mut self, tile_x: i32, tile_y: i32) {
         let pkt = GameUpdatePacket {
             packet_type: GamePacketType::TileActivateRequest,
@@ -4465,9 +4656,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
     }
 
     pub fn wrench_at(&mut self, tile_x: i32, tile_y: i32) {
-        let base_x = (self.pos_x / 32.0).floor() as i32;
-        let base_y = (self.pos_y / 32.0).floor() as i32;
-        self.wrench(tile_x - base_x, tile_y - base_y);
+        self.send_tile_action_at(tile_x, tile_y, 32, false);
     }
 
     pub fn set_direction(&mut self, facing_left: bool) {
@@ -4897,86 +5086,402 @@ pub fn classify_dialog(raw: &str, dialog: &crate::events::WsDialog) -> DialogCla
     }
 }
 
+/// Strip Growtopia color codes (backtick + 1 char) from player display names.
+fn strip_gt_color_codes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '`' {
+            let _ = chars.next();
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+#[derive(Default)]
+struct ParsedTradeSide {
+    slots: Vec<crate::events::TradeSlot>,
+    has_slot_update: bool,
+    clear_slots: bool,
+    locked: Option<bool>,
+    accepted: Option<bool>,
+}
+
+fn parse_trade_side_payload(raw: &str) -> ParsedTradeSide {
+    let mut parsed = ParsedTradeSide::default();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('|').collect();
+        match parts[0] {
+            "clear_slot" | "reset" => {
+                parsed.slots.clear();
+                parsed.has_slot_update = true;
+                parsed.clear_slots = true;
+            }
+            "add_slot" => {
+                if let (Some(id_s), Some(cnt_s)) = (parts.get(1), parts.get(2)) {
+                    if let (Ok(item_id), Ok(count)) = (id_s.trim().parse::<u32>(), cnt_s.trim().parse::<u32>()) {
+                        parsed.has_slot_update = true;
+                        if item_id > 0 && count > 0 {
+                            parsed.slots.push(crate::events::TradeSlot { item_id, count });
+                        }
+                    }
+                }
+            }
+            "locked" => {
+                if let Some(v) = parts.get(1) {
+                    parsed.locked = Some(v.trim() == "1" || v.trim().eq_ignore_ascii_case("true"));
+                }
+            }
+            "accepted" => {
+                if let Some(v) = parts.get(1) {
+                    parsed.accepted = Some(v.trim() == "1" || v.trim().eq_ignore_ascii_case("true"));
+                }
+            }
+            _ => {}
+        }
+    }
+    parsed
+}
+
+fn apply_parsed_trade_side(
+    slots: &mut Vec<crate::events::TradeSlot>,
+    locked: &mut bool,
+    accepted: &mut bool,
+    side: ParsedTradeSide,
+) {
+    if side.has_slot_update {
+        if side.clear_slots || !side.slots.is_empty() {
+            *slots = side.slots;
+        }
+    }
+    if let Some(v) = side.locked {
+        *locked = v;
+    }
+    if let Some(v) = side.accepted {
+        *accepted = v;
+    }
+}
+
+pub fn apply_trade_status_variants(
+    trade: &mut crate::events::TradeState,
+    local_net_id: u32,
+    vl: &VariantList,
+) {
+    let v1_net_id = vl.get(1).map(|v| v.as_int32()).unwrap_or(-1);
+    let s2 = vl.get(2).map(|v| v.as_string()).unwrap_or_default();
+    let s3 = vl.get(3).map(|v| v.as_string()).unwrap_or_default();
+    let s4 = vl.get(4).map(|v| v.as_string()).unwrap_or_default();
+
+    let p2 = parse_trade_side_payload(&s2);
+    let p3 = parse_trade_side_payload(&s3);
+    let p4 = parse_trade_side_payload(&s4);
+
+    if p2.has_slot_update && p3.has_slot_update {
+        apply_parsed_trade_side(
+            &mut trade.self_slots,
+            &mut trade.self_locked,
+            &mut trade.self_accepted,
+            p2,
+        );
+        apply_parsed_trade_side(
+            &mut trade.partner_slots,
+            &mut trade.partner_locked,
+            &mut trade.partner_accepted,
+            p3,
+        );
+    } else {
+        let is_self = local_net_id != 0 && v1_net_id == local_net_id as i32;
+        for side in [p2, p3, p4] {
+            if is_self {
+                apply_parsed_trade_side(
+                    &mut trade.self_slots,
+                    &mut trade.self_locked,
+                    &mut trade.self_accepted,
+                    side,
+                );
+            } else {
+                apply_parsed_trade_side(
+                    &mut trade.partner_slots,
+                    &mut trade.partner_locked,
+                    &mut trade.partner_accepted,
+                    side,
+                );
+            }
+        }
+    }
+}
+
 pub fn parse_quick_dialog(raw: &str) -> crate::events::WsDialog {
     let mut dialog = crate::events::WsDialog {
         raw: raw.to_string(),
-        confirm_label: "OK".to_string(),
-        cancel_label: "Cancel".to_string(),
         ..Default::default()
     };
+    let mut saw_end_dialog = false;
 
     for line in raw.lines() {
-        let parts: Vec<&str> = line.split('|').collect();
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('|').collect();
         if parts.is_empty() {
             continue;
         }
 
         match parts[0] {
-            "add_label_icon" => {
-                if let Some(t) = parts.get(2) {
-                    if !t.is_empty() {
-                        dialog.title = t.to_string();
-                    }
+            "add_label" => {
+                let size = parts.get(1).copied().unwrap_or("small").to_string();
+                let text = parts.get(2).copied().unwrap_or("").to_string();
+                let align = parts.get(3).copied().unwrap_or("left").to_string();
+                if dialog.title.is_empty() && !text.is_empty() {
+                    dialog.title = text.clone();
                 }
+                if !text.is_empty() {
+                    dialog.elements.push(crate::events::DialogElement::Label {
+                        text,
+                        size,
+                        item_id: None,
+                        align,
+                    });
+                }
+            }
+            "add_label_with_icon" | "add_label_with_icon_big" => {
+                let mut size = parts.get(1).copied().unwrap_or("small").to_string();
+                if parts[0] == "add_label_with_icon_big" {
+                    size = "big".to_string();
+                }
+                let text = parts.get(2).copied().unwrap_or("").to_string();
+                let align = parts.get(3).copied().unwrap_or("left").to_string();
+                let item_id = parts.get(4).and_then(|s| s.trim().parse::<u32>().ok()).filter(|&id| id > 0);
+                if (dialog.title.is_empty() || size == "big") && !text.is_empty() {
+                    dialog.title = text.clone();
+                }
+                dialog.elements.push(crate::events::DialogElement::Label {
+                    text,
+                    size,
+                    item_id,
+                    align,
+                });
+            }
+            "add_label_icon" => {
+                let size = parts.get(1).copied().unwrap_or("big").to_string();
+                let text = parts.get(2).copied().unwrap_or("").to_string();
+                let item_id = parts.get(3).and_then(|s| s.trim().parse::<u32>().ok()).filter(|&id| id > 0);
+                if !text.is_empty() {
+                    dialog.title = text.clone();
+                }
+                dialog.elements.push(crate::events::DialogElement::Label {
+                    text,
+                    size,
+                    item_id,
+                    align: "left".to_string(),
+                });
             }
             "add_textbox" | "add_smalltext" => {
                 if let Some(txt) = parts.get(1) {
                     let cleaned = txt.trim();
                     if !cleaned.is_empty() {
-                        dialog.body_text.push(cleaned.to_string());
+                        let text = cleaned.to_string();
+                        dialog.body_text.push(text.clone());
+                        dialog.elements.push(crate::events::DialogElement::Textbox {
+                            text,
+                            small: parts[0] == "add_smalltext",
+                        });
                     }
                 }
             }
-            "add_text_input" => {
-                let name = parts.get(1).unwrap_or(&"").to_string();
-                let label = parts.get(2).unwrap_or(&"").to_string();
-                let default_val = parts.get(3).unwrap_or(&"").to_string();
-                let max_len = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+            "add_checkbox" => {
+                let name = parts.get(1).copied().unwrap_or("").to_string();
+                let label = parts.get(2).copied().unwrap_or("").to_string();
+                let checked = parts
+                    .get(3)
+                    .map(|s| {
+                        let v = s.trim();
+                        v == "1" || v.eq_ignore_ascii_case("true")
+                    })
+                    .unwrap_or(false);
+                if !name.is_empty() {
+                    dialog.checkboxes.push(crate::events::DialogCheckbox {
+                        name: name.clone(),
+                        label: label.clone(),
+                        checked,
+                    });
+                    dialog.elements.push(crate::events::DialogElement::Checkbox {
+                        name,
+                        label,
+                        checked,
+                    });
+                }
+            }
+            "add_text_input" | "add_text_input_password" => {
+                let name = parts.get(1).copied().unwrap_or("").to_string();
+                let label = parts.get(2).copied().unwrap_or("").to_string();
+                let default_val = parts.get(3).copied().unwrap_or("").to_string();
+                let max_len = parts.get(4).and_then(|s| s.trim().parse().ok()).unwrap_or(30);
+                let is_password = parts[0] == "add_text_input_password";
                 if !name.is_empty() {
                     dialog.inputs.push(crate::events::DialogField {
+                        name: name.clone(),
+                        label: label.clone(),
+                        default_val: default_val.clone(),
+                        max_len,
+                    });
+                    dialog.elements.push(crate::events::DialogElement::TextInput {
                         name,
                         label,
                         default_val,
                         max_len,
+                        is_password,
+                    });
+                }
+            }
+            "add_button_with_icon" => {
+                let name = parts.get(1).copied().unwrap_or("").to_string();
+                let label = parts.get(2).copied().unwrap_or("").to_string();
+                let frame = parts.get(3).copied().unwrap_or("").to_string();
+                let item_id = parts.get(4).and_then(|s| s.trim().parse::<u32>().ok()).filter(|&id| id > 0);
+                if !name.is_empty() {
+                    dialog.buttons.push(crate::events::DialogButton {
+                        name: name.clone(),
+                        label: label.clone(),
+                        url: None,
+                    });
+                    dialog.elements.push(crate::events::DialogElement::Button {
+                        name,
+                        label,
+                        url: None,
+                        item_id,
+                        frame: if frame.is_empty() { None } else { Some(frame) },
+                        flags: None,
+                    });
+                }
+            }
+            "add_item_picker" => {
+                let name = parts.get(1).copied().unwrap_or("").to_string();
+                let label = parts.get(2).copied().unwrap_or("Choose an item").to_string();
+                let title_or_id = parts.get(3).copied().unwrap_or("");
+                let parsed_id = title_or_id.trim().parse::<u32>().unwrap_or(0);
+                let title = if parsed_id > 0 || title_or_id.trim().is_empty() {
+                    label.clone()
+                } else {
+                    title_or_id.to_string()
+                };
+                let default_item_id = if parsed_id > 0 {
+                    parsed_id
+                } else {
+                    parts.get(4).and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(0)
+                };
+                if !name.is_empty() {
+                    dialog.elements.push(crate::events::DialogElement::ItemPicker {
+                        name,
+                        label,
+                        title,
+                        default_item_id,
                     });
                 }
             }
             "add_url_button" => {
-                let name = parts.get(1).unwrap_or(&"").to_string();
-                let label = parts.get(2).unwrap_or(&"").to_string();
-                let url = parts.get(3).unwrap_or(&"").to_string();
+                let name = parts.get(1).copied().unwrap_or("").to_string();
+                let label = parts.get(2).copied().unwrap_or("").to_string();
+                // Growtopia sends: add_url_button|<name>|<label>|<flags>|<url>|<tooltip>| or 4-part form.
+                let p3 = parts.get(3).copied().unwrap_or("");
+                let p4 = parts.get(4).copied().unwrap_or("");
+                let url = if p3.starts_with("http://") || p3.starts_with("https://") {
+                    p3.to_string()
+                } else if p4.starts_with("http://") || p4.starts_with("https://") {
+                    p4.to_string()
+                } else if !p3.is_empty() && p3 != "NOFLAGS" {
+                    p3.to_string()
+                } else {
+                    p4.to_string()
+                };
+                let url_opt = if url.is_empty() { None } else { Some(url) };
                 dialog.buttons.push(crate::events::DialogButton {
+                    name: name.clone(),
+                    label: label.clone(),
+                    url: url_opt.clone(),
+                });
+                dialog.elements.push(crate::events::DialogElement::Button {
                     name,
                     label,
-                    url: if url.is_empty() { None } else { Some(url) },
+                    url: url_opt,
+                    item_id: None,
+                    frame: None,
+                    flags: None,
                 });
             }
             "add_button" => {
-                let name = parts.get(1).unwrap_or(&"").to_string();
-                let label = parts.get(2).unwrap_or(&"").to_string();
+                let name = parts.get(1).copied().unwrap_or("").to_string();
+                let label = parts.get(2).copied().unwrap_or("").to_string();
+                let flags = parts.get(3).copied().unwrap_or("").to_string();
                 if !name.is_empty() {
                     dialog.buttons.push(crate::events::DialogButton {
+                        name: name.clone(),
+                        label: label.clone(),
+                        url: None,
+                    });
+                    dialog.elements.push(crate::events::DialogElement::Button {
                         name,
                         label,
                         url: None,
+                        item_id: None,
+                        frame: None,
+                        flags: if flags.is_empty() { None } else { Some(flags) },
                     });
                 }
             }
+            "add_player_info" => {
+                let player_name = parts.get(1).copied().unwrap_or("").to_string();
+                let level = parts.get(2).copied().unwrap_or("").to_string();
+                let xp = parts.get(3).copied().unwrap_or("").to_string();
+                let raw_parts = parts.iter().skip(1).map(|s| (*s).to_string()).collect();
+                dialog.elements.push(crate::events::DialogElement::PlayerInfo {
+                    player_name,
+                    level,
+                    xp,
+                    raw_parts,
+                });
+            }
+            "add_spacer" => {
+                let size = parts.get(1).copied().unwrap_or("small").to_string();
+                dialog.elements.push(crate::events::DialogElement::Spacer { size });
+            }
+            "add_quick_exit" => {
+                dialog.quick_exit = true;
+            }
+            "embed_data" => {
+                let key = parts.get(1).copied().unwrap_or("").to_string();
+                let value = parts.get(2).copied().unwrap_or("").to_string();
+                if !key.is_empty() {
+                    dialog.embed_data.push(crate::events::DialogEmbed { key, value });
+                }
+            }
             "end_dialog" => {
+                saw_end_dialog = true;
                 if let Some(name) = parts.get(1) {
                     dialog.dialog_name = name.to_string();
                 }
-                if let Some(confirm) = parts.get(2) {
-                    if !confirm.is_empty() {
-                        dialog.confirm_label = confirm.to_string();
-                    }
-                }
-                if let Some(cancel) = parts.get(3) {
+                // Native Growtopia order: end_dialog|<name>|<cancel_label>|<ok_label>|
+                if let Some(cancel) = parts.get(2) {
                     dialog.cancel_label = cancel.to_string();
+                }
+                if let Some(confirm) = parts.get(3) {
+                    dialog.confirm_label = confirm.to_string();
                 }
             }
             _ => {}
         }
+    }
+
+    if !saw_end_dialog {
+        dialog.confirm_label = "OK".to_string();
+        dialog.cancel_label = "Cancel".to_string();
     }
 
     if dialog.title.is_empty() {
@@ -5263,6 +5768,7 @@ mod tests {
             script_stop: Arc::new(AtomicBool::new(false)),
             captcha_active: false,
             active_dialog: None,
+            active_trade: None,
             reconnect_after: None,
             pending_2fa: false,
             pending_relogon: false,
@@ -5362,19 +5868,52 @@ mod tests {
             bot.inventory.add_item(2, 5);
             bot.inventory.add_item(14, 5);
 
-            // Placing Dirt onto non-empty Bedrock tile (dx, dy+1) must fail without consuming Dirt
-            assert!(!bot.send_tile_action_at(dx, dy + 1, 2, false));
+            // Pick a non-empty foreground tile and an air tile within reach of (dx + 1, dy)
+            // so the test stays independent of whatever custom world.dat is on disk.
+            let occupied = bot
+                .world
+                .as_ref()
+                .unwrap()
+                .tile_map
+                .tiles
+                .iter()
+                .find(|t| {
+                    t.fg_item_id != 0
+                        && (t.x as i32 - (dx + 1)).abs() <= 2
+                        && (t.y as i32 - dy).abs() <= 2
+                })
+                .expect("expected at least one non-empty tile near door");
+            let (ox, oy) = (occupied.x as i32, occupied.y as i32);
+
+            let air = bot
+                .world
+                .as_ref()
+                .unwrap()
+                .tile_map
+                .tiles
+                .iter()
+                .find(|t| {
+                    t.fg_item_id == 0
+                        && t.bg_item_id == 0
+                        && (t.x as i32 - (dx + 1)).abs() <= 2
+                        && (t.y as i32 - dy).abs() <= 2
+                })
+                .expect("expected at least one air tile near door");
+            let (ax, ay) = (air.x as i32, air.y as i32);
+
+            // Placing Dirt onto a non-empty foreground tile must fail without consuming Dirt
+            assert!(!bot.send_tile_action_at(ox, oy, 2, false));
             assert_eq!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0), 5);
 
-            // Placing Dirt onto air tile (dx + 2, dy) succeeds & decrements to 4
-            assert!(bot.send_tile_action_at(dx + 2, dy, 2, false));
+            // Placing Dirt onto air tile (ax, ay) succeeds & decrements to 4
+            assert!(bot.send_tile_action_at(ax, ay, 2, false));
             assert_eq!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0), 4);
 
             // Background item (14, Cave Background) in on_tile_change updates bg_item_id, NOT fg_item_id
             let mut pkt = GameUpdatePacket {
                 packet_type: GamePacketType::TileChangeRequest,
-                int_x: dx + 2,
-                int_y: dy - 1,
+                int_x: ax,
+                int_y: ay,
                 value: 14,
                 ..Default::default()
             };
@@ -5383,20 +5922,20 @@ mod tests {
                 .world
                 .as_ref()
                 .unwrap()
-                .get_tile((dx + 2) as u32, (dy - 1) as u32)
+                .get_tile(ax as u32, ay as u32)
                 .unwrap();
             assert_eq!(updated.bg_item_id, 14);
             assert_eq!(updated.fg_item_id, 0);
 
             // Foreground item (2, Dirt) in on_tile_change updates fg_item_id
             pkt.value = 2;
-            pkt.int_y = dy;
+            pkt.int_y = ay;
             bot.on_tile_change(&pkt);
             let fg_updated = bot
                 .world
                 .as_ref()
                 .unwrap()
-                .get_tile((dx + 2) as u32, dy as u32)
+                .get_tile(ax as u32, ay as u32)
                 .unwrap();
             assert_eq!(fg_updated.fg_item_id, 2);
 
@@ -5404,7 +5943,7 @@ mod tests {
             let mut saw_bg_event = false;
             while let Ok(ev) = ws_rx.try_recv() {
                 if let WsEvent::TileUpdate { x, y, fg, bg, .. } = ev {
-                    if x == (dx + 2) as u32 && y == (dy - 1) as u32 && fg == 0 && bg == 14 {
+                    if x == ax as u32 && y == ay as u32 && fg == 0 && bg == 14 {
                         saw_bg_event = true;
                     }
                 }
@@ -5564,5 +6103,73 @@ mod tests {
             }
             assert_eq!(damages, vec![(8, 18), (16, 18), (18, 18)]);
         }
+    }
+
+    #[test]
+    fn test_parse_quick_dialog_native_tags_and_end_dialog_order() {
+        let raw = "set_default_color|`o\n\
+add_label_with_icon|big|`wEdit Door``|left|12|\n\
+embed_data|tilex|14|\n\
+embed_data|tiley|27|\n\
+add_text_input|door_name|Label|Home|20|\n\
+add_checkbox|checkbox_public|Open to public|1|\n\
+add_button_with_icon|vend_btn|`2Open Shop|staticYellowFrame|2978|\n\
+add_item_picker|item_pick|Pick item|Choose Item|242|\n\
+add_spacer|small|\n\
+add_quick_exit|\n\
+end_dialog|door_edit|Cancel|OK|";
+
+        let d = parse_quick_dialog(raw);
+        assert_eq!(d.dialog_name, "door_edit");
+        assert_eq!(d.cancel_label, "Cancel");
+        assert_eq!(d.confirm_label, "OK");
+        assert!(d.quick_exit);
+        assert_eq!(d.title, "`wEdit Door``");
+        assert_eq!(d.embed_data.len(), 2);
+        assert_eq!(d.embed_data[0].key, "tilex");
+        assert_eq!(d.embed_data[0].value, "14");
+        assert_eq!(d.checkboxes.len(), 1);
+        assert_eq!(d.checkboxes[0].name, "checkbox_public");
+        assert_eq!(d.checkboxes[0].label, "Open to public");
+        assert!(d.checkboxes[0].checked);
+        assert_eq!(d.inputs.len(), 1);
+        assert_eq!(d.inputs[0].default_val, "Home");
+        assert_eq!(d.buttons.len(), 1);
+        assert_eq!(d.buttons[0].name, "vend_btn");
+        assert!(d.elements.iter().any(|e| matches!(
+            e,
+            crate::events::DialogElement::ItemPicker { name, default_item_id, .. }
+                if name == "item_pick" && *default_item_id == 242
+        )));
+    }
+
+    #[test]
+    fn test_parse_play_sfx_and_trade_status_variants() {
+        assert_eq!(
+            parse_play_sfx("delayMS|150\naction|play_sfx\nfile|audio/door_open.wav\n"),
+            Some(("audio/door_open.wav".to_string(), 150))
+        );
+        assert_eq!(parse_play_sfx("action|log\nmsg|hello"), None);
+
+        let mut trade = crate::events::TradeState {
+            partner_net_id: 99,
+            partner_name: "Partner".into(),
+            ..Default::default()
+        };
+        let vl = VariantList::from_variants(vec![
+            crate::protocol::variant::Variant::String("OnTradeStatus".into()),
+            crate::protocol::variant::Variant::Signed(99),
+            crate::protocol::variant::Variant::String(String::new()),
+            crate::protocol::variant::Variant::String("add_slot|242|10\nadd_slot|1796|1".into()),
+            crate::protocol::variant::Variant::String("locked|1\naccepted|1".into()),
+        ]);
+
+        apply_trade_status_variants(&mut trade, 10, &vl);
+        assert_eq!(trade.partner_slots.len(), 2);
+        assert_eq!(trade.partner_slots[0].item_id, 242);
+        assert_eq!(trade.partner_slots[0].count, 10);
+        assert_eq!(trade.partner_slots[1].item_id, 1796);
+        assert!(trade.partner_locked);
+        assert!(trade.partner_accepted);
     }
 }

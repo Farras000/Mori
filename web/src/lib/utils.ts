@@ -115,24 +115,26 @@ export class ExtendBuffer {
 
 const TEXTURE_ATLAS_SIZE = 1024;
 const TILE_SIZE = 32;
-const TILES_PER_ROW = TEXTURE_ATLAS_SIZE / TILE_SIZE; // 32 tiles
+
+function makeBlankTileDataUrl(): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = TILE_SIZE;
+  canvas.height = TILE_SIZE;
+  return canvas.toDataURL("image/png");
+}
 
 /**
- * Crops a specific tile from the texture atlas and returns it as a data URL
- * @param imageSrc - The source image (can be a URL or data URL)
- * @param tileX - X coordinate in the tile grid (0-31)
- * @param tileY - Y coordinate in the tile grid (0-31)
- * @returns Promise<string> - Data URL of the cropped tile
+ * Crops a specific tile from a texture atlas and returns it as a PNG data URL.
+ * Validates against actual atlas image dimensions (handles 512x512, 1024x1024, etc.)
+ * and returns a transparent 32x32 fallback if coordinates exceed atlas bounds.
  */
 export async function cropTileFromAtlas(
   imageSrc: string,
   tileX: number,
   tileY: number,
 ): Promise<string> {
-  if (tileX < 0 || tileX >= TILES_PER_ROW || tileY < 0 || tileY >= TILES_PER_ROW) {
-    throw new Error(
-      `Tile coordinates out of bounds: (${tileX}, ${tileY}). Valid range: 0-${TILES_PER_ROW - 1}`,
-    );
+  if (tileX < 0 || tileY < 0) {
+    return makeBlankTileDataUrl();
   }
 
   return new Promise((resolve, reject) => {
@@ -148,6 +150,15 @@ export async function cropTileFromAtlas(
 
         if (!ctx) {
           reject(new Error("Could not get canvas context"));
+          return;
+        }
+
+        const atlasW = img.naturalWidth || img.width || TEXTURE_ATLAS_SIZE;
+        const atlasH = img.naturalHeight || img.height || TEXTURE_ATLAS_SIZE;
+        const cols = Math.max(1, Math.floor(atlasW / TILE_SIZE));
+        const rows = Math.max(1, Math.floor(atlasH / TILE_SIZE));
+        if (tileX >= cols || tileY >= rows) {
+          resolve(canvas.toDataURL("image/png"));
           return;
         }
 

@@ -18,9 +18,8 @@ export default defineConfig({
   server: {
     proxy: {
       "/growtopia-cdn": {
-        target: "https://growserver-cache.netlify.app",
+        target: "http://127.0.0.1:3000",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/growtopia-cdn/, ""),
       },
     },
   },

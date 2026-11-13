@@ -11,26 +11,45 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-export function parseGTColors(text: string): string {
-  let html = ''
-  let open = false
+export interface GtColorSegment {
+  text: string
+  color?: string
+}
+
+/** Tokenize Growtopia `` `X `` color-coded text into plain segments with optional hex colors. */
+export function tokenizeGTColors(text: string): GtColorSegment[] {
+  if (!text) return []
+  const segments: GtColorSegment[] = []
+  let activeColor: string | undefined
+  let buf = ''
   let i = 0
+
+  const flush = () => {
+    if (buf) {
+      segments.push(activeColor ? { text: buf, color: activeColor } : { text: buf })
+      buf = ''
+    }
+  }
+
   while (i < text.length) {
     if (text[i] === '`' && i + 1 < text.length) {
+      flush()
       const code = text[i + 1]
-      if (open) { html += '</span>'; open = false }
-      if (code !== '`') {
-        const color = GT_COLORS[code]
-        if (color) { html += `<span style="color:${color}">`; open = true }
-      }
+      activeColor = code === '`' ? undefined : GT_COLORS[code]
       i += 2
     } else {
-      html += escapeHtml(text[i])
+      buf += text[i]
       i++
     }
   }
-  if (open) html += '</span>'
-  return html
+  flush()
+  return segments
+}
+
+export function parseGTColors(text: string): string {
+  return tokenizeGTColors(text)
+    .map((seg) => (seg.color ? `<span style="color:${seg.color}">${escapeHtml(seg.text)}</span>` : escapeHtml(seg.text)))
+    .join('')
 }
 
 export function stripGTColors(text: string): string {

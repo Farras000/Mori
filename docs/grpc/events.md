@@ -52,6 +52,8 @@ first, then subscribe.
 | `auto_collect` | `AutoCollectEvent{enabled}` | `BotAutoCollect` | |
 | `delays` | `DelaysEvent{delays}` | `BotDelays` | Always the full object |
 
+Additional gameplay `WsEvent` variants (`PlayerClothes`, `BotClothes`, `WeatherUpdate`, `TalkBubble`, `PlaySfx`, `TradeStart`, `TradeStatus`, `TradeEnd`, `BotPhysicsMods`, `TileDamage` in `src/events.rs`) are currently mapped into `ConsoleEvent` summaries by `event_to_proto()` (`src/grpc/service.rs:320`) so `SubscribeEvents` streams keep delivering live notifications without breaking existing protobuf clients.
+
 `TileEvent{bot_id,fg,bg,flags,tile_type}` is the `WsTile` projection
 (`src/grpc/service.rs:274`); `tile_type` is the `Debug` string.
 

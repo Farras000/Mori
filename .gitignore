@@ -12,6 +12,7 @@ __pycache__/
 skills-lock.json
 data/
 logs/
+cache/
 *.log
 botting/.stop/
 gt_extracted/

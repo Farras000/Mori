@@ -48,3 +48,25 @@ Mori kini membaca item yang sedang dipakai bot across 9 slot pakaian serta statu
 1. Jalankan Mori hasil build terbaru, buka dashboard di browser, lalu pilih **Go to Game** / **Play in Game** ke halaman `/game`.
 2. Kontrol dasar tetap sama: `A`/`D` atau Panah Kiri/Kanan untuk berjalan, `W`/`Space`/Panah Atas untuk lompat (tahan lebih lama untuk lompat lebih tinggi), `S`/Panah Bawah turun dari platform, `B` buka Backpack, `Esc` buka Menu Game (termasuk opsi **Extended Reach** jika ingin memperluas jangkauan manual di luar item).
 3. Ganti outfit/item (seperti Wings, Pickaxe, item Speedy, atau item Range) dari Backpack atau client — daftar efek aktif akan otomatis diperbarui di HUD.
+
+---
+
+## Update Lanjutan: Trade, Prioritas Wrench, Speech Bubble, Aset Dunia, & Perbaikan Dialog
+
+Pembaruan lanjutan pada mode `/game` melengkapi interaksi native Growtopia agar sedekat mungkin dengan client asli:
+
+* **Sistem Trade Player-to-Player (`TradeModal`):**
+  * Mulai trade lewat chat `/trade <nama>`, wrench pemain lain, atau lewat daftar **Players** di header.
+  * Menampilkan kolom item kedua pihak, status lock/accept, peringatan otomatis jika partner mengubah isi slot setelah terkunci, pemilih jumlah item dari Backpack, konfirmasi akhir, dan pembatalan trade.
+* **Prioritas Wrench & Masuk Pintu Seperti Asli:**
+  * Tile interaktif yang dipijak/diklik (Vending Machine, Pintu/Portal, Lock, Sign, Display Block, Shelf, Pohon) sekarang diprioritaskan saat klik Wrench/Klik Kanan agar tidak tertimpa aksi wrench diri sendiri.
+  * Tahan `Shift + Klik` (atau tekan `R`) untuk wrench profil diri sendiri kapan saja, tahan `Alt + Klik` untuk mem-wrench tile di balik pemain lain, dan tekan `F` / Double-Click pintu (atau tombol HUD `Enter [F]`) untuk masuk pintu/portal.
+  * Dialog pintu kini mendukung checkbox **Open to public**, pengaturan label/ID, dan opsi delete; Vending Machine/Lock/Sign mendukung elemen dialog native lengkap (`checkbox`, `add_item_picker`, `embed_data`).
+* **Speech Bubble, Pakaian, Cuaca, & Audio (SFX):**
+  * Balon dialog chat (`OnTalkBubble`) muncul menumpuk rapi di atas kepala karakter dan memudar otomatis.
+  * Karakter menampilkan 9 slot pakaian (`OnSetClothing` & inventori), world menampilkan langit cuaca dinamis (Sunny, Sunset, Night, Storm, Desert, Snow, Space), serta memutar efek suara game dengan tombol Mute dan penyimpanan cache lokal (`cache/growtopia`) agar aset tidak terus diunduh ulang.
+* **Perbaikan Aset Item & Rendering Tile:**
+  * Pohon/benih (`Seed` dengan `action_type=19`) dirender dengan komposisi batang + daun + indikator buah matang (bukan lagi gambar tanah/cave bg biasa), ditambah overlay item & harga pada Vending Machine/Display Block/Shelf, lencana pintu publik, serta tint cat, api, dan air pada tile.
+* **Perbaikan Tampilan & Duplikasi Dialog:**
+  * Kode warna Growtopia di dalam popup dialog kini dirender langsung sebagai teks berwarna rapi (tidak lagi memunculkan tag HTML `<span ...>` mentah).
+  * Judul dialog ganda di dalam isi popup (`Edit Sign`, `Edit House Entrance`) serta tombol tutup `X` rangkap sudah dirapikan, dan tap wrench dikirim atomik dengan debounce agar modal tidak muncul berulang kali.

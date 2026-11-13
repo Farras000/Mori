@@ -230,7 +230,7 @@ export class TileManager {
         break;
     }
 
-    if ((tile.flags & TILE_FLAGS.IS_ON) !== 0) {
+    if (!isBackground && (tile.flags & TILE_FLAGS.IS_ON) !== 0) {
       if (coordX + 1 < 32) {
         coordX += 1;
       }

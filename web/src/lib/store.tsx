@@ -1,8 +1,19 @@
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { moriWs, type TileData } from './ws'
-import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo, WsDialog, WorldMenuSection, CharacterModifiers } from './api'
+import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo, WsDialog, WorldMenuSection, CharacterModifiers, TradeState } from './api'
 import { api } from './api'
+
+export interface TalkBubbleEntry {
+  id: number
+  bot_id: number
+  net_id: number
+  text: string
+  bubble_type: number
+  expiresAt: number
+}
+
+let nextBubbleId = 1
 
 export interface TrackInfo {
   level: number
@@ -24,6 +35,9 @@ export interface LiveBot {
   ping_ms: number
   world_width: number
   world_height: number
+  base_weather: number
+  current_weather: number
+  local_clothes: number[]
   tiles: TileData[]
   players: Map<number, Player>
   objects: WorldObject[]
@@ -41,6 +55,7 @@ export interface LiveBot {
   proxy: ProxyInfo | null
   chat: string[]
   active_dialog: WsDialog | null
+  active_trade: TradeState | null
   world_menu: WorldMenuSection[]
   action_reach: number
   punch_reach: number
@@ -60,6 +75,8 @@ export function makeBot(id: number, username: string): LiveBot {
     world_name: '', pos_x: 0, pos_y: 0,
     gems: 0, ping_ms: 0,
     world_width: 100, world_height: 60,
+    base_weather: 0, current_weather: 0,
+    local_clothes: [0, 0, 0, 0, 0, 0, 0, 0, 0],
     tiles: [], players: new Map(),
     objects: [], inventory: [], inventory_slots: 0, console: [],
     delays: { place_ms: 200, place_max_ms: 240, walk_ms: 220, walk_max_ms: 260, twofa_secs: 120, server_overload_secs: 30, too_many_logins_secs: 5, maintenance_secs: 600 },
@@ -73,6 +90,7 @@ export function makeBot(id: number, username: string): LiveBot {
     proxy: null,
     chat: [],
     active_dialog: null,
+    active_trade: null,
     world_menu: [],
     action_reach: 2,
     punch_reach: 2,
@@ -87,6 +105,7 @@ export const selectedBotIdAtom = atom<number | null>(null)
 export const itemNamesAtom = atom<Record<string, string>>({})
 export const itemColorsAtom = atom<Record<string, number>>({})
 export const itemsMapAtom = atom<Map<number, ItemRecord>>(new Map())
+export const talkBubblesAtom = atom<Map<number, TalkBubbleEntry[]>>(new Map())
 
 export const selectedBotAtom = atom((get) => {
   const id = get(selectedBotIdAtom)
@@ -107,6 +126,7 @@ export function useMoriStore(enabled = true) {
   const setBots = useSetAtom(botsAtom)
   const setItemNames = useSetAtom(itemNamesAtom)
   const setItemColors = useSetAtom(itemColorsAtom)
+  const setTalkBubbles = useSetAtom(talkBubblesAtom)
 
   useEffect(() => {
     if (!enabled) return
@@ -227,12 +247,21 @@ export function useMoriStore(enabled = true) {
           },
         }))],
 
-      ['PlayerSpawn', (d: { bot_id: number; net_id: number; name: string; country: string; x: number; y: number }) =>
+      ['PlayerSpawn', (d: { bot_id: number; net_id: number; name: string; country: string; x: number; y: number; clothes?: number[]; m_state?: number; sm_state?: number }) =>
         setBots((m) => {
           const bot = m.get(d.bot_id)
           if (!bot) return m
           const players = new Map(bot.players)
-          players.set(d.net_id, { net_id: d.net_id, name: d.name, country: d.country, pos_x: d.x, pos_y: d.y })
+          players.set(d.net_id, {
+            net_id: d.net_id,
+            name: d.name,
+            country: d.country,
+            pos_x: d.x,
+            pos_y: d.y,
+            clothes: d.clothes,
+            m_state: d.m_state,
+            sm_state: d.sm_state,
+          })
           return patchBot(m, d.bot_id, { players })
         })],
 
@@ -256,20 +285,55 @@ export function useMoriStore(enabled = true) {
           return patchBot(m, d.bot_id, { players })
         })],
 
-      ['WorldLoaded', (d: { bot_id: number; name: string; width: number; height: number; tiles: TileData[] }) =>
+      ['PlayerClothes', (d: { bot_id: number; net_id: number; clothes: number[] }) =>
+        setBots((m) => {
+          const bot = m.get(d.bot_id)
+          if (!bot) return m
+          const existing = bot.players.get(d.net_id)
+          if (!existing) return m
+          const players = new Map(bot.players)
+          players.set(d.net_id, { ...existing, clothes: d.clothes })
+          return patchBot(m, d.bot_id, { players })
+        })],
+
+      ['BotClothes', (d: { bot_id: number; clothes: number[] }) =>
+        setBots((m) => patchBot(m, d.bot_id, { local_clothes: d.clothes }))],
+
+      ['WorldLoaded', (d: { bot_id: number; name: string; width: number; height: number; base_weather?: number; current_weather?: number; tiles: TileData[] }) => {
+        setTalkBubbles((prev) => {
+          if (!prev.has(d.bot_id)) return prev
+          const next = new Map(prev)
+          next.delete(d.bot_id)
+          return next
+        })
         setBots((m) => patchBot(m, d.bot_id, {
           world_name: d.name,
           world_width: d.width, world_height: d.height,
+          base_weather: d.base_weather ?? 0,
+          current_weather: d.current_weather ?? d.base_weather ?? 0,
+          active_trade: null,
           tiles: d.tiles, players: new Map(), objects: [],
-        }))],
+        }))
+      }],
 
-      ['TileUpdate', (d: { bot_id: number; x: number; y: number; fg: number; bg: number }) =>
+      ['WeatherUpdate', (d: { bot_id: number; weather: number }) =>
+        setBots((m) => patchBot(m, d.bot_id, { current_weather: d.weather }))],
+
+      ['TileUpdate', (d: { bot_id: number; x: number; y: number; fg: number; bg: number; flags?: number; tile_type?: TileData['tile_type'] }) =>
         setBots((m) => {
           const bot = m.get(d.bot_id)
           if (!bot) return m
           const tiles = [...bot.tiles]
           const idx = d.y * bot.world_width + d.x
-          if (tiles[idx]) tiles[idx] = { ...tiles[idx], fg: d.fg, bg: d.bg }
+          if (tiles[idx]) {
+            tiles[idx] = {
+              ...tiles[idx],
+              fg: d.fg,
+              bg: d.bg,
+              flags: d.flags ?? tiles[idx].flags,
+              tile_type: d.tile_type ?? tiles[idx].tile_type,
+            }
+          }
           return patchBot(m, d.bot_id, { tiles })
         })],
 
@@ -299,6 +363,51 @@ export function useMoriStore(enabled = true) {
           const chat = [...bot.chat, line].slice(-500)
           return patchBot(m, d.bot_id, { chat })
         })],
+      ['TalkBubble', (d: { bot_id: number; net_id: number; text: string; bubble_type: number }) =>
+        setTalkBubbles((prev) => {
+          const now = Date.now()
+          const next = new Map(prev)
+          const active = (next.get(d.bot_id) ?? []).filter((b) => b.expiresAt > now)
+          active.push({
+            id: nextBubbleId++,
+            bot_id: d.bot_id,
+            net_id: d.net_id,
+            text: d.text,
+            bubble_type: d.bubble_type,
+            expiresAt: now + 4500,
+          })
+          next.set(d.bot_id, active.slice(-24))
+          return next
+        })],
+
+      ['TradeStart', (d: { bot_id: number; partner_net_id: number; partner_name: string }) =>
+        setBots((m) => {
+          const bot = m.get(d.bot_id)
+          if (!bot) return m
+          if (bot.active_trade && bot.active_trade.partner_net_id === d.partner_net_id) {
+            return m
+          }
+          return patchBot(m, d.bot_id, {
+            active_trade: {
+              partner_net_id: d.partner_net_id,
+              partner_name: d.partner_name,
+              self_slots: [],
+              partner_slots: [],
+              self_locked: false,
+              partner_locked: false,
+              self_accepted: false,
+              partner_accepted: false,
+              status_text: '',
+            },
+          })
+        })],
+
+      ['TradeStatus', (d: { bot_id: number; trade: TradeState }) =>
+        setBots((m) => patchBot(m, d.bot_id, { active_trade: d.trade }))],
+
+      ['TradeEnd', (d: { bot_id: number; reason: string }) =>
+        setBots((m) => patchBot(m, d.bot_id, { active_trade: null }))],
+
       ['DialogRequest', (d: { bot_id: number; dialog: WsDialog }) =>
         setBots((m) => patchBot(m, d.bot_id, { active_dialog: d.dialog }))],
 
@@ -333,7 +442,7 @@ export function useMoriStore(enabled = true) {
       }
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [enabled, setBots, setItemNames, setItemColors])
+  }, [enabled, setBots, setItemNames, setItemColors, setTalkBubbles])
 }
 
 /** Hydrate a LiveBot entry in `botsAtom` with the latest full snapshot from `/bots/:id`. */
@@ -356,12 +465,16 @@ export function hydrateBotFromState(
         }))
         return new Map(m).set(botId, {
           ...existing,
+          net_id: s.net_id ?? existing.net_id,
           status: s.status,
           world_name: s.world_name,
           pos_x: s.pos_x,
           pos_y: s.pos_y,
           world_width: s.world_width,
           world_height: s.world_height,
+          base_weather: s.base_weather ?? existing.base_weather ?? 0,
+          current_weather: s.current_weather ?? existing.current_weather ?? 0,
+          local_clothes: s.local_clothes ?? existing.local_clothes ?? [0, 0, 0, 0, 0, 0, 0, 0, 0],
           tiles,
           players,
           objects: s.objects,
@@ -379,6 +492,9 @@ export function hydrateBotFromState(
           auto_reconnect: s.auto_reconnect,
           auto_rotate_reconnect: s.auto_rotate_reconnect ?? true,
           proxy: s.proxy ?? null,
+          active_dialog: s.active_dialog !== undefined ? s.active_dialog : existing.active_dialog,
+          active_trade: s.active_trade !== undefined ? s.active_trade : existing.active_trade,
+          world_menu: s.world_menu ?? existing.world_menu,
           action_reach: s.action_reach ?? existing.action_reach ?? 2,
           punch_reach: s.punch_reach ?? s.physics_mods?.punch_reach ?? existing.punch_reach ?? 2,
           build_reach: s.build_reach ?? s.physics_mods?.build_reach ?? existing.build_reach ?? 2,

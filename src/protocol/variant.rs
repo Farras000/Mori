@@ -128,6 +128,18 @@ impl VariantList {
         Ok(Self { variants })
     }
 
+    pub fn from_variants(variants: Vec<Variant>) -> Self {
+        Self { variants }
+    }
+
+    pub fn len(&self) -> usize {
+        self.variants.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.variants.is_empty()
+    }
+
     pub fn get(&self, index: usize) -> Option<&Variant> {
         self.variants.get(index)
     }

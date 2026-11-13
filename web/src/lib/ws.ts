@@ -1,4 +1,4 @@
-import type { BotStatus, WorldObject, InventoryItem, WsDialog, WorldMenuSection, CharacterModifiers } from './api'
+import type { BotStatus, WorldObject, InventoryItem, WsDialog, WorldMenuSection, CharacterModifiers, TradeState } from './api'
 import { authStore } from './auth'
 
 // ── Event payload types ────────────────────────────────────────────────────
@@ -29,15 +29,23 @@ export type WsEventMap = {
     global_playtime: number
     awesomeness: number
   }
-  PlayerSpawn: { bot_id: number; net_id: number; name: string; country: string; x: number; y: number }
+  PlayerSpawn: { bot_id: number; net_id: number; name: string; country: string; x: number; y: number; clothes?: number[]; m_state?: number; sm_state?: number }
   PlayerMove: { bot_id: number; net_id: number; x: number; y: number }
   PlayerLeave: { bot_id: number; net_id: number }
-  WorldLoaded: { bot_id: number; name: string; width: number; height: number; tiles: TileData[] }
-  TileUpdate: { bot_id: number; x: number; y: number; fg: number; bg: number }
+  PlayerClothes: { bot_id: number; net_id: number; clothes: number[] }
+  BotClothes: { bot_id: number; clothes: number[] }
+  WorldLoaded: { bot_id: number; name: string; width: number; height: number; base_weather?: number; current_weather?: number; tiles: TileData[] }
+  WeatherUpdate: { bot_id: number; weather: number }
+  TileUpdate: { bot_id: number; x: number; y: number; fg: number; bg: number; flags?: number; tile_type?: TileData['tile_type'] }
   ObjectsUpdate: { bot_id: number; objects: WorldObject[] }
   InventoryUpdate: { bot_id: number; gems: number; items: InventoryItem[] }
   Console: { bot_id: number; message: string }
   Chat: { bot_id: number; message: string; kind: "incoming" | "outgoing" }
+  TalkBubble: { bot_id: number; net_id: number; text: string; bubble_type: number }
+  PlaySfx: { bot_id: number; file: string; delay_ms: number }
+  TradeStart: { bot_id: number; partner_net_id: number; partner_name: string }
+  TradeStatus: { bot_id: number; trade: TradeState }
+  TradeEnd: { bot_id: number; reason: string }
   DialogRequest: { bot_id: number; dialog: WsDialog }
   DialogClose: { bot_id: number }
   WorldMenu: { bot_id: number; sections: WorldMenuSection[] }

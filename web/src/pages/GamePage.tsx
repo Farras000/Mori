@@ -5,17 +5,20 @@ import {
   selectedBotIdAtom,
   selectedBotAtom,
   itemNamesAtom,
+  itemsMapAtom,
   hydrateBotFromState,
   type LiveBot,
 } from '@/lib/store'
-import { api, type InventoryItem } from '@/lib/api'
+import { api, type InventoryItem, type ItemRecord } from '@/lib/api'
+import { moriWs } from '@/lib/ws'
 import { GameCanvas } from '@/components/game-canvas'
 import { GameDialogModal } from '@/components/game-dialog-modal'
+import { TradeModal } from '@/components/trade-modal'
 import { GameMenu } from '@/components/game-menu'
 import { WorldSelect } from '@/components/world-select'
 import { ItemIcon } from '@/components/item-icon'
 import { GameInputManager } from '@/lib/game-input'
-import { parseGTColors } from '@/lib/gt-colors'
+import { parseGTColors, stripGTColors } from '@/lib/gt-colors'
 import { cn } from '@/lib/utils'
 import {
   ArrowLeft,
@@ -26,11 +29,17 @@ import {
   Maximize2,
   Minimize2,
   User,
+  Users,
   Zap,
   Menu,
   Trash2,
   ArrowDownToLine,
   Search,
+  DoorOpen,
+  Volume2,
+  VolumeX,
+  ArrowLeftRight,
+  Wrench,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -57,6 +66,47 @@ function extractChatDisplayText(line: string): string | null {
   return cleaned
 }
 
+/** Locate an adjacent or overlapping door/portal tile near the player's current position. */
+function findNearbyDoor(
+  bot: LiveBot | null,
+  itemsMap: Map<number, ItemRecord>,
+): { x: number; y: number; label: string } | null {
+  if (!bot || bot.world_width <= 0 || bot.world_height <= 0 || bot.tiles.length === 0) {
+    return null
+  }
+  const cx = Math.floor(bot.pos_x + 10 / 32)
+  const cy = Math.floor(bot.pos_y + 15 / 32)
+  const offsets: Array<[number, number]> = [
+    [0, 0],
+    [0, 1],
+    [0, -1],
+    [-1, 0],
+    [1, 0],
+    [-1, 1],
+    [1, 1],
+    [-1, -1],
+    [1, -1],
+  ]
+
+  for (const [dx, dy] of offsets) {
+    const tx = cx + dx
+    const ty = cy + dy
+    if (tx < 0 || ty < 0 || tx >= bot.world_width || ty >= bot.world_height) continue
+    const tile = bot.tiles[ty * bot.world_width + tx]
+    if (!tile) continue
+    const fgItem = tile.fg > 0 ? itemsMap.get(tile.fg) : undefined
+    const isDoor =
+      tile.tile_type?.type === 'Door' ||
+      (tile.fg > 0 && fgItem !== undefined && (fgItem.action_type === 2 || fgItem.action_type === 3 || fgItem.action_type === 27))
+    if (isDoor) {
+      const rawLabel = (tile.tile_type as { label?: unknown } | undefined)?.label
+      const label = typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : fgItem?.name || 'Door'
+      return { x: tx, y: ty, label }
+    }
+  }
+  return null
+}
+
 export function GamePage({ onBack }: { onBack: () => void }) {
   const bots = useAtomValue(botsAtom)
   const setBots = useSetAtom(botsAtom)
@@ -64,6 +114,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   const selectedBot = useAtomValue(selectedBotAtom)
   const itemNames = useAtomValue(itemNamesAtom)
   const setItemNames = useSetAtom(itemNamesAtom)
+  const itemsMap = useAtomValue(itemsMapAtom)
 
   // Fallback to first bot if none selected
   const botList = Array.from(bots.values())
@@ -76,9 +127,18 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   const [chatInput, setChatInput] = useState('')
   const [chatStatus, setChatStatus] = useState('')
   const [inventoryModalOpen, setInventoryModalOpen] = useState(false)
+  const [playersMenuOpen, setPlayersMenuOpen] = useState(false)
   const [gameMenuOpen, setGameMenuOpen] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [sfxMuted, setSfxMuted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('mori:sfx_muted') === '1'
+    } catch {
+      return false
+    }
+  })
   const [hoveredTile, setHoveredTile] = useState<{ x: number; y: number; inReach: boolean } | null>(null)
+  const failedSfxUrlsRef = useRef<Set<string>>(new Set())
 
   // Drop / Trash dialog state
   const [actionItemModal, setActionItemModal] = useState<{
@@ -171,9 +231,69 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
   // Suspend input manager when modals are open
   useEffect(() => {
-    const isModalOpen = inventoryModalOpen || gameMenuOpen || !!actionItemModal || !!bot?.active_dialog
+    const isModalOpen =
+      inventoryModalOpen ||
+      gameMenuOpen ||
+      !!actionItemModal ||
+      !!bot?.active_dialog ||
+      !!bot?.active_trade
     inputManagerRef.current?.setSuspended(isModalOpen)
-  }, [inventoryModalOpen, gameMenuOpen, actionItemModal, bot?.active_dialog])
+  }, [inventoryModalOpen, gameMenuOpen, actionItemModal, bot?.active_dialog, bot?.active_trade])
+
+  // Play native Growtopia OnPlayPositioned / action|play_sfx sounds via backend CDN proxy
+  useEffect(() => {
+    if (!bot?.id) return
+    const activeTimers: number[] = []
+    const onPlaySfx = (d: { bot_id: number; file: string; delay_ms: number }) => {
+      if (d.bot_id !== bot.id || sfxMuted) return
+      const cleanRel = d.file
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+        .replace(/^growtopia\//i, '')
+      if (!cleanRel || cleanRel.includes('..') || !/^[a-zA-Z0-9_./-]+$/.test(cleanRel)) return
+
+      const url = `/growtopia-cdn/growtopia/${cleanRel}`
+      if (failedSfxUrlsRef.current.has(url)) return
+
+      const trigger = () => {
+        try {
+          const audio = new Audio(url)
+          audio.volume = 0.35
+          audio.onerror = () => {
+            failedSfxUrlsRef.current.add(url)
+          }
+          audio.play().catch(() => {})
+        } catch {
+          // ignore playback failures before user gesture or unsupported codecs
+        }
+      }
+
+      const delay = Math.max(0, Math.min(2000, d.delay_ms || 0))
+      if (delay > 0) {
+        activeTimers.push(window.setTimeout(trigger, delay))
+      } else {
+        trigger()
+      }
+    }
+
+    moriWs.bus.on('PlaySfx', onPlaySfx)
+    return () => {
+      moriWs.bus.off('PlaySfx', onPlaySfx)
+      for (const t of activeTimers) window.clearTimeout(t)
+    }
+  }, [bot?.id, sfxMuted])
+
+  const toggleSfxMute = () => {
+    setSfxMuted((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('mori:sfx_muted', next ? '1' : '0')
+      } catch {
+        // ignore storage restrictions
+      }
+      return next
+    })
+  }
 
   // Scroll chat to bottom when new messages arrive
   useEffect(() => {
@@ -196,17 +316,18 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   // Wrench self handler
   const handleWrenchSelf = useCallback(() => {
     if (!bot) return
-    const targetNetId = bot.net_id || 1
-    api.sendCmd(bot.id, { type: 'wrench_player', net_id: targetNetId }).catch((err) => {
+    api.sendCmd(bot.id, { type: 'wrench_self' }).catch((err) => {
       console.error('Failed to wrench self:', err)
     })
   }, [bot])
 
-  // Wrench another player
-  const handlePlayerWrench = useCallback((netId: number) => {
-    if (!bot) return
-    api.sendCmd(bot.id, { type: 'wrench_player', net_id: netId }).catch(() => {})
-  }, [bot])
+  // Nearby door / portal quick-enter helper
+  const nearbyDoor = useMemo(() => findNearbyDoor(bot, itemsMap), [bot, itemsMap])
+
+  const handleEnterDoor = useCallback(() => {
+    if (!bot || !nearbyDoor) return
+    api.sendCmd(bot.id, { type: 'active', x: nearbyDoor.x, y: nearbyDoor.y }).catch(() => {})
+  }, [bot, nearbyDoor])
 
   // Send chat message
   const handleSendChat = async () => {
@@ -311,6 +432,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
           target.blur()
           return
         }
+        if (playersMenuOpen) {
+          setPlayersMenuOpen(false)
+          return
+        }
         if (actionItemModal) {
           setActionItemModal(null)
           return
@@ -326,13 +451,15 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
       if (isInput) return
 
-      // Hotkeys for tool selection
+      // Hotkeys for tool selection & door interact
       if (e.key === '1' || e.key.toLowerCase() === 'q') {
         setActiveItemId(18) // Fist
       } else if (e.key === '2' || e.key.toLowerCase() === 'e') {
         setActiveItemId(32) // Wrench
       } else if (e.key.toLowerCase() === 'r') {
         handleWrenchSelf()
+      } else if (e.key.toLowerCase() === 'f') {
+        handleEnterDoor()
       } else if (e.key.toLowerCase() === 'b') {
         setInventoryModalOpen((prev) => !prev)
       } else if (e.key >= '3' && e.key <= '8') {
@@ -346,7 +473,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [bot, hotbarInventory, handleSendChat, handleWrenchSelf, actionItemModal, inventoryModalOpen])
+  }, [bot, hotbarInventory, handleSendChat, handleWrenchSelf, handleEnterDoor, playersMenuOpen, actionItemModal, inventoryModalOpen])
 
   const itemLabel = (id: number) => {
     if (id === 18) return 'Fist / Punch'
@@ -476,6 +603,29 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             </span>
           )}
 
+          {/* World Players / Quick Trade Popover Trigger */}
+          {!isWorldExit && (
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(
+                'h-7 text-xs px-2.5 gap-1.5 font-medium border-white/15',
+                playersMenuOpen ? 'bg-primary/20 text-primary border-primary/50' : 'hover:bg-accent text-accent-foreground',
+              )}
+              onClick={(e) => {
+                e.currentTarget.blur()
+                setPlayersMenuOpen((prev) => !prev)
+              }}
+              title="Players in World - Quick Wrench or Start Trade"
+            >
+              <Users className="w-3.5 h-3.5 text-sky-400" />
+              <span className="hidden sm:inline">Players</span>
+              <span className="font-mono text-[10px] px-1 rounded bg-white/10">
+                {bot.players.size + 1}
+              </span>
+            </Button>
+          )}
+
           {/* Wrench Self Button */}
           <Button
             size="sm"
@@ -489,6 +639,20 @@ export function GamePage({ onBack }: { onBack: () => void }) {
           >
             <User className="w-3.5 h-3.5 text-primary" />
             <span className="hidden sm:inline">Self (R)</span>
+          </Button>
+
+          {/* SFX Mute Toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+            onClick={(e) => {
+              e.currentTarget.blur()
+              toggleSfxMute()
+            }}
+            title={sfxMuted ? 'Unmute Sound Effects' : 'Mute Sound Effects'}
+          >
+            {sfxMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
           </Button>
 
           <Button
@@ -517,9 +681,84 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             activeItemId={activeItemId}
             actionReach={effectiveReach}
             onTileHover={setHoveredTile}
-            onPlayerWrench={handlePlayerWrench}
             className="w-full h-full"
           />
+        )}
+
+        {/* Quick World Players / Trade List Popover */}
+        {!isWorldExit && playersMenuOpen && (
+          <div className="absolute top-3 right-3 z-20 w-64 rounded-lg border border-white/15 bg-black/90 backdrop-blur-md shadow-2xl p-2.5 flex flex-col gap-2">
+            <div className="flex items-center justify-between text-xs font-bold text-white/95 border-b border-white/10 pb-1.5">
+              <span>Players in {bot.world_name}</span>
+              <button
+                type="button"
+                onClick={() => setPlayersMenuOpen(false)}
+                className="text-muted-foreground hover:text-white text-[11px] px-1"
+              >
+                Close
+              </button>
+            </div>
+            <div className="flex flex-col gap-1 max-h-60 overflow-y-auto">
+              <div className="flex items-center justify-between px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/25 text-xs">
+                <span className="font-semibold text-emerald-300 truncate">{bot.username || 'You'} (You)</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => {
+                    handleWrenchSelf()
+                    setPlayersMenuOpen(false)
+                  }}
+                >
+                  Profile
+                </Button>
+              </div>
+              {Array.from(bot.players.values()).length === 0 ? (
+                <div className="text-[11px] text-muted-foreground py-2 text-center">
+                  No other players nearby.
+                </div>
+              ) : (
+                Array.from(bot.players.values()).map((p) => {
+                  const pName = stripGTColors(p.name) || `Player #${p.net_id}`
+                  return (
+                    <div
+                      key={p.net_id}
+                      className="flex items-center justify-between gap-1.5 px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-xs"
+                    >
+                      <span className="truncate text-white/90 font-medium">{pName}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 text-sky-300 hover:bg-sky-500/20"
+                          title={`Wrench ${pName}`}
+                          onClick={() => {
+                            api.sendCmd(bot.id, { type: 'wrench_player', net_id: p.net_id }).catch(() => {})
+                            setPlayersMenuOpen(false)
+                          }}
+                        >
+                          <Wrench className="w-3 h-3" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-1.5 text-[10px] text-amber-300 hover:bg-amber-500/20 gap-1"
+                          title={`Trade with ${pName}`}
+                          onClick={() => {
+                            api.sendCmd(bot.id, { type: 'trade_start', target_net_id: p.net_id }).catch(() => {})
+                            setPlayersMenuOpen(false)
+                          }}
+                        >
+                          <ArrowLeftRight className="w-3 h-3" />
+                          Trade
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
         )}
 
         {/* ── Floating In-Game Chat Overlay (Top-Left) ────────────────────────── */}
@@ -614,8 +853,24 @@ export function GamePage({ onBack }: { onBack: () => void }) {
               </span>
             )}
 
-            <span className="text-white/40 text-[10px] hidden md:inline">
-              Hold Left Click = Punch/Place • Right Click = Wrench
+            {nearbyDoor && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={(e) => {
+                  e.currentTarget.blur()
+                  handleEnterDoor()
+                }}
+                className="h-5 px-2 text-[10px] font-bold bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-200 border border-cyan-400/50 gap-1"
+                title={`Enter ${nearbyDoor.label} at (${nearbyDoor.x}, ${nearbyDoor.y}) [F]`}
+              >
+                <DoorOpen className="w-3 h-3" />
+                Enter [F]
+              </Button>
+            )}
+
+            <span className="text-white/40 text-[10px] hidden lg:inline">
+              Hold Left = Punch/Place • Right = Wrench • Dbl-Click/[F] = Enter Door • Shift+Wrench = Self
             </span>
 
             {bot.physics_mods?.active_effects && bot.physics_mods.active_effects.length > 0 && (
@@ -968,6 +1223,9 @@ export function GamePage({ onBack }: { onBack: () => void }) {
         actionReach={effectiveReach}
         onActionReachChange={handleActionReachChange}
       />
+
+      {/* ── Live Player-to-Player Trade Modal ──────────────────────────────────── */}
+      <TradeModal bot={bot} />
 
       {/* ── In-Game Native Modal Dialog ────────────────────────────────────────── */}
       <GameDialogModal bot={bot} />

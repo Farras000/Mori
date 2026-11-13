@@ -277,7 +277,7 @@ impl LuaUserData for BotProxy {
                     title_icon: String::new(),
                     m_state:    0,
                     sm_state:   0,
-                    invisible:  false,
+                    invisible:  false, equipped_clothes: [0; 9],
                 })),
                 _ => Err(LuaError::runtime("getLocal failed")),
             }
@@ -582,7 +582,7 @@ impl LuaUserData for LuaWorld {
                 title_icon: String::new(),
                 m_state:    0,
                 sm_state:   0,
-                invisible:  false,
+                invisible:  false, equipped_clothes: [0; 9],
             };
             Ok(LuaPlayer(fake))
         });

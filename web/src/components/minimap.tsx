@@ -9,7 +9,12 @@ import type { TileData } from '@/lib/ws'
 import { TileManager, type WorldData, type TileData as TileManagerData } from '@/lib/tile-manager'
 import { textureCacheManager } from '@/lib/texture-cache'
 import { Progress } from '@/components/ui/progress'
-import { Color } from '@/lib/color'
+import {
+  collectUniqueAtlasRequests,
+  getOrCreateTileTexture,
+  getTileTextureRequest,
+  type TileLayerTile,
+} from '@/lib/tile-layer'
 
 const TILE_FLAGS: [number, string][] = [
   [0x0002, 'has_parent'], [0x0004, 'spliced'], [0x0008, 'spawns_seeds'],
@@ -18,106 +23,6 @@ const TILE_FLAGS: [number, string][] = [
   [0x0400, 'wet'], [0x0800, 'glued'], [0x1000, 'on_fire'],
   [0x2000, 'painted_red'], [0x4000, 'painted_green'], [0x8000, 'painted_blue'],
 ]
-
-async function createCompositeTreeTexture(
-  baseUrl: string,
-  overlayUrl: string,
-  baseColor?: Color,
-  overlayColor?: Color
-): Promise<HTMLCanvasElement> {
-  return new Promise((resolve, reject) => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    if (!ctx) {
-      reject(new Error('Could not get canvas context'));
-      return;
-    }
-
-    const baseImg = new Image();
-    const overlayImg = new Image();
-
-    let baseLoaded = false;
-    let overlayLoaded = false;
-
-    const tryRender = () => {
-      if (!baseLoaded || !overlayLoaded) return;
-
-      ctx.clearRect(0, 0, 32, 32);
-
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 32;
-      tempCanvas.height = 32;
-      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
-
-      if (!tempCtx) {
-        reject(new Error('Could not get temp canvas context'));
-        return;
-      }
-
-      tempCtx.drawImage(baseImg, 0, 0, 32, 32);
-      if (baseColor) {
-        const imageData = tempCtx.getImageData(0, 0, 32, 32);
-        const data = imageData.data;
-        const r = baseColor.getRed() / 255;
-        const g = baseColor.getGreen() / 255;
-        const b = baseColor.getBlue() / 255;
-
-        for (let i = 0; i < data.length; i += 4) {
-          if (data[i + 3] > 0) {
-            data[i] = Math.floor(data[i] * r);
-            data[i + 1] = Math.floor(data[i + 1] * g);
-            data[i + 2] = Math.floor(data[i + 2] * b);
-          }
-        }
-        tempCtx.putImageData(imageData, 0, 0);
-      }
-      ctx.drawImage(tempCanvas, 0, 0);
-
-      // Apply overlay with overlay color
-      tempCtx.clearRect(0, 0, 32, 32);
-      tempCtx.drawImage(overlayImg, 0, 0, 32, 32);
-      
-      if (overlayColor && overlayColor.getUint() !== 0xFFFFFFFF) {
-        const overlayData = tempCtx.getImageData(0, 0, 32, 32);
-        const data = overlayData.data;
-        const r = overlayColor.getRed() / 255;
-        const g = overlayColor.getGreen() / 255;
-        const b = overlayColor.getBlue() / 255;
-
-        for (let i = 0; i < data.length; i += 4) {
-          if (data[i + 3] > 0) {
-            data[i] = Math.floor(data[i] * r);
-            data[i + 1] = Math.floor(data[i + 1] * g);
-            data[i + 2] = Math.floor(data[i + 2] * b);
-          }
-        }
-        tempCtx.putImageData(overlayData, 0, 0);
-      }
-      
-      ctx.drawImage(tempCanvas, 0, 0);
-
-      resolve(canvas);
-    };
-
-    baseImg.onload = () => {
-      baseLoaded = true;
-      tryRender();
-    };
-    baseImg.onerror = () => reject(new Error('Failed to load base image'));
-
-    overlayImg.onload = () => {
-      overlayLoaded = true;
-      tryRender();
-    };
-    overlayImg.onerror = () => reject(new Error('Failed to load overlay image'));
-
-    baseImg.src = baseUrl;
-    overlayImg.src = overlayUrl;
-  });
-}
 
 
 function activeFlags(flags: number): string[] {
@@ -129,13 +34,14 @@ type TileTypeData = { type: string } & Record<string, unknown>
 function tileTypeExtra(tt: TileTypeData, itemNames: Record<string, string>): string | null {
   const name = (id: unknown) => itemNames[String(id)] ?? `ID:${id}`
   switch (tt.type) {
-    case 'Sign':     return `Sign: "${tt.text}"`
-    case 'Door':     return `Door: "${tt.text}"${tt.owner_uid ? ` owner:${tt.owner_uid}` : ''}`
+    case 'Sign':     return `Sign: "${tt.label ?? tt.text ?? ''}"`
+    case 'Door':     return `Door: "${tt.label ?? tt.text ?? ''}"${tt.owner_uid ? ` owner:${tt.owner_uid}` : ''}`
     case 'Lock':     return `Lock owner:${tt.owner_uid} access:${tt.access_count}${tt.minimum_level ? ` minlvl:${tt.minimum_level}` : ''}`
-    case 'Seed':     return `Seed: ${Math.floor((tt.time_passed as number) / 60)}m grown`
+    case 'Seed':     return `Seed: ${Math.floor(((tt.age ?? tt.time_passed ?? 0) as number) / 60)}m grown`
     case 'VendingMachine': return `Vend: ${name(tt.item_id)} price:${tt.price}`
     case 'DisplayBlock':   return `Displays: ${name(tt.item_id)}`
-    case 'Mannequin': return `Mannequin: "${tt.text}"`
+    case 'Shelf':    return `Shelf: ${[tt.top_left_item_id, tt.top_right_item_id, tt.bottom_left_item_id, tt.bottom_right_item_id].filter((id) => Number(id) > 0).map(name).join(', ') || 'Empty'}`
+    case 'Mannequin': return `Mannequin: "${tt.label ?? tt.text ?? ''}"`
     case 'HearthMonitor': return `Hearth: ${tt.player_name}`
     case 'SilkWorm': return `Silkworm: ${tt.name} age:${tt.age}`
     case 'CountryFlag': return `Flag: ${tt.country}`
@@ -445,116 +351,6 @@ function MinimapInner({
     }
   }
 
-    function getTileTextureRequest(
-    tileManager: TileManager,
-    itemMap: Map<number, ItemRecord>,
-    tile: TileManagerData,
-    isBg: boolean
-  ) {
-    const itemId = isBg ? tile.bgItemId : tile.fgItemId
-    if (itemId === 0) return null
-    const item = itemMap.get(itemId)
-    if (!item) return null
-
-    if (!isBg && tile.fgItemId % 2 === 1) {
-      const treeItemId = tile.fgItemId + 1
-      const treeItem = itemMap.get(treeItemId)
-      if (treeItem) {
-        const baseColor = item.base_color ? new Color(item.base_color) : new Color(0xFFFFFFFF)
-        const overlayColor = item.overlay_color ? new Color(item.overlay_color) : new Color(0xFFFFFFFF)
-        return {
-          textureFileName: "tiles_page1.rttex",
-          textureX: item.tree_base_sprite,
-          textureY: 19,
-          x: tile.x,
-          y: tile.y,
-          isBg: false,
-          isTree: true,
-          treeOverlayY: 18,
-          treeOverlayX: item.tree_overlay_sprite,
-          baseColor: baseColor.getUint(),
-          overlayColor: overlayColor.getUint(),
-        }
-      }
-    }
-
-    const coords = tileManager.getSpriteCoords(tile, isBg)
-    return {
-      textureFileName: item.texture_file_name,
-      textureX: coords.x,
-      textureY: coords.y,
-      x: tile.x,
-      y: tile.y,
-      isBg,
-      isTree: false,
-    }
-  }
-
-  async function getOrCreateTileTexture(
-    req: {
-      textureFileName: string
-      textureX: number
-      textureY: number
-      isTree?: boolean
-      treeOverlayX?: number
-      treeOverlayY?: number
-      baseColor?: number
-      overlayColor?: number
-    },
-    textureCache: Map<string, Texture>
-  ): Promise<Texture | null> {
-    const key = req.isTree
-      ? `tree_${req.textureFileName}_${req.treeOverlayX}_${req.treeOverlayY}_${req.baseColor}_${req.overlayColor}`
-      : `${req.textureFileName}_${req.textureX}_${req.textureY}`
-
-    const cached = textureCache.get(key)
-    if (cached && !cached.destroyed) {
-      return cached
-    }
-
-    if (req.isTree && req.treeOverlayY !== undefined && req.treeOverlayX !== undefined) {
-      try {
-        const trunkUrl = await textureCacheManager.getCroppedTile(req.textureFileName, req.textureX, req.textureY)
-        const overlayUrl = await textureCacheManager.getCroppedTile(
-          "tiles_page1.rttex",
-          req.treeOverlayX,
-          req.treeOverlayY
-        )
-        const baseColor = req.baseColor && req.baseColor !== 0 ? new Color(req.baseColor) : undefined
-        const overlayColor = req.overlayColor && req.overlayColor !== 0 ? new Color(req.overlayColor) : undefined
-        const compositeCanvas = await createCompositeTreeTexture(trunkUrl, overlayUrl, baseColor, overlayColor)
-        const texture = Texture.from(compositeCanvas)
-        textureCache.set(key, texture)
-        return texture
-      } catch {
-        return null
-      }
-    }
-
-    try {
-      const url = await textureCacheManager.getCroppedTile(req.textureFileName, req.textureX, req.textureY)
-      if (!url) return null
-      const img = new Image()
-      img.src = url
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve()
-        img.onerror = reject
-        setTimeout(() => reject(new Error('Image load timeout')), 5000)
-      })
-      const canvas = document.createElement('canvas')
-      canvas.width = img.width
-      canvas.height = img.height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return null
-      ctx.drawImage(img, 0, 0)
-      const texture = Texture.from(canvas)
-      textureCache.set(key, texture)
-      return texture
-    } catch {
-      return null
-    }
-  }
-
   async function updateTileSpriteAt(
     tileManager: TileManager,
     itemMap: Map<number, ItemRecord>,
@@ -565,9 +361,10 @@ function MinimapInner({
     textureCache: Map<string, Texture>
   ) {
     if (x < 0 || y < 0 || x >= b.world_width || y >= b.world_height) return
-    const tile = tileManager.getTile(x, y)
-    if (!tile) return
+    const baseTile = tileManager.getTile(x, y)
+    if (!baseTile) return
     const idx = y * b.world_width + x
+    const tile: TileLayerTile = { ...baseTile, tileType: b.tiles[idx]?.tile_type }
 
     // 1. Background
     const bgReq = getTileTextureRequest(tileManager, itemMap, tile, true)
@@ -723,9 +520,10 @@ function MinimapInner({
 
     for (let y = 0; y < b.world_height; y++) {
       for (let x = 0; x < b.world_width; x++) {
-        const tile = tileManager.getTile(x, y)
-        if (!tile) continue
+        const baseTile = tileManager.getTile(x, y)
+        if (!baseTile) continue
         const idx = y * b.world_width + x
+        const tile: TileLayerTile = { ...baseTile, tileType: b.tiles[idx]?.tile_type }
         const bgReq = getTileTextureRequest(tileManager, itemMap, tile, true)
         if (bgReq) requests.push({ req: bgReq, idx })
         const fgReq = getTileTextureRequest(tileManager, itemMap, tile, false)
@@ -743,11 +541,7 @@ function MinimapInner({
         stage: 'loading'
       })
 
-      const chunkTextureReqs = chunk.map(item => ({
-        textureFileName: item.req.textureFileName,
-        textureX: item.req.textureX,
-        textureY: item.req.textureY
-      }))
+      const chunkTextureReqs = collectUniqueAtlasRequests(chunk.map(item => item.req))
 
       await textureCacheManager.batchLoadTiles(chunkTextureReqs)
 

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Application, Container, Graphics, Sprite, Texture, Text } from 'pixi.js'
 import { useAtom, useAtomValue } from 'jotai'
-import { itemsMapAtom, itemColorsAtom, type LiveBot } from '@/lib/store'
+import { itemsMapAtom, itemColorsAtom, talkBubblesAtom, type LiveBot, type TalkBubbleEntry } from '@/lib/store'
 import { api } from '@/lib/api'
 import { moriWs } from '@/lib/ws'
-import { TileManager, type TileData as TileManagerData, type WorldData } from '@/lib/tile-manager'
+import { TILE_FLAGS } from '@/lib/constants'
+import { TileManager, type WorldData } from '@/lib/tile-manager'
 import { textureCacheManager } from '@/lib/texture-cache'
 import { stripGTColors } from '@/lib/gt-colors'
 import {
@@ -12,7 +13,10 @@ import {
   MIN_ZOOM,
   MAX_ZOOM,
   type SpriteTileLayer,
+  type TileLayerTile,
   clampOffset,
+  collectUniqueAtlasRequests,
+  getTileTextureCacheKey,
   getTileTextureRequest,
   getOrCreateTileTexture,
   renderTilesInitial,
@@ -29,6 +33,79 @@ import {
 } from '@/lib/gt-sprites'
 import { getIsolatedSpriteCoords } from '@/components/texture-image'
 import { cn } from '@/lib/utils'
+
+interface WeatherTheme {
+  top: number
+  mid: number
+  low: number
+  showSun: boolean
+  showMoon: boolean
+  stars: boolean
+  cloudTint: number
+  cloudAlpha: number
+}
+
+const WEATHER_THEMES: Record<number, WeatherTheme> = {
+  0: { top: 0x5eb2e9, mid: 0x8ad0f6, low: 0xbfe6fb, showSun: true, showMoon: false, stars: false, cloudTint: 0xffffff, cloudAlpha: 0.85 },
+  2: { top: 0x581c87, mid: 0xea580c, low: 0xfde047, showSun: true, showMoon: false, stars: false, cloudTint: 0xfdba74, cloudAlpha: 0.72 }, // Sunset
+  4: { top: 0x0b1120, mid: 0x1e293b, low: 0x334155, showSun: false, showMoon: true, stars: true, cloudTint: 0x64748b, cloudAlpha: 0.45 }, // Night
+  5: { top: 0xc2410c, mid: 0xea580c, low: 0xfed7aa, showSun: true, showMoon: false, stars: false, cloudTint: 0xfef3c7, cloudAlpha: 0.55 }, // Desert
+  11: { top: 0x334155, mid: 0x475569, low: 0x64748b, showSun: false, showMoon: false, stars: false, cloudTint: 0x475569, cloudAlpha: 0.88 }, // Rainy / Storm
+  15: { top: 0x2e1065, mid: 0x4c1d95, low: 0x5b21b6, showSun: false, showMoon: true, stars: true, cloudTint: 0xa78bfa, cloudAlpha: 0.5 }, // Spooky
+  29: { top: 0x60a5fa, mid: 0x93c5fd, low: 0xe0f2fe, showSun: true, showMoon: false, stars: false, cloudTint: 0xf8fafc, cloudAlpha: 0.9 }, // Snowy
+  34: { top: 0x020617, mid: 0x0f172a, low: 0x1e1b4b, showSun: false, showMoon: false, stars: true, cloudTint: 0x312e81, cloudAlpha: 0.25 }, // Space
+  36: { top: 0x020617, mid: 0x0f172a, low: 0x1e1b4b, showSun: false, showMoon: false, stars: true, cloudTint: 0x312e81, cloudAlpha: 0.25 },
+  48: { top: 0x020617, mid: 0x0f172a, low: 0x1e1b4b, showSun: false, showMoon: false, stars: true, cloudTint: 0x312e81, cloudAlpha: 0.25 },
+}
+
+function getWeatherTheme(weatherId: number): WeatherTheme {
+  return WEATHER_THEMES[weatherId] ?? WEATHER_THEMES[0]
+}
+
+const INTERACTIVE_TILE_TYPES = new Set([
+  'Door',
+  'Sign',
+  'Lock',
+  'VendingMachine',
+  'DisplayBlock',
+  'Shelf',
+  'DonationBox',
+  'Mailbox',
+  'Bulletin',
+  'WeatherMachine',
+  'Mannequin',
+  'Dice',
+  'Forge',
+  'CookingOven',
+  'StorageBlock',
+  'AudioRack',
+  'HearthMonitor',
+  'CountryFlag',
+  'SilkWorm',
+  'TesseractManipulator',
+  'AchievementBlock',
+  'Seed',
+])
+
+// Growtopia item action_type codes for interactive tiles (door/lock/sign/vending/shelf/etc.)
+const INTERACTIVE_ACTION_TYPES = new Set([
+  2, 3, 10, 13, 26, 27, 34, 37, 40, 41, 47, 49, 62, 63, 66, 81, 83, 91, 107, 122,
+])
+
+function computeTileTint(flags: number): number {
+  const red = (flags & TILE_FLAGS.PAINTED_RED) !== 0
+  const green = (flags & TILE_FLAGS.PAINTED_GREEN) !== 0
+  const blue = (flags & TILE_FLAGS.PAINTED_BLUE) !== 0
+  if (red || green || blue) {
+    const r = red ? 0xff : 0x7a
+    const g = green ? 0xff : 0x7a
+    const b = blue ? 0xff : 0x7a
+    return (r << 16) | (g << 8) | b
+  }
+  if ((flags & TILE_FLAGS.WET) !== 0) return 0x7dd3fc
+  if ((flags & TILE_FLAGS.ON_FIRE) !== 0) return 0xfdba74
+  return 0xffffff
+}
 
 interface GameCanvasProps {
   bot: LiveBot
@@ -59,9 +136,14 @@ export function GameCanvas({
   const itemColors = useAtomValue(itemColorsAtom)
   const itemColorsRef = useRef(itemColors)
   itemColorsRef.current = itemColors
+  const talkBubblesMap = useAtomValue(talkBubblesAtom)
+  const botBubbles = talkBubblesMap.get(bot.id) ?? []
+  const botBubblesRef = useRef<TalkBubbleEntry[]>(botBubbles)
+  botBubblesRef.current = botBubbles
 
   const fetchedItemIdsRef = useRef<Set<number>>(new Set())
   const renderedKnownItemsRef = useRef<Set<number>>(new Set())
+  const worldLayerKeyRef = useRef('')
   const fullRenderVersionRef = useRef(0)
   const fullRenderDoneRef = useRef(false)
   const queuedIncrementalRef = useRef<Set<number>>(new Set())
@@ -96,8 +178,11 @@ export function GameCanvas({
     lastVertAt: 0,
   })
   const lastActionAtRef = useRef(0)
+  const lastWrenchAtRef = useRef(0)
   const cloudsRef = useRef<Array<{ sprite: Sprite; speed: number }>>([])
   const skyKeyRef = useRef('')
+  const renderedBubblesSigRef = useRef('')
+  const bubbleNodeRefs = useRef<Array<{ netId: number; expiresAt: number; container: Container; yOffset: number }>>([])
 
   const [loadingProgress, setLoadingProgress] = useState<{ current: number; total: number; stage: string } | null>(null)
   const [pixiReady, setPixiReady] = useState(false)
@@ -119,11 +204,13 @@ export function GameCanvas({
     world: Container
     sky: Container
     tiles: Container
+    tileOverlays: Container
     crackGfx: Graphics
     objects: Container
     players: Container
     botGfx: Container
     labels: Container
+    bubbles: Container
     hoverGfx: Graphics
   } | null>(null)
 
@@ -276,21 +363,25 @@ export function GameCanvas({
       const world = new Container()
       const skyContainer = new Container()
       const tileContainer = new Container()
+      const tileOverlayContainer = new Container()
       const crackGfx = new Graphics()
       const objectContainer = new Container()
       const playerContainer = new Container()
       const botContainer = new Container()
       const labelContainer = new Container()
+      const bubbleContainer = new Container()
       const hoverGfx = new Graphics()
 
       world.addChild(skyContainer)
       world.addChild(tileContainer)
+      world.addChild(tileOverlayContainer)
       world.addChild(crackGfx)
       world.addChild(objectContainer)
       world.addChild(playerContainer)
       world.addChild(botContainer)
       world.addChild(hoverGfx)
       world.addChild(labelContainer)
+      world.addChild(bubbleContainer)
 
       app.stage.addChild(world)
 
@@ -298,11 +389,13 @@ export function GameCanvas({
         world,
         sky: skyContainer,
         tiles: tileContainer,
+        tileOverlays: tileOverlayContainer,
         crackGfx,
         objects: objectContainer,
         players: playerContainer,
         botGfx: botContainer,
         labels: labelContainer,
+        bubbles: bubbleContainer,
         hoverGfx,
       }
 
@@ -346,23 +439,40 @@ export function GameCanvas({
           if (expired) redrawCracks()
         }
 
-        // 0. Build / refresh sky backdrop + sun + drifting clouds
+        // 0. Build / refresh weather-themed sky backdrop + sun/moon/stars + drifting clouds
         const uiTex = worldUiTexRef.current
-        const desiredSkyKey = `${curBot.world_width}x${curBot.world_height}:${uiTex?.sun ? 1 : 0}:${uiTex?.cloud ? 1 : 0}`
+        const weatherId = curBot.current_weather ?? curBot.base_weather ?? 0
+        const theme = getWeatherTheme(weatherId)
+        const desiredSkyKey = `${curBot.world_width}x${curBot.world_height}:${weatherId}:${uiTex?.sun ? 1 : 0}:${uiTex?.cloud ? 1 : 0}`
         if (skyKeyRef.current !== desiredSkyKey) {
           skyKeyRef.current = desiredSkyKey
+          app.renderer.background.color = theme.top
           layers.sky.removeChildren()
           cloudsRef.current = []
 
           const ww = Math.max(1, curBot.world_width) * TILE_PX
           const hh = Math.max(1, curBot.world_height) * TILE_PX
           const skyGfx = new Graphics()
-          skyGfx.rect(0, 0, ww, hh).fill(0x5eb2e9)
-          skyGfx.rect(0, TILE_PX * 10, ww, TILE_PX * 16).fill({ color: 0x8ad0f6, alpha: 0.45 })
-          skyGfx.rect(0, TILE_PX * 18, ww, TILE_PX * 10).fill({ color: 0xbfe6fb, alpha: 0.5 })
+          skyGfx.rect(0, 0, ww, hh).fill(theme.top)
+          skyGfx.rect(0, TILE_PX * 10, ww, TILE_PX * 16).fill({ color: theme.mid, alpha: 0.45 })
+          skyGfx.rect(0, TILE_PX * 18, ww, TILE_PX * 10).fill({ color: theme.low, alpha: 0.5 })
+          if (theme.stars) {
+            for (let s = 0; s < 55; s++) {
+              const sx = ((s * 197 + 43) % Math.max(1, Math.floor(ww)))
+              const sy = ((s * 83 + 17) % Math.max(1, Math.floor(TILE_PX * 22)))
+              const radius = s % 5 === 0 ? 1.1 : 0.65
+              skyGfx.circle(sx, sy, radius).fill({ color: s % 7 === 0 ? 0xfef08a : 0xffffff, alpha: 0.85 })
+            }
+          }
+          if (theme.showMoon) {
+            const mx = Math.min(ww - TILE_PX * 6, ww * 0.78)
+            const my = TILE_PX * 6.5
+            skyGfx.circle(mx, my, TILE_PX * 2.1).fill({ color: 0xfef9c3, alpha: 0.95 })
+            skyGfx.circle(mx + TILE_PX * 0.75, my - TILE_PX * 0.45, TILE_PX * 1.75).fill({ color: theme.top, alpha: 0.92 })
+          }
           layers.sky.addChild(skyGfx)
 
-          if (uiTex?.sun) {
+          if (theme.showSun && uiTex?.sun) {
             const sun = new Sprite(uiTex.sun)
             sun.anchor.set(0.5)
             sun.position.set(Math.min(ww - TILE_PX * 6, ww * 0.78), TILE_PX * 6.5)
@@ -378,7 +488,8 @@ export function GameCanvas({
               cloud.anchor.set(0.5)
               const cScale = 0.085 + (i % 3) * 0.025
               cloud.scale.set(cScale)
-              cloud.alpha = 0.75 + (i % 2) * 0.15
+              cloud.tint = theme.cloudTint
+              cloud.alpha = Math.min(1, theme.cloudAlpha * (0.82 + (i % 2) * 0.15))
               cloud.position.set(
                 ((i * 17 + 7) % Math.max(20, curBot.world_width)) * TILE_PX,
                 (3.5 + (i % 4) * 3.2) * TILE_PX,
@@ -417,9 +528,10 @@ export function GameCanvas({
         layers.world.x = Math.round(offset.current.x)
         layers.world.y = Math.round(offset.current.y)
 
-        // Inverse scale labels for crisp text
+        // Inverse scale labels & speech bubbles for crisp text
         const invScale = 1 / Math.max(0.2, zoom.current)
         layers.labels.scale.set(invScale)
+        layers.bubbles.scale.set(invScale)
 
         // 2. Proportional Growtopia Bot Character Rig (feet anchored at pos + (10/32, 30/32))
         const hasCharTex = !!charTexRef.current
@@ -482,6 +594,7 @@ export function GameCanvas({
         const walkingNow = nowMs - prevPos.lastMovedAt < 130 && !airborneNow
         const mods = curBot.physics_mods
         botRigStateRef.current.rig.root.position.set(px, py)
+        botRigStateRef.current.rig.setClothes(curBot.local_clothes, itemsMapRef.current)
         botRigStateRef.current.rig.setPose({
           facingLeft: facingLeftRef.current,
           airborne: airborneNow,
@@ -494,6 +607,9 @@ export function GameCanvas({
           walkPhase: prevPos.walkPhase ?? animTick * 0.26,
           time: animTick,
         })
+
+        const playerAnchors = new Map<number, { x: number; y: number }>()
+        playerAnchors.set(curBot.net_id || 0, { x: px, y: py })
 
         // 3. Render Other Players & Keep All Nametags
         const activeIds = new Set<number>()
@@ -547,7 +663,9 @@ export function GameCanvas({
 
           const pPx = (p.pos_x + 10 / 32) * TILE_PX
           const pPy = (p.pos_y + 30 / 32) * TILE_PX
+          playerAnchors.set(p.net_id, { x: pPx, y: pPy })
           entry.rig.root.position.set(pPx, pPy)
+          entry.rig.setClothes(p.clothes, itemsMapRef.current)
           entry.rig.setPose({
             facingLeft: entry.facingLeft,
             airborne: false,
@@ -587,6 +705,101 @@ export function GameCanvas({
         const selfName = curBot.username || 'You'
         if (botLabelRef.current.text !== selfName) botLabelRef.current.text = selfName
         botLabelRef.current.position.set(px * zoom.current, (py - TILE_PX * 1.25) * zoom.current - 3)
+
+        // 4. Overhead Speech Bubbles (OnTalkBubble)
+        const wallNow = Date.now()
+        const activeBubbles = botBubblesRef.current.filter((b) => b.expiresAt > wallNow)
+        const bubbleSig = activeBubbles.map((b) => b.id).join(',')
+        if (renderedBubblesSigRef.current !== bubbleSig) {
+          renderedBubblesSigRef.current = bubbleSig
+          for (const child of layers.bubbles.removeChildren()) {
+            child.destroy({ children: true })
+          }
+          bubbleNodeRefs.current = []
+
+          const byPlayer = new Map<number, TalkBubbleEntry[]>()
+          for (const b of activeBubbles) {
+            const list = byPlayer.get(b.net_id) ?? []
+            list.push(b)
+            byPlayer.set(b.net_id, list)
+          }
+
+          for (const [netId, list] of byPlayer.entries()) {
+            // Stack newest at bottom (stackIdx 0 closest to head) upward, max 3 visible
+            const visible = list.slice(-3)
+            let stackYOffset = 0
+            for (let idx = visible.length - 1; idx >= 0; idx--) {
+              const b = visible[idx]
+              const cleanText = stripGTColors(b.text).trim()
+              if (!cleanText) continue
+
+              const isSystemStyle = b.bubble_type === 1 || b.bubble_type === 2
+              const node = new Container()
+              const label = new Text({
+                text: cleanText,
+                style: {
+                  fontSize: 11,
+                  fontFamily: 'Inter, system-ui, sans-serif',
+                  fontWeight: '600',
+                  fill: isSystemStyle ? 0xfef08a : 0x0f172a,
+                  wordWrap: true,
+                  wordWrapWidth: 210,
+                  align: 'center',
+                },
+                resolution: 2,
+              })
+              label.anchor.set(0.5, 0.5)
+
+              const padX = 8
+              const padY = 4
+              const bw = Math.max(28, Math.ceil(label.width + padX * 2))
+              const bh = Math.max(20, Math.ceil(label.height + padY * 2))
+
+              const bg = new Graphics()
+              bg.roundRect(-bw / 2, -bh, bw, bh, 6)
+                .fill({ color: isSystemStyle ? 0x1e293b : 0xffffff, alpha: 0.94 })
+                .stroke({ color: isSystemStyle ? 0xf59e0b : 0x334155, width: 1.5, alpha: 0.9 })
+
+              if (idx === visible.length - 1) {
+                bg.moveTo(-4, 0)
+                  .lineTo(0, 5)
+                  .lineTo(4, 0)
+                  .closePath()
+                  .fill({ color: isSystemStyle ? 0x1e293b : 0xffffff, alpha: 0.94 })
+              }
+
+              label.position.set(0, -bh / 2)
+              node.addChild(bg)
+              node.addChild(label)
+              layers.bubbles.addChild(node)
+
+              bubbleNodeRefs.current.push({
+                netId,
+                expiresAt: b.expiresAt,
+                container: node,
+                yOffset: stackYOffset,
+              })
+              stackYOffset += bh + 5
+            }
+          }
+        }
+
+        for (const bNode of bubbleNodeRefs.current) {
+          const anchor =
+            playerAnchors.get(bNode.netId) ??
+            (bNode.netId === curBot.net_id ? { x: px, y: py } : undefined)
+          if (!anchor) {
+            bNode.container.visible = false
+            continue
+          }
+          bNode.container.visible = true
+          const remaining = bNode.expiresAt - wallNow
+          bNode.container.alpha = remaining < 450 ? Math.max(0, remaining / 450) : 1
+          bNode.container.position.set(
+            anchor.x * zoom.current,
+            (anchor.y - TILE_PX * 1.45) * zoom.current - 20 - bNode.yOffset,
+          )
+        }
       })
 
       centerCamera()
@@ -601,6 +814,9 @@ export function GameCanvas({
       playerRigsRef.current.clear()
       cloudsRef.current = []
       skyKeyRef.current = ''
+      worldLayerKeyRef.current = ''
+      renderedBubblesSigRef.current = ''
+      bubbleNodeRefs.current = []
       if (appRef.current) {
         appRef.current.destroy(true, { children: true })
         appRef.current = null
@@ -610,16 +826,35 @@ export function GameCanvas({
     }
   }, [centerCamera])
 
-  // Ensure all item definitions used by world tiles & drops are hydrated into itemsMapAtom
+  // Ensure all item definitions used by world tiles, overlays, clothes & drops are hydrated into itemsMapAtom
   useEffect(() => {
     const missing = new Set<number>()
+    const addIfMissing = (id: unknown) => {
+      if (typeof id === 'number' && id > 0 && !itemsMap.has(id) && !fetchedItemIdsRef.current.has(id)) {
+        missing.add(id)
+      }
+    }
     for (const t of bot.tiles) {
-      if (t.fg > 0 && !itemsMap.has(t.fg) && !fetchedItemIdsRef.current.has(t.fg)) missing.add(t.fg)
-      if (t.bg > 0 && !itemsMap.has(t.bg) && !fetchedItemIdsRef.current.has(t.bg)) missing.add(t.bg)
+      addIfMissing(t.fg)
+      addIfMissing(t.bg)
+      const tt = t.tile_type as Record<string, unknown> | undefined
+      if (tt) {
+        addIfMissing(tt.item_id)
+        addIfMissing(tt.top_left_item_id)
+        addIfMissing(tt.top_right_item_id)
+        addIfMissing(tt.bottom_left_item_id)
+        addIfMissing(tt.bottom_right_item_id)
+      }
     }
     for (const o of bot.objects) {
-      if (o.item_id > 0 && !itemsMap.has(o.item_id) && !fetchedItemIdsRef.current.has(o.item_id)) {
-        missing.add(o.item_id)
+      addIfMissing(o.item_id)
+    }
+    for (const cid of bot.local_clothes) {
+      addIfMissing(cid)
+    }
+    for (const p of bot.players.values()) {
+      for (const cid of p.clothes ?? []) {
+        addIfMissing(cid)
       }
     }
     if (missing.size === 0) return
@@ -639,19 +874,20 @@ export function GameCanvas({
       .catch(() => {
         ids.forEach((id) => fetchedItemIdsRef.current.delete(id))
       })
-  }, [bot.tiles, bot.objects, itemsMap, setItemsMap])
+  }, [bot.tiles, bot.objects, bot.local_clothes, bot.players, itemsMap, setItemsMap])
 
   // Update world tiles with TileManager textures
   useEffect(() => {
     const layers = layersRef.current
     if (!layers || bot.tiles.length === 0 || items.length === 0) return
 
-    const tileManagerData: TileManagerData[] = bot.tiles.map((t, idx) => ({
+    const tileManagerData: TileLayerTile[] = bot.tiles.map((t, idx) => ({
       fgItemId: t.fg,
       bgItemId: t.bg,
       flags: t.flags,
       x: idx % bot.world_width,
       y: Math.floor(idx / bot.world_width),
+      tileType: t.tile_type,
     }))
 
     const worldData: WorldData = {
@@ -670,10 +906,12 @@ export function GameCanvas({
     const tileManager = tileManagerRef.current
     const itemMap = itemsMap
     const textureCache = pixiTextureCacheRef.current
+    const worldKey = `${bot.id}:${bot.world_name}:${bot.world_width}x${bot.world_height}`
 
     let layer = spriteTileLayerRef.current
     const needsNewLayer =
       !layer ||
+      worldLayerKeyRef.current !== worldKey ||
       layer.width !== bot.world_width ||
       layer.height !== bot.world_height ||
       !previousTilesRef.current ||
@@ -692,7 +930,8 @@ export function GameCanvas({
           !oldTile ||
           oldTile.fg !== curTile.fg ||
           oldTile.bg !== curTile.bg ||
-          oldTile.flags !== curTile.flags
+          oldTile.flags !== curTile.flags ||
+          oldTile.tile_type !== curTile.tile_type
         ) {
           const cx = i % bot.world_width
           const cy = Math.floor(i / bot.world_width)
@@ -739,11 +978,6 @@ export function GameCanvas({
         return
       }
 
-      const reqKey = (req: NonNullable<ReturnType<typeof getTileTextureRequest>>) =>
-        req.isTree
-          ? `tree_${req.textureFileName}_${req.textureX}_${req.textureY}_${req.treeOverlayX}_${req.treeOverlayY}_${req.baseColor}_${req.overlayColor}`
-          : `${req.textureFileName}_${req.textureX}_${req.textureY}`
-
       if (showProgress) {
         setLoadingProgress({
           current: 0,
@@ -753,22 +987,10 @@ export function GameCanvas({
       }
 
       // Deduplicate atlas sprite coordinates so each distinct block/tree tile is decoded once
-      const atlasSeen = new Set<string>()
-      const uniqueAtlasReqs: Array<{ textureFileName: string; textureX: number; textureY: number }> = []
-      const addAtlasReq = (textureFileName: string, textureX: number, textureY: number) => {
-        const k = `${textureFileName}:${textureX}:${textureY}`
-        if (atlasSeen.has(k)) return
-        atlasSeen.add(k)
-        uniqueAtlasReqs.push({ textureFileName, textureX, textureY })
-      }
-
+      const uniqueAtlasReqs = collectUniqueAtlasRequests(requests.map((r) => r.req))
       const uniqueSamples = new Map<string, NonNullable<ReturnType<typeof getTileTextureRequest>>>()
       for (const { req } of requests) {
-        addAtlasReq(req.textureFileName, req.textureX, req.textureY)
-        if (req.isTree && req.treeOverlayX !== undefined && req.treeOverlayY !== undefined) {
-          addAtlasReq('tiles_page1.rttex', req.treeOverlayX, req.treeOverlayY)
-        }
-        const rk = reqKey(req)
+        const rk = getTileTextureCacheKey(req)
         if (!uniqueSamples.has(rk)) uniqueSamples.set(rk, req)
       }
 
@@ -797,7 +1019,7 @@ export function GameCanvas({
         }
 
         for (const item of chunk) {
-          const texture = resolvedTextures.get(reqKey(item.req))
+          const texture = resolvedTextures.get(getTileTextureCacheKey(item.req))
           if (!texture || texture.destroyed) continue
 
           const prevSprite = item.req.isBg
@@ -810,10 +1032,15 @@ export function GameCanvas({
           }
 
           const sprite = new Sprite(texture)
-          sprite.x = item.req.x * TILE_PX
-          sprite.y = item.req.y * TILE_PX
-          sprite.width = TILE_PX
-          sprite.height = TILE_PX
+          const baseScaleX = TILE_PX / Math.max(1, texture.width)
+          const baseScaleY = TILE_PX / Math.max(1, texture.height)
+          sprite.anchor.set(0.5)
+          sprite.position.set(item.req.x * TILE_PX + TILE_PX / 2, item.req.y * TILE_PX + TILE_PX / 2)
+          sprite.scale.set(item.req.flippedX ? -baseScaleX : baseScaleX, baseScaleY)
+          const tint = computeTileTint(item.req.flags ?? 0)
+          if (tint !== 0xffffff) {
+            sprite.tint = tint
+          }
 
           if (item.req.isBg) {
             targetLayer.bgContainer.addChild(sprite)
@@ -873,6 +1100,7 @@ export function GameCanvas({
     }
 
     // Full render
+    worldLayerKeyRef.current = worldKey
     const version = ++fullRenderVersionRef.current
     fullRenderDoneRef.current = false
     queuedIncrementalRef.current.clear()
@@ -921,6 +1149,174 @@ export function GameCanvas({
       })
   }, [bot.tiles, bot.world_width, bot.world_height, items, pixiReady])
 
+  /** Resolve and cache a crisp mini Pixi texture for an item or seed (shared by drops and tile overlays). */
+  const resolveItemIconTexture = useCallback(async (itemId: number): Promise<Texture | null> => {
+    const cacheKey = `drop_${itemId}`
+    const cached = pixiTextureCacheRef.current.get(cacheKey)
+    if (cached && !cached.destroyed) return cached
+
+    const item = itemsMapRef.current.get(itemId)
+    if (!item) return null
+
+    let tex: Texture | null = null
+    if (item.id % 2 === 1 || item.action_type === 19) {
+      tex = await getGtSeedTexture(
+        item.seed_base_sprite,
+        item.seed_overlay_sprite,
+        item.base_color,
+        item.overlay_color,
+      )
+    } else {
+      const coords = getIsolatedSpriteCoords(item)
+      const url = await textureCacheManager.getCroppedTile(
+        item.texture_file_name,
+        coords.x,
+        coords.y,
+      )
+      tex = await loadCrispTextureFromUrl(url)
+    }
+
+    if (tex) {
+      pixiTextureCacheRef.current.set(cacheKey, tex)
+    }
+    return tex
+  }, [])
+
+  // Render Vending Machine items/prices, Display Blocks, Shelves, Public doors & Fire badges
+  useEffect(() => {
+    const layers = layersRef.current
+    if (!layers) return
+    let cancelled = false
+
+    for (const child of layers.tileOverlays.removeChildren()) {
+      child.destroy({ children: true })
+    }
+    if (bot.tiles.length === 0 || bot.world_width === 0) return
+
+    const iconItemIds = new Set<number>()
+    const overlayTiles: Array<{ x: number; y: number; fg: number; flags: number; tt: Record<string, unknown> }> = []
+
+    for (let i = 0; i < bot.tiles.length; i++) {
+      const t = bot.tiles[i]
+      const tt = t.tile_type as Record<string, unknown> | undefined
+      const tType = tt?.type
+      const isSpecialOverlay =
+        tType === 'VendingMachine' ||
+        tType === 'DisplayBlock' ||
+        tType === 'Shelf' ||
+        (tType === 'Door' && (t.flags & TILE_FLAGS.PUBLIC) !== 0) ||
+        (t.flags & TILE_FLAGS.ON_FIRE) !== 0
+
+      if (!isSpecialOverlay) continue
+      const x = i % bot.world_width
+      const y = Math.floor(i / bot.world_width)
+      overlayTiles.push({ x, y, fg: t.fg, flags: t.flags, tt: tt ?? {} })
+
+      for (const k of ['item_id', 'top_left_item_id', 'top_right_item_id', 'bottom_left_item_id', 'bottom_right_item_id']) {
+        const val = tt?.[k]
+        if (typeof val === 'number' && val > 0) iconItemIds.add(val)
+      }
+    }
+
+    if (overlayTiles.length === 0) return
+
+    ;(async () => {
+      const loaded = new Map<number, Texture | null>()
+      await Promise.all(
+        Array.from(iconItemIds).map(async (id) => {
+          const tex = await resolveItemIconTexture(id).catch(() => null)
+          loaded.set(id, tex)
+        }),
+      )
+      if (cancelled) return
+
+      for (const child of layers.tileOverlays.removeChildren()) {
+        child.destroy({ children: true })
+      }
+
+      for (const ot of overlayTiles) {
+        const tileX = ot.x * TILE_PX
+        const tileY = ot.y * TILE_PX
+        const tType = ot.tt.type
+
+        if (tType === 'VendingMachine') {
+          const itemId = typeof ot.tt.item_id === 'number' ? ot.tt.item_id : 0
+          const price = typeof ot.tt.price === 'number' ? ot.tt.price : 0
+          const itemTex = itemId > 0 ? loaded.get(itemId) : null
+          if (itemTex && !itemTex.destroyed) {
+            const icon = new Sprite(itemTex)
+            icon.width = TILE_PX * 0.48
+            icon.height = TILE_PX * 0.48
+            icon.position.set(tileX + TILE_PX * 0.26, tileY + TILE_PX * 0.16)
+            layers.tileOverlays.addChild(icon)
+
+            const priceStr = price === 0 ? 'FREE' : price < 0 ? `${Math.abs(price)}/1` : `${price} WL`
+            const badge = new Text({
+              text: priceStr,
+              style: {
+                fontFamily: 'Inter, system-ui, sans-serif',
+                fontSize: 9,
+                fontWeight: 'bold',
+                fill: price === 0 ? 0x4ade80 : 0xfef08a,
+                stroke: { color: 0x000000, width: 3 },
+              },
+            })
+            badge.anchor.set(0.5, 1)
+            badge.scale.set(0.28)
+            badge.position.set(tileX + TILE_PX / 2, tileY + TILE_PX - 0.5)
+            layers.tileOverlays.addChild(badge)
+          } else {
+            const dot = new Graphics()
+            dot.circle(tileX + TILE_PX / 2, tileY + TILE_PX * 0.42, 1.3).fill({ color: 0xf87171, alpha: 0.7 })
+            layers.tileOverlays.addChild(dot)
+          }
+        } else if (tType === 'DisplayBlock') {
+          const itemId = typeof ot.tt.item_id === 'number' ? ot.tt.item_id : 0
+          const itemTex = itemId > 0 ? loaded.get(itemId) : null
+          if (itemTex && !itemTex.destroyed) {
+            const icon = new Sprite(itemTex)
+            icon.width = TILE_PX * 0.56
+            icon.height = TILE_PX * 0.56
+            icon.position.set(tileX + TILE_PX * 0.22, tileY + TILE_PX * 0.22)
+            layers.tileOverlays.addChild(icon)
+          }
+        } else if (tType === 'Shelf') {
+          const slots: Array<[unknown, number, number]> = [
+            [ot.tt.top_left_item_id, 0.14, 0.14],
+            [ot.tt.top_right_item_id, 0.54, 0.14],
+            [ot.tt.bottom_left_item_id, 0.14, 0.54],
+            [ot.tt.bottom_right_item_id, 0.54, 0.54],
+          ]
+          for (const [rawId, ox, oy] of slots) {
+            const tex = typeof rawId === 'number' && rawId > 0 ? loaded.get(rawId) : null
+            if (tex && !tex.destroyed) {
+              const icon = new Sprite(tex)
+              icon.width = TILE_PX * 0.34
+              icon.height = TILE_PX * 0.34
+              icon.position.set(tileX + TILE_PX * ox, tileY + TILE_PX * oy)
+              layers.tileOverlays.addChild(icon)
+            }
+          }
+        }
+
+        if (tType === 'Door' && (ot.flags & TILE_FLAGS.PUBLIC) !== 0 && ot.fg > 0) {
+          const badge = new Graphics()
+          badge.circle(tileX + TILE_PX - 2, tileY + 2, 1.3).fill({ color: 0x22d3ee, alpha: 0.95 })
+          layers.tileOverlays.addChild(badge)
+        }
+        if ((ot.flags & TILE_FLAGS.ON_FIRE) !== 0) {
+          const ember = new Graphics()
+          ember.rect(tileX, tileY, TILE_PX, TILE_PX).stroke({ color: 0xf97316, width: 0.9, alpha: 0.8 })
+          layers.tileOverlays.addChild(ember)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [bot.tiles, bot.world_width, itemsMap, pixiReady, resolveItemIconTexture])
+
   // Update floating objects (obj.x / obj.y arrive from backend in GT pixel units = tile * 32)
   useEffect(() => {
     const layers = layersRef.current
@@ -933,44 +1329,12 @@ export function GameCanvas({
 
     if (bot.objects.length === 0) return
 
-    const resolveDropTexture = async (itemId: number): Promise<Texture | null> => {
-      const cacheKey = `drop_${itemId}`
-      const cached = pixiTextureCacheRef.current.get(cacheKey)
-      if (cached && !cached.destroyed) return cached
-
-      const item = itemsMap.get(itemId)
-      if (!item) return null
-
-      let tex: Texture | null = null
-      if (item.id % 2 === 1 || item.action_type === 19) {
-        tex = await getGtSeedTexture(
-          item.seed_base_sprite,
-          item.seed_overlay_sprite,
-          item.base_color,
-          item.overlay_color
-        )
-      } else {
-        const coords = getIsolatedSpriteCoords(item)
-        const url = await textureCacheManager.getCroppedTile(
-          item.texture_file_name,
-          coords.x,
-          coords.y
-        )
-        tex = await loadCrispTextureFromUrl(url)
-      }
-
-      if (tex) {
-        pixiTextureCacheRef.current.set(cacheKey, tex)
-      }
-      return tex
-    }
-
     ;(async () => {
       const uniqueIds = Array.from(new Set(bot.objects.map((o) => o.item_id)))
       const loaded = new Map<number, Texture | null>()
       await Promise.all(
         uniqueIds.map(async (id) => {
-          const tex = await resolveDropTexture(id).catch(() => null)
+          const tex = await resolveItemIconTexture(id).catch(() => null)
           loaded.set(id, tex)
         })
       )
@@ -1043,7 +1407,7 @@ export function GameCanvas({
     return () => {
       cancelled = true
     }
-  }, [bot.objects, itemsMap, pixiReady, worldUiReady])
+  }, [bot.objects, itemsMap, pixiReady, worldUiReady, resolveItemIconTexture])
 
   // Mouse wheel zoom
   useEffect(() => {
@@ -1091,75 +1455,120 @@ export function GameCanvas({
     lastActionAtRef.current = performance.now()
   }
 
-  const checkHitPlayer = (tileX: number, tileY: number): number | null => {
-    const hitsBox = (px: number, py: number) =>
-      tileX >= Math.floor(px) &&
-      tileX <= Math.floor(px + 19 / 32) &&
-      tileY >= Math.floor(py) &&
-      tileY <= Math.floor(py + 29 / 32)
+  const hitsCharacterBox = (tileX: number, tileY: number, px: number, py: number) =>
+    tileX >= Math.floor(px) &&
+    tileX <= Math.floor(px + 19 / 32) &&
+    tileY >= Math.floor(py) &&
+    tileY <= Math.floor(py + 29 / 32)
 
-    if (hitsBox(botPosRef.current.x, botPosRef.current.y)) {
-      return bot.net_id || 1
-    }
+  const checkHitsSelf = (tileX: number, tileY: number) =>
+    hitsCharacterBox(tileX, tileY, botPosRef.current.x, botPosRef.current.y)
+
+  const checkHitRemotePlayer = (tileX: number, tileY: number): number | null => {
     for (const p of bot.players.values()) {
-      if (hitsBox(p.pos_x, p.pos_y)) {
+      if (hitsCharacterBox(tileX, tileY, p.pos_x, p.pos_y)) {
         return p.net_id
       }
     }
     return null
   }
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button === 2) {
-      // Right-click = context wrench player or wrench tile within reach
-      e.preventDefault()
-      const { tileX, tileY } = getTileUnderCursor(e)
-      const hitNetId = checkHitPlayer(tileX, tileY)
-      if (hitNetId) {
-        api.sendCmd(bot.id, { type: 'wrench_player', net_id: hitNetId }).catch(() => {})
-        onPlayerWrench?.(hitNetId)
-        return
+  const getTileAt = (tileX: number, tileY: number) => {
+    if (tileX < 0 || tileY < 0 || tileX >= bot.world_width || tileY >= bot.world_height) return null
+    return bot.tiles[tileY * bot.world_width + tileX] ?? null
+  }
+
+  const hasInteractiveTileAt = (tileX: number, tileY: number) => {
+    const tile = getTileAt(tileX, tileY)
+    if (!tile) return false
+    if (tile.tile_type?.type && INTERACTIVE_TILE_TYPES.has(tile.tile_type.type)) return true
+    const fgItem = tile.fg > 0 ? itemsMap.get(tile.fg) : undefined
+    if (fgItem && INTERACTIVE_ACTION_TYPES.has(fgItem.action_type)) return true
+    const bgItem = tile.bg > 0 ? itemsMap.get(tile.bg) : undefined
+    if (bgItem && INTERACTIVE_ACTION_TYPES.has(bgItem.action_type)) return true
+    return false
+  }
+
+  const isDoorTileAt = (tileX: number, tileY: number) => {
+    const tile = getTileAt(tileX, tileY)
+    if (!tile) return false
+    if (tile.tile_type?.type === 'Door') return true
+    const fgItem = tile.fg > 0 ? itemsMap.get(tile.fg) : undefined
+    return fgItem ? fgItem.action_type === 2 || fgItem.action_type === 3 || fgItem.action_type === 27 : false
+  }
+
+  const sendWrenchTile = (tileX: number, tileY: number) => {
+    faceTileAndMarkAction(tileX)
+    api.sendCmd(bot.id, { type: 'wrench', x: tileX, y: tileY }).catch(() => {})
+  }
+
+  // Prioritize interactive/foreground tiles under the player's feet (e.g. Vending Machine, Door)
+  // over self-wrench unless Shift+Click is held or clicking empty foreground space.
+  const tryHandleWrenchClick = (e: React.MouseEvent<HTMLDivElement>, tileX: number, tileY: number): boolean => {
+    const now = performance.now()
+    if (now - lastWrenchAtRef.current < 300) {
+      return true
+    }
+
+    if (e.shiftKey && checkHitsSelf(tileX, tileY)) {
+      lastWrenchAtRef.current = now
+      api.sendCmd(bot.id, { type: 'wrench_self' }).catch(() => {})
+      onPlayerWrench?.(bot.net_id || 1)
+      return true
+    }
+
+    if (!e.altKey) {
+      const hitRemoteNetId = checkHitRemotePlayer(tileX, tileY)
+      if (hitRemoteNetId) {
+        lastWrenchAtRef.current = now
+        api.sendCmd(bot.id, { type: 'wrench_player', net_id: hitRemoteNetId }).catch(() => {})
+        onPlayerWrench?.(hitRemoteNetId)
+        return true
       }
-      if (tileX < 0 || tileY < 0 || tileX >= bot.world_width || tileY >= bot.world_height) return
-      if (!isTileInReach(tileX, tileY)) return
-      faceTileAndMarkAction(tileX)
-      api
-        .sendCmd(bot.id, {
-          type: 'hold_action',
-          active: true,
-          x: tileX,
-          y: tileY,
-          item: 32,
-        })
-        .then(() =>
-          api.sendCmd(bot.id, {
-            type: 'hold_action',
-            active: false,
-            x: tileX,
-            y: tileY,
-            item: 32,
-          })
-        )
-        .catch(() => {})
+    }
+
+    const tile = getTileAt(tileX, tileY)
+    const inReach = isTileInReach(tileX, tileY)
+    if (tile && inReach && (hasInteractiveTileAt(tileX, tileY) || tile.fg > 0)) {
+      lastWrenchAtRef.current = now
+      sendWrenchTile(tileX, tileY)
+      return true
+    }
+
+    if (checkHitsSelf(tileX, tileY)) {
+      lastWrenchAtRef.current = now
+      api.sendCmd(bot.id, { type: 'wrench_self' }).catch(() => {})
+      onPlayerWrench?.(bot.net_id || 1)
+      return true
+    }
+
+    if (tile && inReach) {
+      lastWrenchAtRef.current = now
+      sendWrenchTile(tileX, tileY)
+      return true
+    }
+
+    return false
+  }
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const { tileX, tileY } = getTileUnderCursor(e)
+
+    if (e.button === 2) {
+      // Right-click = context wrench (player or tile within reach)
+      e.preventDefault()
+      tryHandleWrenchClick(e, tileX, tileY)
       return
     }
 
     if (e.button !== 0) return
-    isMouseDownRef.current = true
-
-    const { tileX, tileY } = getTileUnderCursor(e)
     if (tileX < 0 || tileY < 0 || tileX >= bot.world_width || tileY >= bot.world_height) return
 
-    // If using Wrench tool, test player hit first!
     if (activeItemId === 32) {
-      const hitNetId = checkHitPlayer(tileX, tileY)
-      if (hitNetId) {
-        api.sendCmd(bot.id, { type: 'wrench_player', net_id: hitNetId }).catch(() => {})
-        onPlayerWrench?.(hitNetId)
-        return
-      }
+      if (tryHandleWrenchClick(e, tileX, tileY)) return
     }
 
+    isMouseDownRef.current = true
     faceTileAndMarkAction(tileX)
     lastHoldTileRef.current = { x: tileX, y: tileY }
     api.sendCmd(bot.id, {
@@ -1169,6 +1578,14 @@ export function GameCanvas({
       y: tileY,
       item: activeItemId,
     }).catch(() => {})
+  }
+
+  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const { tileX, tileY } = getTileUnderCursor(e)
+    if (!isTileInReach(tileX, tileY)) return
+    if (!isDoorTileAt(tileX, tileY)) return
+    faceTileAndMarkAction(tileX)
+    api.sendCmd(bot.id, { type: 'active', x: tileX, y: tileY }).catch(() => {})
   }
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1230,6 +1647,7 @@ export function GameCanvas({
       ref={containerRef}
       className={cn('relative w-full h-full cursor-crosshair overflow-hidden select-none', className)}
       onMouseDown={handleMouseDown}
+      onDoubleClick={handleDoubleClick}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => {

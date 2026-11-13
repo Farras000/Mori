@@ -77,6 +77,9 @@ export interface Player {
   pos_x: number;
   pos_y: number;
   country: string;
+  clothes?: number[];
+  m_state?: number;
+  sm_state?: number;
 }
 
 export interface WorldObject {
@@ -134,6 +137,9 @@ export interface BotState {
   pos_y: number;
   world_width: number;
   world_height: number;
+  base_weather?: number;
+  current_weather?: number;
+  local_clothes?: number[];
   tiles: {
     fg_item_id: number;
     bg_item_id: number;
@@ -170,6 +176,7 @@ export interface BotState {
   auto_rotate_reconnect: boolean;
   proxy: ProxyInfo | null;
   active_dialog?: WsDialog | null;
+  active_trade?: TradeState | null;
   world_menu?: WorldMenuSection[];
   action_reach?: number;
   punch_reach?: number;
@@ -239,6 +246,14 @@ export type BotCmd =
   | { type: "place"; x: number; y: number; item: number }
   | { type: "wrench"; x: number; y: number }
   | { type: "wrench_player"; net_id: number }
+  | { type: "wrench_self" }
+  | { type: "active"; x: number; y: number }
+  | { type: "enter"; pass?: string }
+  | { type: "trade_start"; target_net_id: number }
+  | { type: "trade_offer_item"; item_id: number; count: number }
+  | { type: "trade_accept"; locked: boolean }
+  | { type: "trade_confirm" }
+  | { type: "trade_cancel" }
   | { type: "set_collect_path_check"; enabled: boolean }
   | { type: "set_interactive"; enabled: boolean }
   | { type: "set_input"; left: boolean; right: boolean; jump: boolean; down: boolean }
@@ -268,6 +283,72 @@ export interface DialogButton {
   url?: string | null;
 }
 
+export interface DialogCheckbox {
+  name: string;
+  label: string;
+  checked: boolean;
+}
+
+export interface DialogEmbed {
+  key: string;
+  value: string;
+}
+
+export type DialogElement =
+  | {
+      type: "label";
+      text: string;
+      size: string;
+      item_id?: number | null;
+      align: string;
+    }
+  | {
+      type: "textbox";
+      text: string;
+      small: boolean;
+    }
+  | {
+      type: "text_input";
+      name: string;
+      label: string;
+      default_val: string;
+      max_len: number;
+      is_password: boolean;
+    }
+  | {
+      type: "checkbox";
+      name: string;
+      label: string;
+      checked: boolean;
+    }
+  | {
+      type: "button";
+      name: string;
+      label: string;
+      url?: string | null;
+      item_id?: number | null;
+      frame?: string | null;
+      flags?: string | null;
+    }
+  | {
+      type: "item_picker";
+      name: string;
+      label: string;
+      title: string;
+      default_item_id: number;
+    }
+  | {
+      type: "spacer";
+      size: string;
+    }
+  | {
+      type: "player_info";
+      player_name: string;
+      level: string;
+      xp: string;
+      raw_parts: string[];
+    };
+
 export interface WsDialog {
   dialog_name: string;
   raw: string;
@@ -277,6 +358,27 @@ export interface WsDialog {
   buttons: DialogButton[];
   confirm_label: string;
   cancel_label: string;
+  checkboxes?: DialogCheckbox[];
+  embed_data?: DialogEmbed[];
+  elements?: DialogElement[];
+  quick_exit?: boolean;
+}
+
+export interface TradeSlot {
+  item_id: number;
+  count: number;
+}
+
+export interface TradeState {
+  partner_net_id: number;
+  partner_name: string;
+  self_slots: TradeSlot[];
+  partner_slots: TradeSlot[];
+  self_locked: boolean;
+  partner_locked: boolean;
+  self_accepted: boolean;
+  partner_accepted: boolean;
+  status_text: string;
 }
 
 

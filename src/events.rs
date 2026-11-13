@@ -9,10 +9,73 @@ pub struct DialogField {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DialogCheckbox {
+    pub name: String,
+    pub label: String,
+    pub checked: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct DialogEmbed {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct DialogButton {
     pub name: String,
     pub label: String,
     pub url: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DialogElement {
+    Label {
+        text: String,
+        size: String,
+        item_id: Option<u32>,
+        align: String,
+    },
+    Textbox {
+        text: String,
+        small: bool,
+    },
+    TextInput {
+        name: String,
+        label: String,
+        default_val: String,
+        max_len: u32,
+        is_password: bool,
+    },
+    Checkbox {
+        name: String,
+        label: String,
+        checked: bool,
+    },
+    Button {
+        name: String,
+        label: String,
+        url: Option<String>,
+        item_id: Option<u32>,
+        frame: Option<String>,
+        flags: Option<String>,
+    },
+    ItemPicker {
+        name: String,
+        label: String,
+        title: String,
+        default_item_id: u32,
+    },
+    Spacer {
+        size: String,
+    },
+    PlayerInfo {
+        player_name: String,
+        level: String,
+        xp: String,
+        raw_parts: Vec<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -25,6 +88,33 @@ pub struct WsDialog {
     pub buttons: Vec<DialogButton>,
     pub confirm_label: String,
     pub cancel_label: String,
+    #[serde(default)]
+    pub checkboxes: Vec<DialogCheckbox>,
+    #[serde(default)]
+    pub embed_data: Vec<DialogEmbed>,
+    #[serde(default)]
+    pub elements: Vec<DialogElement>,
+    #[serde(default)]
+    pub quick_exit: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct TradeSlot {
+    pub item_id: u32,
+    pub count: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct TradeState {
+    pub partner_net_id: u32,
+    pub partner_name: String,
+    pub self_slots: Vec<TradeSlot>,
+    pub partner_slots: Vec<TradeSlot>,
+    pub self_locked: bool,
+    pub partner_locked: bool,
+    pub self_accepted: bool,
+    pub partner_accepted: bool,
+    pub status_text: String,
 }
 
 use crate::world::TileType;
@@ -78,15 +168,53 @@ pub enum WsEvent {
     /// Bot ping updated (emitted when value changes).
     BotPing { bot_id: u32, ping_ms: u32 },
     /// A player appeared in the bot's world.
-    PlayerSpawn { bot_id: u32, net_id: u32, name: String, country: String, x: f32, y: f32 },
+    PlayerSpawn {
+        bot_id: u32,
+        net_id: u32,
+        name: String,
+        country: String,
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        clothes: [u32; 9],
+        #[serde(default)]
+        m_state: u32,
+        #[serde(default)]
+        sm_state: u32,
+    },
     /// A player moved.
     PlayerMove { bot_id: u32, net_id: u32, x: f32, y: f32 },
     /// A player left the bot's world.
     PlayerLeave { bot_id: u32, net_id: u32 },
+    /// Remote player clothing updated via OnSetClothing.
+    PlayerClothes { bot_id: u32, net_id: u32, clothes: [u32; 9] },
+    /// Local bot clothing updated via OnSetClothing.
+    BotClothes { bot_id: u32, clothes: [u32; 9] },
     /// Full world data (sent once on world load).
-    WorldLoaded { bot_id: u32, name: String, width: u32, height: u32, tiles: Vec<WsTile> },
+    WorldLoaded {
+        bot_id: u32,
+        name: String,
+        width: u32,
+        height: u32,
+        #[serde(default)]
+        base_weather: u16,
+        #[serde(default)]
+        current_weather: u16,
+        tiles: Vec<WsTile>,
+    },
+    /// World active weather changed via OnSetCurrentWeather.
+    WeatherUpdate { bot_id: u32, weather: u16 },
     /// A single tile was updated.
-    TileUpdate { bot_id: u32, x: u32, y: u32, fg: u16, bg: u16 },
+    TileUpdate {
+        bot_id: u32,
+        x: u32,
+        y: u32,
+        fg: u16,
+        bg: u16,
+        #[serde(default)]
+        flags: u16,
+        tile_type: TileType,
+    },
     /// The full set of dropped world objects changed.
     ObjectsUpdate { bot_id: u32, objects: Vec<WsObject> },
     /// Bot inventory updated.
@@ -95,6 +223,16 @@ pub enum WsEvent {
     Console { bot_id: u32, message: String },
     /// A chat / game message arrived from the server or sent by the bot.
     Chat { bot_id: u32, message: String, kind: ChatKind },
+    /// Overhead speech bubble triggered via OnTalkBubble.
+    TalkBubble { bot_id: u32, net_id: u32, text: String, bubble_type: u8 },
+    /// Server requested audio SFX playback (`action|play_sfx`).
+    PlaySfx { bot_id: u32, file: String, delay_ms: u32 },
+    /// Player-to-player trade session started (`OnStartTrade`).
+    TradeStart { bot_id: u32, partner_net_id: u32, partner_name: String },
+    /// Trade window state/slots updated (`OnTradeStatus`).
+    TradeStatus { bot_id: u32, trade: TradeState },
+    /// Trade session closed (`OnForceTradeEnd`).
+    TradeEnd { bot_id: u32, reason: String },
     /// Account info extracted from the Track packet (sent once per login).
     BotTrackInfo { bot_id: u32, level: u32, grow_id: u64, install_date: u64, global_playtime: u64, awesomeness: u32 },
     /// GrowID resolved from SetHasGrowID (useful when logged in via ltoken).

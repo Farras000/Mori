@@ -118,3 +118,36 @@ Dokumen teknis ini merangkum perubahan arsitektur, kontrak protokol/jaringan, de
      * `cd web; bun run build`: **Lulus** (`2576 modules transformed`, `972ms`).
      * `cargo test --no-fail-fast`: **82 passed, 0 failed, 0 ignored**.
      * `cargo build --release`: **Lulus** (`45.38s`, output `target/release/Mori.exe`).
+
+---
+
+## 5. Update Gameplay Native: Dialog, Trade, Wrench Priority, Aset & Perbaikan Visual
+
+Lanjutan implementasi di cabang `feature/native-web-game` setelah checkpoint physics menambahkan paritas protokol & UI untuk dialog interaktif, trade, prioritas klik wrench, rendering aset dunia/cuaca, serta perbaikan bug visual modal.
+
+### 5.1 Backend Rust (`src/bot/core.rs`, `src/events.rs`, `src/web.rs`, `src/bot_state.rs`, `src/grpc/service.rs`)
+* **Parser Dialog Native & Command Interaksi ([`src/bot/core.rs`](file:///C:/Users/Administrator/Desktop/botting/Mori/src/bot/core.rs), [`src/events.rs`](file:///C:/Users/Administrator/Desktop/botting/Mori/src/events.rs)):**
+  * `parse_quick_dialog` menghasilkan `WsDialog` terstruktur lengkap dengan `elements: Vec<DialogElement>` (`Label`, `Textbox`, `TextInput`, `Checkbox`, `Button`, `ItemPicker`, `Spacer`, `PlayerInfo`), `checkboxes: Vec<DialogCheckbox>`, `embed_data: Vec<DialogEmbed>`, serta `quick_exit`.
+  * Menambahkan `BotCommand` / `CmdRequest` (`src/web.rs`): `WrenchSelf`, `Active { x, y }`, `Enter { pass }`, `TradeStart`, `TradeOfferItem`, `TradeAccept`, `TradeConfirm`, `TradeCancel`, dan `DismissDialog`.
+  * Guard single-tap pada `BotCommand::HoldAction`: ketika `item == 32` (Wrench), `self.interactive.hold` dikosongkan sehingga tap wrench hanya dieksekusi satu kali lewat `pending_tap` tanpa pengulangan.
+* **Event Dunia, Pakaian, Bubble, SFX, & Trade ([`src/events.rs`](file:///C:/Users/Administrator/Desktop/botting/Mori/src/events.rs), [`src/grpc/service.rs`](file:///C:/Users/Administrator/Desktop/botting/Mori/src/grpc/service.rs)):**
+  * Menambahkan `TradeState` / `TradeSlot`, `WsEvent::{PlayerClothes, BotClothes, WeatherUpdate, TalkBubble, PlaySfx, TradeStart, TradeStatus, TradeEnd}`, serta metadata `WsTile.flags` & `WsTile.tile_type` pada `WorldLoaded` dan `TileUpdate` + `base_weather`/`current_weather`.
+  * Menambahkan mapping semua `WsEvent` operasional baru pada `event_bot_id()` dan `event_to_proto()` -> `mori::ConsoleEvent` agar stream gRPC tetap kompatibel tanpa pemutusan `match` exhaustive.
+* **CDN Proxy & Cache Disk Lokal ([`src/web.rs`](file:///C:/Users/Administrator/Desktop/botting/Mori/src/web.rs)):**
+  * Handler `/growtopia-cdn/{*path}` (`growtopia_cdn`) membersihkan path (`sanitize_cdn_rel_path`), membaca/menyimpan file aset (`.png`, `.ogg`, `.wav`, dll.) di `cache/growtopia` (override lewat `MORI_CDN_CACHE_DIR`), dan mendukung fallback mirror lewat env `GROWTOPIA_CDN_URL` dan `GROWTOPIA_CDN_MIRROR`. Folder `cache/` diabaikan dari Git melalui `.gitignore`.
+
+### 5.2 Frontend Web (`web/src/`)
+* **Tokenisasi Warna GT & Perbaikan Modal Dialog ([`web/src/lib/gt-colors.ts`](file:///C:/Users/Administrator/Desktop/botting/Mori/web/src/lib/gt-colors.ts), [`web/src/components/game-dialog-modal.tsx`](file:///C:/Users/Administrator/Desktop/botting/Mori/web/src/components/game-dialog-modal.tsx)):**
+  * Memisahkan `tokenizeGTColors(text)` (dipakai oleh komponen React `<GtText />` untuk merender warna GT sebagai JSX `<span>` tanpa membocorkan HTML mentah) dan mempertahankan `parseGTColors(text)` untuk konteks HTML.
+  * Deduplikasi header dialog: label pertama di `elements` (atau baris pertama `body_text` pada mode fallback) yang identik dengan `dialog.title` diangkat ke `<DialogTitle>` beserta `<ItemIcon />`-nya dan tidak dirender dua kali di body.
+  * Menghapus tombol close bawaan Radix yang ganda dengan `showCloseButton={false}` pada `<DialogContent>`, serta menambahkan `dismissedRef` + pembersihan optimistik `active_dialog: null` di `botsAtom` pada `handleDismiss`.
+* **Trade Modal ([`web/src/components/trade-modal.tsx`](file:///C:/Users/Administrator/Desktop/botting/Mori/web/src/components/trade-modal.tsx)):**
+  * UI Trade live dua sisi dengan pencarian item Backpack, peringatan perubahan tawaran partner (`partnerModifiedWarning`), toggle lock/confirm, `showCloseButton={false}`, dan guard `cancelledRef` agar `trade_cancel` tidak terkirim berulang.
+* **Canvas Prioritas Wrench & Fidelitas Tile/Cuaca ([`web/src/components/game-canvas.tsx`](file:///C:/Users/Administrator/Desktop/botting/Mori/web/src/components/game-canvas.tsx), [`web/src/lib/tile-layer.ts`](file:///C:/Users/Administrator/Desktop/botting/Mori/web/src/lib/tile-layer.ts), [`web/src/lib/texture-cache.ts`](file:///C:/Users/Administrator/Desktop/botting/Mori/web/src/lib/texture-cache.ts), [`web/src/pages/GamePage.tsx`](file:///C:/Users/Administrator/Desktop/botting/Mori/web/src/pages/GamePage.tsx)):**
+  * Aksi wrench mengirim command atomik `{ type: 'wrench', x, y }` dengan debounce `lastWrenchAtRef` (`300ms`), mengutamakan tile foreground interaktif sebelum player/self, mendukung `Shift + Click`/`R` untuk `wrench_self`, `Alt + Click` menembus player, dan `F`/Double-Click untuk `active(x, y)`.
+  * Merender benih/pohon (`TileType::Seed` / `item_id % 2 === 1`) dengan komposit sprite batang + daun + tint warna + buah matang (`renderSeedTreeCanvas`), cuaca dunia dinamis, overlay Vending Machine/Display Block/Shelf, speech bubbles bertumpuk (`TalkBubble`), pakaian 9 slot, serta pemutar SFX dengan kontrol mute di `GamePage.tsx`.
+
+### 5.3 Verifikasi Release Terbaru
+* `cd web && npm run build` (`tsc -b && vite build`): **Lulus** (`2577 modules transformed`, output `dist/index.html` `947` bytes).
+* `cargo test`: **84 passed, 0 failed, 0 ignored**.
+* `cargo build --release`: **Lulus** (`59.30s`, output `target/release/Mori.exe` `25.209.307` bytes; `target/debug` dibersihkan).

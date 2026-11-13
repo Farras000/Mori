@@ -54,22 +54,46 @@ class TextureCacheManager {
     const cacheKey = `https://texture-cache.local/v2/${textureFileName}`;
     const cachedResponse = await cache.match(cacheKey);
 
-    let pngBlob: Blob;
+    let pngBlob: Blob | null = null;
 
     if (cachedResponse) {
-      pngBlob = await cachedResponse.blob();
-    } else {
-      const rttexBlob = await external_api.stiledevs.getGameTextureAssets(
-        textureFileName
-      );
+      const candidate = await cachedResponse.blob();
+      if (candidate.size > 0) {
+        pngBlob = candidate;
+      } else {
+        await cache.delete(cacheKey);
+      }
+    }
 
-      const arrayBuffer = await rttexBlob.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      const pngData = await RTTEX.decode(uint8Array);
-      // @ts-expect-error idk but it works
-      pngBlob = new Blob([pngData.buffer], { type: "image/png" });
-
-      await cache.put(cacheKey, new Response(pngBlob.slice()));
+    if (!pngBlob) {
+      let lastError: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const rttexBlob = await external_api.stiledevs.getGameTextureAssets(
+            textureFileName
+          );
+          const arrayBuffer = await rttexBlob.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          if (uint8Array.byteLength < 6) {
+            throw new Error(`Empty texture payload for ${textureFileName}`);
+          }
+          const pngData = await RTTEX.decode(uint8Array);
+          // @ts-expect-error idk but it works
+          pngBlob = new Blob([pngData.buffer], { type: "image/png" });
+          await cache.put(cacheKey, new Response(pngBlob.slice()));
+          break;
+        } catch (err) {
+          lastError = err;
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 300 * attempt));
+          }
+        }
+      }
+      if (!pngBlob) {
+        throw lastError instanceof Error
+          ? lastError
+          : new Error(`Failed to load texture ${textureFileName}`);
+      }
     }
 
     const objectUrl = URL.createObjectURL(pngBlob);

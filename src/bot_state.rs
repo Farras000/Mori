@@ -62,6 +62,9 @@ pub struct PlayerInfo {
     pub pos_x:   f32,
     pub pos_y:   f32,
     pub country: String,
+    pub clothes: [u32; 9],
+    pub m_state: u32,
+    pub sm_state: u32,
 }
 
 #[derive(Clone, Serialize)]
@@ -162,6 +165,9 @@ pub struct BotState {
     pub pos_y:           f32,
     pub world_width:     u32,
     pub world_height:    u32,
+    pub base_weather:    u16,
+    pub current_weather: u16,
+    pub local_clothes:   [u32; 9],
     pub tiles:           Vec<TileInfo>,
     pub objects:         Vec<WorldObjectInfo>,
     pub players:         Vec<PlayerInfo>,
@@ -199,6 +205,8 @@ pub struct BotState {
     pub proxy: Option<ProxyInfo>,
     /// Active modal game dialog or captcha requested by server, if any.
     pub active_dialog: Option<crate::events::WsDialog>,
+    /// Active player-to-player trade session state, if any.
+    pub active_trade: Option<crate::events::TradeState>,
     /// Sections and worlds currently available from the server's world select menu.
     pub world_menu: Vec<WorldMenuSection>,
     /// Effective interaction reach (max of punch/build or manual override).
@@ -227,6 +235,9 @@ impl Default for BotState {
             pos_y: 0.0,
             world_width: 0,
             world_height: 0,
+            base_weather: 0,
+            current_weather: 0,
+            local_clothes: [0; 9],
             tiles: Vec::new(),
             objects: Vec::new(),
             players: Vec::new(),
@@ -249,6 +260,7 @@ impl Default for BotState {
             auto_rotate_reconnect: crate::vsproxy::VsProxyConfig::from_env().map(|c| c.auto_roll).unwrap_or(true),
             proxy: None,
             active_dialog: None,
+            active_trade: None,
             world_menu: Vec::new(),
             action_reach: 2,
             punch_reach: 2,
@@ -275,7 +287,13 @@ pub enum BotCommand {
     Hit { x: i32, y: i32 },
     Wrench { x: i32, y: i32 },
     WrenchPlayer { net_id: u32 },
+    WrenchSelf,
     Active { x: i32, y: i32 },
+    TradeStart { target_net_id: u32 },
+    TradeOfferItem { item_id: u32, count: u32 },
+    TradeAccept { locked: bool },
+    TradeConfirm,
+    TradeCancel,
     Enter { pass: Option<String> },
     Wear { item_id: u32 },
     Unwear { item_id: u32 },
