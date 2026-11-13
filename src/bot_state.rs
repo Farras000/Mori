@@ -201,10 +201,18 @@ pub struct BotState {
     pub active_dialog: Option<crate::events::WsDialog>,
     /// Sections and worlds currently available from the server's world select menu.
     pub world_menu: Vec<WorldMenuSection>,
-    /// Interaction / hit reach in tiles (default 4, up to 20 in extended mode).
+    /// Effective interaction reach (max of punch/build or manual override).
     pub action_reach: u8,
+    /// Native/resolved punch reach in tiles (default 2).
+    pub punch_reach: u8,
+    /// Native/resolved build/place reach in tiles (default 2).
+    pub build_reach: u8,
+    /// Optional extended reach override (`Some(n)` from UI toggle, `None` = native server/item reach).
+    pub reach_override: Option<u8>,
     /// Whether the bot is in interactive real-time control mode.
     pub interactive: bool,
+    /// Active item/malady physics modifiers (double jump, slow fall, speed, malady).
+    pub physics_mods: crate::physics::CharacterModifiers,
 }
 
 impl Default for BotState {
@@ -242,8 +250,12 @@ impl Default for BotState {
             proxy: None,
             active_dialog: None,
             world_menu: Vec::new(),
-            action_reach: 4,
+            action_reach: 2,
+            punch_reach: 2,
+            build_reach: 2,
+            reach_override: None,
             interactive: false,
+            physics_mods: Default::default(),
         }
     }
 }

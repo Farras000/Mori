@@ -51,7 +51,7 @@ class TextureCacheManager {
 
   private async _loadTexture(textureFileName: string): Promise<TextureEntry> {
     const cache = await this.getCacheApi();
-    const cacheKey = `https://texture-cache.local/${textureFileName}`;
+    const cacheKey = `https://texture-cache.local/v2/${textureFileName}`;
     const cachedResponse = await cache.match(cacheKey);
 
     let pngBlob: Blob;
@@ -112,6 +112,88 @@ class TextureCacheManager {
     return croppedUrl;
   }
 
+  private itemIcons = new Map<string, string>();
+
+  /**
+   * Decode/cache a single item icon trimmed to its non-transparent bounds and centered
+   * proportionally onto a crisp 32x32 canvas (prevents flat wearables like Jeans from rendering
+   * as tiny bottom strips).
+   */
+  async getCroppedItemIcon(
+    textureFileName: string,
+    textureX: number,
+    textureY: number
+  ): Promise<string> {
+    const iconKey = `${textureFileName}:${textureX}:${textureY}`;
+    const existing = this.itemIcons.get(iconKey);
+    if (existing) return existing;
+
+    const rawUrl = await this.getCroppedTile(textureFileName, textureX, textureY);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Failed to load cropped item icon'));
+        el.src = rawUrl;
+      });
+      const w = img.width || 32;
+      const h = img.height || 32;
+      const scanCanvas = document.createElement('canvas');
+      scanCanvas.width = w;
+      scanCanvas.height = h;
+      const sctx = scanCanvas.getContext('2d');
+      if (!sctx) return rawUrl;
+      sctx.drawImage(img, 0, 0);
+      const data = sctx.getImageData(0, 0, w, h).data;
+
+      let minX = w, minY = h, maxX = -1, maxY = -1;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (data[(y * w + x) * 4 + 3] > 8) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+
+      if (maxX < minX || maxY < minY) {
+        this.itemIcons.set(iconKey, rawUrl);
+        return rawUrl;
+      }
+
+      const bw = maxX - minX + 1;
+      const bh = maxY - minY + 1;
+      // Full-sized blocks (e.g. Dirt/Rock 32x32) already fill the cell cleanly
+      if (bw >= 26 && bh >= 26) {
+        this.itemIcons.set(iconKey, rawUrl);
+        return rawUrl;
+      }
+
+      const out = document.createElement('canvas');
+      out.width = 32;
+      out.height = 32;
+      const octx = out.getContext('2d');
+      if (!octx) return rawUrl;
+      octx.imageSmoothingEnabled = false;
+
+      // Scale smaller/flat wearables (like 20x6 Jeans) cleanly to ~26px span, centered
+      const scale = Math.min(3.2, 26 / Math.max(bw, bh));
+      const dw = Math.max(1, Math.round(bw * scale));
+      const dh = Math.max(1, Math.round(bh * scale));
+      const dx = Math.round((32 - dw) / 2);
+      const dy = Math.round((32 - dh) / 2);
+
+      octx.drawImage(img, minX, minY, bw, bh, dx, dy, dw, dh);
+      const dataUrl = out.toDataURL('image/png');
+      this.itemIcons.set(iconKey, dataUrl);
+      return dataUrl;
+    } catch {
+      return rawUrl;
+    }
+  }
+
   releaseTile(
     textureFileName: string,
     textureX: number,
@@ -140,6 +222,59 @@ class TextureCacheManager {
           }
         }, 10000);
       }
+    }
+  }
+
+  /** Crop an arbitrary rectangular pixel region `(sx, sy, sw, sh)` from a cached `.rttex` asset. */
+  async getCroppedRegion(
+    textureFileName: string,
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+  ): Promise<string | null> {
+    const cacheKey = `${textureFileName}:reg:${sx},${sy},${sw},${sh}`;
+    const existing = this.tiles.get(cacheKey);
+    if (existing) {
+      existing.refCount++;
+      return existing.objectUrl;
+    }
+
+    try {
+      const texture = await this.getTexture(textureFileName);
+      const bitmap = await createImageBitmap(texture.blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = sw;
+      canvas.height = sh;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        bitmap.close();
+        return null;
+      }
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+      bitmap.close();
+
+      const croppedBlob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob((blob) => resolve(blob), "image/png"),
+      );
+      if (!croppedBlob) return null;
+
+      const objectUrl = URL.createObjectURL(croppedBlob);
+      this.tiles.set(cacheKey, { objectUrl, refCount: 1 });
+      return objectUrl;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Return the decoded PNG object URL for a full `.rttex` sprite sheet. */
+  async getFullTextureUrl(textureFileName: string): Promise<string | null> {
+    try {
+      const texture = await this.getTexture(textureFileName);
+      return texture.objectUrl;
+    } catch {
+      return null;
     }
   }
 

@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react'
 import { useItemRecord } from '@/lib/item-cache'
 import { textureCacheManager } from '@/lib/texture-cache'
+import { getGtSeedDataUrl } from '@/lib/gt-sprites'
 import { getIsolatedSpriteCoords } from './texture-image'
 import { cn } from '@/lib/utils'
 
@@ -30,8 +31,20 @@ export const ItemIcon = memo(function ItemIcon({
     async function loadIcon() {
       if (!item) return
       try {
+        if (item.id % 2 === 1 || item.action_type === 19) {
+          const seedUrl = await getGtSeedDataUrl(
+            item.seed_base_sprite,
+            item.seed_overlay_sprite,
+            item.base_color,
+            item.overlay_color,
+          )
+          if (!cancelled && seedUrl) {
+            setImgUrl(seedUrl)
+            return
+          }
+        }
         const coords = getIsolatedSpriteCoords(item, 0)
-        const url = await textureCacheManager.getCroppedTile(
+        const url = await textureCacheManager.getCroppedItemIcon(
           item.texture_file_name,
           coords.x,
           coords.y

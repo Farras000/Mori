@@ -23,6 +23,7 @@ import {
   selectedBotIdAtom,
   botsAtom,
   itemNamesAtom,
+  hydrateBotFromState,
   type LiveBot,
 } from "@/lib/store";
 import { api } from "@/lib/api";
@@ -76,45 +77,7 @@ export function BotDetail({
 
   // Seed full state from REST on mount / bot change
   useEffect(() => {
-    api.getBotState(bot.id).then((s) => {
-      setBots((m) => {
-        const existing = m.get(bot.id);
-        if (!existing) return m;
-        const players = new Map(s.players.map((p) => [p.net_id, p]));
-        const tiles = s.tiles.map((t) => ({
-          fg: t.fg_item_id,
-          bg: t.bg_item_id,
-          flags: t.flags,
-          tile_type: t.tile_type,
-        }));
-        return new Map(m).set(bot.id, {
-          ...existing,
-          status: s.status,
-          world_name: s.world_name,
-          pos_x: s.pos_x,
-          pos_y: s.pos_y,
-          world_width: s.world_width,
-          world_height: s.world_height,
-          tiles,
-          players,
-          objects: s.objects,
-          inventory: s.inventory,
-          inventory_slots: s.inventory_slots,
-          gems: s.gems,
-          console: s.console,
-          ping_ms: s.ping_ms,
-          delays: s.delays,
-          track_info: s.track_info,
-          auto_collect: s.auto_collect,
-          collect_radius_tiles: s.collect_radius_tiles,
-          collect_blacklist: s.collect_blacklist,
-          auto_reconnect: s.auto_reconnect,
-          auto_rotate_reconnect: s.auto_rotate_reconnect ?? true,
-          proxy: s.proxy ?? null,
-        });
-      });
-    })
-      .catch(() => {});
+    hydrateBotFromState(bot.id, setBots);
   }, [bot.id, setBots]);
 
   return (

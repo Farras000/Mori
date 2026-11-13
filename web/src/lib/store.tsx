@@ -1,7 +1,7 @@
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { moriWs, type TileData } from './ws'
-import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo, WsDialog, WorldMenuSection } from './api'
+import type { BotStatus, BotSummary, InventoryItem, Player, WorldObject, ItemRecord, ProxyInfo, WsDialog, WorldMenuSection, CharacterModifiers } from './api'
 import { api } from './api'
 
 export interface TrackInfo {
@@ -43,8 +43,15 @@ export interface LiveBot {
   active_dialog: WsDialog | null
   world_menu: WorldMenuSection[]
   action_reach: number
+  punch_reach: number
+  build_reach: number
+  reach_override: number | null
   interactive: boolean
+  physics_mods?: CharacterModifiers
 }
+
+const lastBotMoveUiAt = new Map<number, number>()
+const pendingBotMoveUiTimer = new Map<number, ReturnType<typeof setTimeout>>()
 
 export function makeBot(id: number, username: string): LiveBot {
   return {
@@ -67,7 +74,10 @@ export function makeBot(id: number, username: string): LiveBot {
     chat: [],
     active_dialog: null,
     world_menu: [],
-    action_reach: 4,
+    action_reach: 2,
+    punch_reach: 2,
+    build_reach: 2,
+    reach_override: null,
     interactive: false,
   }
 }
@@ -93,12 +103,13 @@ function patchBot(
   return new Map(map).set(id, { ...bot, ...patch })
 }
 
-export function useMoriStore() {
+export function useMoriStore(enabled = true) {
   const setBots = useSetAtom(botsAtom)
   const setItemNames = useSetAtom(itemNamesAtom)
   const setItemColors = useSetAtom(itemColorsAtom)
 
   useEffect(() => {
+    if (!enabled) return
     moriWs.connect()
 
     const syncBots = () => {
@@ -163,8 +174,27 @@ export function useMoriStore() {
           world_name: d.world_name, tiles: [], players: new Map(), objects: [],
         }))],
 
-      ['BotMove', (d: { bot_id: number; x: number; y: number }) =>
-        setBots((m) => patchBot(m, d.bot_id, { pos_x: d.x, pos_y: d.y }))],
+      ['BotMove', (d: { bot_id: number; x: number; y: number }) => {
+        const now = performance.now()
+        const last = lastBotMoveUiAt.get(d.bot_id) ?? 0
+        if (now - last >= 100) {
+          const t = pendingBotMoveUiTimer.get(d.bot_id)
+          if (t) { clearTimeout(t); pendingBotMoveUiTimer.delete(d.bot_id) }
+          lastBotMoveUiAt.set(d.bot_id, now)
+          setBots((m) => patchBot(m, d.bot_id, { pos_x: d.x, pos_y: d.y }))
+        } else {
+          const prevT = pendingBotMoveUiTimer.get(d.bot_id)
+          if (prevT) clearTimeout(prevT)
+          pendingBotMoveUiTimer.set(
+            d.bot_id,
+            setTimeout(() => {
+              pendingBotMoveUiTimer.delete(d.bot_id)
+              lastBotMoveUiAt.set(d.bot_id, performance.now())
+              setBots((m) => patchBot(m, d.bot_id, { pos_x: d.x, pos_y: d.y }))
+            }, Math.max(16, 100 - (now - last))),
+          )
+        }
+      }],
 
       ['BotGems', (d: { bot_id: number; gems: number }) =>
         setBots((m) => patchBot(m, d.bot_id, { gems: d.gems }))],
@@ -277,6 +307,21 @@ export function useMoriStore() {
 
       ['WorldMenu', (d: { bot_id: number; sections: WorldMenuSection[] }) =>
         setBots((m) => patchBot(m, d.bot_id, { world_menu: d.sections }))],
+
+      ['BotPhysicsMods', (d: { bot_id: number; mods: CharacterModifiers }) =>
+        setBots((m) => {
+          const bot = m.get(d.bot_id)
+          if (!bot) return m
+          const punch_reach = d.mods.punch_reach ?? 2
+          const build_reach = d.mods.build_reach ?? 2
+          const action_reach = bot.reach_override ?? Math.max(punch_reach, build_reach)
+          return patchBot(m, d.bot_id, {
+            physics_mods: d.mods,
+            punch_reach,
+            build_reach,
+            action_reach,
+          })
+        })],
     ]
 
     for (const [event, handler] of handlers) {
@@ -288,7 +333,62 @@ export function useMoriStore() {
       }
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [setBots, setItemNames])
+  }, [enabled, setBots, setItemNames, setItemColors])
+}
+
+/** Hydrate a LiveBot entry in `botsAtom` with the latest full snapshot from `/bots/:id`. */
+export function hydrateBotFromState(
+  botId: number,
+  setBots: (updater: (prev: Map<number, LiveBot>) => Map<number, LiveBot>) => void,
+): Promise<void> {
+  return api
+    .getBotState(botId)
+    .then((s) => {
+      setBots((m) => {
+        const existing = m.get(botId)
+        if (!existing) return m
+        const players = new Map(s.players.map((p) => [p.net_id, p]))
+        const tiles = s.tiles.map((t) => ({
+          fg: t.fg_item_id,
+          bg: t.bg_item_id,
+          flags: t.flags,
+          tile_type: t.tile_type,
+        }))
+        return new Map(m).set(botId, {
+          ...existing,
+          status: s.status,
+          world_name: s.world_name,
+          pos_x: s.pos_x,
+          pos_y: s.pos_y,
+          world_width: s.world_width,
+          world_height: s.world_height,
+          tiles,
+          players,
+          objects: s.objects,
+          inventory: s.inventory,
+          inventory_slots: s.inventory_slots,
+          gems: s.gems,
+          console: s.console,
+          ping_ms: s.ping_ms,
+          delays: s.delays,
+          track_info: s.track_info,
+          auto_collect: s.auto_collect,
+          collect_radius_tiles: s.collect_radius_tiles,
+          collect_blacklist: s.collect_blacklist,
+          collect_path_check: s.collect_path_check ?? existing.collect_path_check,
+          auto_reconnect: s.auto_reconnect,
+          auto_rotate_reconnect: s.auto_rotate_reconnect ?? true,
+          proxy: s.proxy ?? null,
+          action_reach: s.action_reach ?? existing.action_reach ?? 2,
+          punch_reach: s.punch_reach ?? s.physics_mods?.punch_reach ?? existing.punch_reach ?? 2,
+          build_reach: s.build_reach ?? s.physics_mods?.build_reach ?? existing.build_reach ?? 2,
+          reach_override: s.reach_override !== undefined ? s.reach_override : existing.reach_override,
+          interactive: s.interactive ?? existing.interactive,
+          physics_mods: s.physics_mods ?? existing.physics_mods,
+        })
+      })
+    })
+    .catch(() => {})
 }
 
 export { useAtom, useAtomValue, useSetAtom }

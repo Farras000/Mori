@@ -1,4 +1,4 @@
-import type { BotStatus, WorldObject, InventoryItem, WsDialog, WorldMenuSection } from './api'
+import type { BotStatus, WorldObject, InventoryItem, WsDialog, WorldMenuSection, CharacterModifiers } from './api'
 import { authStore } from './auth'
 
 // ── Event payload types ────────────────────────────────────────────────────
@@ -15,7 +15,7 @@ export type WsEventMap = {
   BotRemoved: { bot_id: number }
   BotStatus: { bot_id: number; status: BotStatus }
   BotWorld: { bot_id: number; world_name: string }
-  BotMove: { bot_id: number; x: number; y: number }
+  BotMove: { bot_id: number; x: number; y: number; on_ground?: boolean }
   BotGems: { bot_id: number; gems: number }
   BotPing: { bot_id: number; ping_ms: number }
   BotAutoCollect: { bot_id: number; enabled: boolean }
@@ -41,6 +41,8 @@ export type WsEventMap = {
   DialogRequest: { bot_id: number; dialog: WsDialog }
   DialogClose: { bot_id: number }
   WorldMenu: { bot_id: number; sections: WorldMenuSection[] }
+  BotPhysicsMods: { bot_id: number; mods: CharacterModifiers }
+  TileDamage: { bot_id: number; x: number; y: number; damage: number; max_health: number }
 }
 
 type Listener<K extends keyof WsEventMap> = (data: WsEventMap[K]) => void
@@ -80,9 +82,9 @@ class EventBus {
 class MoriWebSocket {
   readonly bus = new EventBus()
   private ws: WebSocket | null = null
-  private posSubscribers = new Map<number, Set<(x: number, y: number) => void>>()
+  private posSubscribers = new Map<number, Set<(x: number, y: number, onGround?: boolean) => void>>()
 
-  subscribePos(botId: number, cb: (x: number, y: number) => void): () => void {
+  subscribePos(botId: number, cb: (x: number, y: number, onGround?: boolean) => void): () => void {
     if (!this.posSubscribers.has(botId)) {
       this.posSubscribers.set(botId, new Set())
     }
@@ -92,8 +94,8 @@ class MoriWebSocket {
     }
   }
 
-  notifyPos(botId: number, x: number, y: number) {
-    this.posSubscribers.get(botId)?.forEach((cb) => cb(x, y))
+  notifyPos(botId: number, x: number, y: number, onGround?: boolean) {
+    this.posSubscribers.get(botId)?.forEach((cb) => cb(x, y, onGround))
   }
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private destroyed = false
@@ -108,8 +110,8 @@ class MoriWebSocket {
       try {
         const { event, data } = JSON.parse(e.data) as { event: string; data: unknown }
         if (event === 'BotMove') {
-          const move = data as { bot_id: number; x: number; y: number }
-          this.notifyPos(move.bot_id, move.x, move.y)
+          const move = data as { bot_id: number; x: number; y: number; on_ground?: boolean }
+          this.notifyPos(move.bot_id, move.x, move.y, move.on_ground)
         }
         this.bus.emit(event as keyof WsEventMap, data as never)
       } catch {

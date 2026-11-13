@@ -1,6 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { botsAtom, selectedBotIdAtom, selectedBotAtom, itemNamesAtom, type LiveBot } from '@/lib/store'
+import {
+  botsAtom,
+  selectedBotIdAtom,
+  selectedBotAtom,
+  itemNamesAtom,
+  hydrateBotFromState,
+  type LiveBot,
+} from '@/lib/store'
 import { api, type InventoryItem } from '@/lib/api'
 import { GameCanvas } from '@/components/game-canvas'
 import { GameDialogModal } from '@/components/game-dialog-modal'
@@ -29,11 +36,34 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 
+function extractChatDisplayText(line: string): string | null {
+  const cleaned = line.replace(/\0/g, '').trim()
+  if (!cleaned) return null
+  const parts = cleaned
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const isSfxPayload = parts.some(
+    (p) =>
+      p === 'action|play_sfx' ||
+      p.startsWith('action|play_sfx') ||
+      p.startsWith('file|audio/') ||
+      /^delayMS\|\d+/.test(p)
+  )
+  if (isSfxPayload) {
+    const msgLine = parts.find((p) => p.startsWith('msg|'))
+    return msgLine ? msgLine.slice(4).trim() || null : null
+  }
+  return cleaned
+}
+
 export function GamePage({ onBack }: { onBack: () => void }) {
   const bots = useAtomValue(botsAtom)
+  const setBots = useSetAtom(botsAtom)
   const setSelectedBotId = useSetAtom(selectedBotIdAtom)
   const selectedBot = useAtomValue(selectedBotAtom)
   const itemNames = useAtomValue(itemNamesAtom)
+  const setItemNames = useSetAtom(itemNamesAtom)
 
   // Fallback to first bot if none selected
   const botList = Array.from(bots.values())
@@ -41,7 +71,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
   // Active item ID: 18 = punch, 32 = wrench, other = placeable item
   const [activeItemId, setActiveItemId] = useState<number>(18)
-  const [actionReach, setActionReach] = useState<number>(bot?.action_reach || 4)
+  const [reachOverride, setReachOverride] = useState<number | null>(bot?.reach_override ?? null)
   const [chatOpen, setChatOpen] = useState(true)
   const [chatInput, setChatInput] = useState('')
   const [chatStatus, setChatStatus] = useState('')
@@ -65,6 +95,29 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const inputManagerRef = useRef<GameInputManager | null>(null)
 
+  // Hydrate full bot state (tiles, objects, players, inventory, action_reach) on bot switch
+  useEffect(() => {
+    if (!bot?.id) return
+    hydrateBotFromState(bot.id, setBots).catch(() => {})
+  }, [bot?.id, setBots])
+
+  // Ensure itemNames map is populated if initial app boot raced with authentication
+  useEffect(() => {
+    if (Object.keys(itemNames).length > 0) return
+    let cancelled = false
+    api
+      .getItemNames()
+      .then((names) => {
+        if (!cancelled && names && Object.keys(names).length > 0) {
+          setItemNames(names)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [itemNames, setItemNames])
+
   // Attach and maintain GameInputManager for real-time WASD movement
   useEffect(() => {
     if (!bot) return
@@ -83,10 +136,38 @@ export function GamePage({ onBack }: { onBack: () => void }) {
     if (bot && inputManagerRef.current) {
       inputManagerRef.current.setBotId(bot.id)
     }
-    if (bot?.action_reach) {
-      setActionReach(bot.action_reach)
+    if (bot) {
+      setReachOverride(bot.reach_override ?? null)
     }
-  }, [bot?.id, bot?.action_reach])
+  }, [bot?.id, bot?.reach_override])
+
+  const nativePunchReach = bot?.punch_reach ?? bot?.physics_mods?.punch_reach ?? 2
+  const nativeBuildReach = bot?.build_reach ?? bot?.physics_mods?.build_reach ?? 2
+  const effectiveReach =
+    reachOverride !== null
+      ? reachOverride
+      : activeItemId === 18
+        ? nativePunchReach
+        : activeItemId === 32
+          ? Math.max(nativePunchReach, nativeBuildReach)
+          : nativeBuildReach
+
+  const handleActionReachChange = (tiles: number) => {
+    const nextOverride = tiles <= 0 ? null : tiles
+    setReachOverride(nextOverride)
+    if (!bot) return
+    setBots((m) => {
+      const cur = m.get(bot.id)
+      if (!cur) return m
+      const next = new Map(m)
+      next.set(bot.id, {
+        ...cur,
+        reach_override: nextOverride,
+        action_reach: nextOverride ?? Math.max(cur.punch_reach, cur.build_reach),
+      })
+      return next
+    })
+  }
 
   // Suspend input manager when modals are open
   useEffect(() => {
@@ -131,6 +212,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   const handleSendChat = async () => {
     if (!bot) return
     const text = chatInput.trim()
+    chatInputRef.current?.blur()
     if (!text) return
     setChatInput('')
     try {
@@ -142,6 +224,69 @@ export function GamePage({ onBack }: { onBack: () => void }) {
       setTimeout(() => setChatStatus(''), 1500)
     }
   }
+
+  const [backpackTab, setBackpackTab] = useState<'all' | 'blocks' | 'wearables'>('all')
+  const [pinnedHotbar, setPinnedHotbar] = useState<number[]>(() => {
+    try {
+      const saved = bot?.id ? localStorage.getItem(`mori:hotbar:${bot.id}`) : null
+      return saved ? (JSON.parse(saved) as number[]) : []
+    } catch {
+      return []
+    }
+  })
+
+  useEffect(() => {
+    if (!bot?.id) return
+    try {
+      const saved = localStorage.getItem(`mori:hotbar:${bot.id}`)
+      setPinnedHotbar(saved ? (JSON.parse(saved) as number[]) : [])
+    } catch {
+      setPinnedHotbar([])
+    }
+  }, [bot?.id])
+
+  const promoteToHotbar = useCallback(
+    (itemId: number) => {
+      if (!bot?.id || itemId === 18 || itemId === 32) return
+      setPinnedHotbar((prev) => {
+        const next = [itemId, ...prev.filter((id) => id !== itemId)].slice(0, 6)
+        try {
+          localStorage.setItem(`mori:hotbar:${bot.id}`, JSON.stringify(next))
+        } catch {
+          // ignore storage quota errors
+        }
+        return next
+      })
+    },
+    [bot?.id],
+  )
+
+  // Quick hotbar items: Slots 1 & 2 are fixed Fist/Wrench; 3..8 hold usable non-wearable items
+  // with pinned items first, zero Fist (18) or Wrench (32) duplicates.
+  const hotbarInventory: InventoryItem[] = useMemo(() => {
+    const inv = bot?.inventory ?? []
+    const usable = inv.filter(
+      (s) => s.item_id !== 18 && s.item_id !== 32 && s.action_type !== 20,
+    )
+    const byId = new Map(usable.map((s) => [s.item_id, s]))
+    const picked: InventoryItem[] = []
+    const seen = new Set<number>()
+    for (const id of pinnedHotbar) {
+      const slot = byId.get(id)
+      if (slot && !seen.has(id)) {
+        picked.push(slot)
+        seen.add(id)
+      }
+    }
+    for (const slot of usable) {
+      if (picked.length >= 6) break
+      if (!seen.has(slot.item_id)) {
+        picked.push(slot)
+        seen.add(slot.item_id)
+      }
+    }
+    return picked.slice(0, 6)
+  }, [bot?.inventory, pinnedHotbar])
 
   // Global keybinds
   useEffect(() => {
@@ -190,17 +335,18 @@ export function GamePage({ onBack }: { onBack: () => void }) {
         handleWrenchSelf()
       } else if (e.key.toLowerCase() === 'b') {
         setInventoryModalOpen((prev) => !prev)
-      } else if (e.key >= '3' && e.key <= '9') {
-        const slotIdx = parseInt(e.key) - 3
-        if (bot && bot.inventory[slotIdx]) {
-          setActiveItemId(bot.inventory[slotIdx].item_id)
+      } else if (e.key >= '3' && e.key <= '8') {
+        const slotIdx = parseInt(e.key, 10) - 3
+        const slot = hotbarInventory[slotIdx]
+        if (slot) {
+          setActiveItemId(slot.item_id)
         }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [bot, handleSendChat, handleWrenchSelf, actionItemModal, inventoryModalOpen])
+  }, [bot, hotbarInventory, handleSendChat, handleWrenchSelf, actionItemModal, inventoryModalOpen])
 
   const itemLabel = (id: number) => {
     if (id === 18) return 'Fist / Punch'
@@ -219,12 +365,13 @@ export function GamePage({ onBack }: { onBack: () => void }) {
     )
   }
 
-  // Quick hotbar items: Slots 1 & 2 are Fist and Wrench; 3..8 are inventory items
-  const hotbarInventory: InventoryItem[] = bot.inventory.slice(0, 6)
   const isWorldExit = !bot.world_name || bot.world_name === 'EXIT'
 
-  // Filtered backpack inventory
+  // Filtered backpack inventory by tab + search (excluding duplicate built-in Fist 18 / Wrench 32)
   const filteredInventory = bot.inventory.filter((slot) => {
+    if (slot.item_id === 18 || slot.item_id === 32) return false
+    if (backpackTab === 'blocks' && slot.action_type === 20) return false
+    if (backpackTab === 'wearables' && slot.action_type !== 20) return false
     if (!backpackSearch.trim()) return true
     const name = itemLabel(slot.item_id).toLowerCase()
     return name.includes(backpackSearch.toLowerCase()) || String(slot.item_id).includes(backpackSearch)
@@ -260,7 +407,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setGameMenuOpen(true)}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              setGameMenuOpen(true)
+            }}
             className="h-8 px-2.5 text-xs font-semibold gap-1.5 hover:bg-muted text-foreground"
             title="Open Game Menu (ESC)"
           >
@@ -275,7 +425,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
           {botList.length > 1 && (
             <select
               value={bot.id}
-              onChange={(e) => setSelectedBotId(Number(e.target.value))}
+              onChange={(e) => {
+                setSelectedBotId(Number(e.target.value))
+                e.currentTarget.blur()
+              }}
               className="h-8 px-2 rounded border border-border bg-background text-xs font-medium focus:outline-none focus:ring-1 focus:ring-primary"
             >
               {botList.map((b) => (
@@ -328,7 +481,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             size="sm"
             variant="outline"
             className="h-7 text-xs px-2.5 gap-1.5 font-medium hover:bg-accent text-accent-foreground border-white/15"
-            onClick={handleWrenchSelf}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              handleWrenchSelf()
+            }}
             title="Wrench Yourself (R) - Open Profile Dialog"
           >
             <User className="w-3.5 h-3.5 text-primary" />
@@ -339,7 +495,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             variant="ghost"
             size="sm"
             className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-            onClick={toggleFullscreen}
+            onClick={(e) => {
+              e.currentTarget.blur()
+              toggleFullscreen()
+            }}
             title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -356,7 +515,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
           <GameCanvas
             bot={bot}
             activeItemId={activeItemId}
-            actionReach={actionReach}
+            actionReach={effectiveReach}
             onTileHover={setHoveredTile}
             onPlayerWrench={handlePlayerWrench}
             className="w-full h-full"
@@ -371,55 +530,67 @@ export function GamePage({ onBack }: { onBack: () => void }) {
               Chat Feed
             </span>
             <button
-              onClick={() => setChatOpen(!chatOpen)}
+              onClick={(e) => {
+                e.currentTarget.blur()
+                setChatOpen(!chatOpen)
+              }}
               className="text-[10px] hover:text-white transition-colors"
             >
               {chatOpen ? 'Minimize' : 'Expand'}
             </button>
           </div>
 
-          {chatOpen && (
-            <div className="w-[320px] sm:w-[420px] h-[190px] rounded-b-lg bg-black/80 backdrop-blur-md border border-white/15 p-2 flex flex-col gap-1.5 shadow-2xl">
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1 font-mono text-[11px] leading-relaxed pr-1 select-text">
-                {bot.chat.length === 0 ? (
-                  <div className="text-white/40 italic py-2">No messages yet. Press Enter to chat.</div>
-                ) : (
-                  bot.chat.slice(-60).map((line, idx) => (
-                    <div
-                      key={idx}
-                      className="whitespace-pre-wrap break-words"
-                      dangerouslySetInnerHTML={{ __html: parseGTColors(line) }}
-                    />
-                  ))
-                )}
-                <div ref={chatBottomRef} />
-              </div>
+          {chatOpen && (() => {
+            const visibleChatLines = bot.chat
+              .map(extractChatDisplayText)
+              .filter((line): line is string => line !== null)
+              .slice(-60)
 
-              {/* Chat Input */}
-              <div className="shrink-0 flex items-center gap-1 pt-1 border-t border-white/15">
-                <Input
-                  ref={chatInputRef}
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
-                  placeholder="Press Enter to talk (/say, /pull, /ban)..."
-                  className="h-7 text-xs bg-black/50 border-white/20 text-white placeholder:text-white/40"
-                  spellCheck={false}
-                />
-                <Button
-                  size="sm"
-                  className="h-7 px-2.5 text-xs bg-primary hover:bg-primary/90 text-white"
-                  onClick={handleSendChat}
-                  disabled={!chatInput.trim()}
-                >
-                  <Send className="w-3.5 h-3.5" />
-                </Button>
+            return (
+              <div className="w-[320px] sm:w-[420px] h-[190px] rounded-b-lg bg-black/80 backdrop-blur-md border border-white/15 p-2 flex flex-col gap-1.5 shadow-2xl">
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-1 font-mono text-[11px] leading-relaxed pr-1 select-text">
+                  {visibleChatLines.length === 0 ? (
+                    <div className="text-white/40 italic py-2">No messages yet. Press Enter to chat.</div>
+                  ) : (
+                    visibleChatLines.map((line, idx) => (
+                      <div
+                        key={idx}
+                        className="whitespace-pre-wrap break-words"
+                        dangerouslySetInnerHTML={{ __html: parseGTColors(line) }}
+                      />
+                    ))
+                  )}
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Chat Input */}
+                <div className="shrink-0 flex items-center gap-1 pt-1 border-t border-white/15">
+                  <Input
+                    ref={chatInputRef}
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Press Enter to talk (/say, /pull, /ban)..."
+                    className="h-7 text-xs bg-black/50 border-white/20 text-white placeholder:text-white/40"
+                    spellCheck={false}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-7 px-2.5 text-xs bg-primary hover:bg-primary/90 text-white"
+                    onClick={(e) => {
+                      e.currentTarget.blur()
+                      handleSendChat()
+                    }}
+                    disabled={!chatInput.trim()}
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                {chatStatus && (
+                  <div className="text-[10px] text-muted-foreground">{chatStatus}</div>
+                )}
               </div>
-              {chatStatus && (
-                <div className="text-[10px] text-muted-foreground">{chatStatus}</div>
-              )}
-            </div>
-          )}
+            )
+          })()}
         </div>
 
         {/* ── Bottom HUD: Hotbar & Tool Indicators ────────────────────────────── */}
@@ -446,13 +617,37 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             <span className="text-white/40 text-[10px] hidden md:inline">
               Hold Left Click = Punch/Place • Right Click = Wrench
             </span>
+
+            {bot.physics_mods?.active_effects && bot.physics_mods.active_effects.length > 0 && (
+              <div className="flex items-center gap-1 ml-1">
+                {bot.physics_mods.active_effects.map((eff) => {
+                  const isMalady = eff.includes('Feet') || eff.includes('Brainworms') || eff.includes('Gemcuts') || eff.includes('Grumble') || eff.includes('Heart')
+                  return (
+                    <span
+                      key={eff}
+                      className={cn(
+                        'px-1.5 py-0.5 rounded text-[10px] font-semibold border',
+                        isMalady
+                          ? 'bg-rose-500/20 border-rose-400/50 text-rose-300'
+                          : 'bg-cyan-500/20 border-cyan-400/40 text-cyan-200',
+                      )}
+                    >
+                      {eff}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* Quick Inventory Hotbar with Native Graphical Icons */}
           <div className="pointer-events-auto flex items-center gap-1.5 p-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-white/20 shadow-2xl">
             {/* Slot 1: Fist / Punch (18) */}
             <button
-              onClick={() => setActiveItemId(18)}
+              onClick={(e) => {
+                e.currentTarget.blur()
+                setActiveItemId(18)
+              }}
               className={cn(
                 'relative w-12 h-12 rounded-lg border flex flex-col items-center justify-center p-1 transition-all',
                 activeItemId === 18
@@ -467,7 +662,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
             {/* Slot 2: Wrench (32) */}
             <button
-              onClick={() => setActiveItemId(32)}
+              onClick={(e) => {
+                e.currentTarget.blur()
+                setActiveItemId(32)
+              }}
               className={cn(
                 'relative w-12 h-12 rounded-lg border flex flex-col items-center justify-center p-1 transition-all',
                 activeItemId === 32
@@ -480,13 +678,30 @@ export function GamePage({ onBack }: { onBack: () => void }) {
               <ItemIcon itemId={32} size={28} />
             </button>
 
-            {/* Slots 3..8: Hotbar Items */}
-            {hotbarInventory.map((slot, idx) => {
+            {/* Slots 3..8: Fixed-width 6 Hotbar Quick Slots */}
+            {Array.from({ length: 6 }, (_, idx) => {
+              const slot = hotbarInventory[idx]
+              if (!slot) {
+                return (
+                  <div
+                    key={`empty-${idx}`}
+                    className="relative w-12 h-12 rounded-lg border border-white/10 bg-white/[0.02] flex items-center justify-center"
+                    title={`Empty Quick Slot ${idx + 3} — Select an item from Bag`}
+                  >
+                    <span className="absolute top-0.5 left-1 text-[9px] font-mono text-white/25">
+                      {idx + 3}
+                    </span>
+                  </div>
+                )
+              }
               const isSelected = activeItemId === slot.item_id
               return (
                 <button
-                  key={`${slot.item_id}-${idx}`}
-                  onClick={() => setActiveItemId(slot.item_id)}
+                  key={slot.item_id}
+                  onClick={(e) => {
+                    e.currentTarget.blur()
+                    setActiveItemId(slot.item_id)
+                  }}
                   className={cn(
                     'relative w-12 h-12 rounded-lg border flex flex-col items-center justify-center p-1 transition-all',
                     isSelected
@@ -510,7 +725,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setInventoryModalOpen(true)}
+              onClick={(e) => {
+                e.currentTarget.blur()
+                setInventoryModalOpen(true)
+              }}
               className="h-12 px-3 text-xs border-white/20 bg-white/5 hover:bg-white/15 text-white gap-1.5"
               title="Open Full Backpack (B)"
             >
@@ -533,41 +751,88 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             </DialogTitle>
           </DialogHeader>
 
-          {/* Search bar */}
-          <div className="relative mb-1">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
-            <Input
-              value={backpackSearch}
-              onChange={(e) => setBackpackSearch(e.target.value)}
-              placeholder="Search items by name or ID..."
-              className="pl-9 h-9 text-xs bg-background"
-            />
+          {/* Filter tabs & search bar */}
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5 text-xs">
+              {([
+                ['all', 'All'],
+                ['blocks', 'Blocks & Seeds'],
+                ['wearables', 'Wearables'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setBackpackTab(key)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md font-medium transition-colors',
+                    backpackTab === key
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative flex-1 min-w-[160px]">
+              <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
+              <Input
+                value={backpackSearch}
+                onChange={(e) => setBackpackSearch(e.target.value)}
+                placeholder="Search items by name or ID..."
+                className="pl-9 h-9 text-xs bg-background"
+              />
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2 p-1">
             {filteredInventory.map((slot) => {
+              const isWearable = slot.action_type === 20
               const isSelected = activeItemId === slot.item_id
               return (
                 <div
                   key={slot.item_id}
                   className={cn(
                     'group relative flex flex-col items-center justify-between p-2 rounded-lg border text-center transition-all cursor-pointer',
-                    isSelected
+                    slot.is_active && isWearable
+                      ? 'border-emerald-500/80 bg-emerald-500/15 shadow-sm'
+                      : isSelected
                       ? 'border-primary bg-primary/20 shadow-sm'
                       : 'border-border bg-background hover:bg-accent'
                   )}
                   onClick={() => {
-                    setActiveItemId(slot.item_id)
-                    setInventoryModalOpen(false)
+                    if (isWearable) {
+                      api
+                        .sendCmd(bot.id, {
+                          type: slot.is_active ? 'unwear' : 'wear',
+                          item_id: slot.item_id,
+                        })
+                        .catch(() => {})
+                    } else {
+                      setActiveItemId(slot.item_id)
+                      promoteToHotbar(slot.item_id)
+                      setInventoryModalOpen(false)
+                    }
                   }}
+                  title={
+                    isWearable
+                      ? `${itemLabel(slot.item_id)} — Click to ${slot.is_active ? 'Unequip' : 'Equip'}`
+                      : `${itemLabel(slot.item_id)} — Click to equip to Hotbar`
+                  }
                 >
+                  {isWearable && slot.is_active && (
+                    <span className="absolute top-1 left-1 px-1 rounded bg-emerald-500/90 text-[8px] font-bold text-black uppercase leading-tight">
+                      Worn
+                    </span>
+                  )}
                   <ItemIcon itemId={slot.item_id} size={36} />
 
                   <span className="text-[10px] font-medium text-foreground truncate w-full mt-1.5 leading-tight">
                     {itemLabel(slot.item_id)}
                   </span>
                   <span className="text-[10px] font-mono font-bold text-primary mt-0.5">
-                    x{slot.amount}
+                    {isWearable ? (slot.is_active ? 'Equipped' : 'Wear') : `x${slot.amount}`}
                   </span>
 
                   {/* Drop / Trash action triggers on hover */}
@@ -700,8 +965,8 @@ export function GamePage({ onBack }: { onBack: () => void }) {
         isOpen={gameMenuOpen}
         onClose={() => setGameMenuOpen(false)}
         onBackToOverview={onBack}
-        actionReach={actionReach}
-        onActionReachChange={setActionReach}
+        actionReach={effectiveReach}
+        onActionReachChange={handleActionReachChange}
       />
 
       {/* ── In-Game Native Modal Dialog ────────────────────────────────────────── */}

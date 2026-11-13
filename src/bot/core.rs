@@ -142,13 +142,29 @@ pub struct HoldTarget {
     pub item: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TileDamageEntry {
+    pub damage: u16,
+    pub max_health: u16,
+    pub last_hit: std::time::Instant,
+}
+
 pub struct InteractiveState {
     pub enabled: bool,
     pub input: crate::physics::MovementInput,
     pub hold: Option<HoldTarget>,
+    pub pending_tap: Option<HoldTarget>,
+    pub input_dirty: bool,
+    pub was_moving: bool,
+    pub was_facing_left: bool,
     pub action_reach: u8,
+    pub punch_reach: u8,
+    pub build_reach: u8,
+    pub reach_override: Option<u8>,
+    pub tile_damage: std::collections::HashMap<(u32, u32), TileDamageEntry>,
     pub last_tick: std::time::Instant,
     pub last_state_sent: std::time::Instant,
+    pub last_move_emit: std::time::Instant,
     pub last_beat: std::time::Instant,
     pub last_hit: std::time::Instant,
     pub hit_interval_ms: u64,
@@ -161,13 +177,87 @@ impl Default for InteractiveState {
             enabled: false,
             input: crate::physics::MovementInput::default(),
             hold: None,
-            action_reach: 4,
+            pending_tap: None,
+            input_dirty: false,
+            was_moving: false,
+            was_facing_left: false,
+            action_reach: 2,
+            punch_reach: 2,
+            build_reach: 2,
+            reach_override: None,
+            tile_damage: std::collections::HashMap::new(),
             last_tick: now,
             last_state_sent: now,
+            last_move_emit: now,
             last_beat: now,
             last_hit: now,
             hit_interval_ms: 180,
         }
+    }
+}
+
+/// Validate `(gravity, walk_speed)` from `SetCharacterState` (`0x14`), accepting both
+/// canonical `(vector_x2=gravity, vector_y2=walk_speed)` and swapped
+/// `(vector_x2=walk_speed, vector_y2=gravity)` server payloads while keeping values
+/// within safe Growtopia bounds.
+fn extract_server_physics(vector_x2: f32, vector_y2: f32) -> (f32, f32) {
+    let (raw_grav, raw_speed) = if (100.0..=380.0).contains(&vector_x2)
+        && (500.0..=2500.0).contains(&vector_y2)
+    {
+        (vector_y2, vector_x2)
+    } else {
+        (vector_x2, vector_y2)
+    };
+    let gravity = if (400.0..=2000.0).contains(&raw_grav) {
+        raw_grav
+    } else {
+        1000.0
+    };
+    let walk_speed = if (100.0..=350.0).contains(&raw_speed) {
+        raw_speed
+    } else {
+        250.0
+    };
+    (gravity, walk_speed)
+}
+
+/// Extract user-visible text from Growtopia `GameMessage` strings.
+/// Filters out internal SFX/protocol packets (`action|play_sfx`, `delayMS|...`, etc.)
+/// while keeping actual `msg|...` log text or plain chat/system messages.
+fn extract_chat_display_message(raw: &str) -> Option<String> {
+    let mut has_protocol_kv = false;
+    let mut msg_lines = Vec::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("msg|") {
+            let trimmed = rest.trim();
+            if !trimmed.is_empty() {
+                msg_lines.push(trimmed.to_string());
+            }
+            has_protocol_kv = true;
+        } else if line.starts_with("action|")
+            || line.starts_with("delayMS|")
+            || line.starts_with("file|")
+        {
+            has_protocol_kv = true;
+        }
+    }
+
+    if !msg_lines.is_empty() {
+        return Some(msg_lines.join("\n"));
+    }
+    if has_protocol_kv {
+        return None;
+    }
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 
@@ -1426,11 +1516,13 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                 })
                                 .ok();
                             }
-                            self.emit(WsEvent::Chat {
-                                bot_id: self.bot_id,
-                                message: s.to_string(),
-                                kind: ChatKind::Incoming,
-                            });
+                            if let Some(display_msg) = extract_chat_display_message(&s) {
+                                self.emit(WsEvent::Chat {
+                                    bot_id: self.bot_id,
+                                    message: display_msg,
+                                    kind: ChatKind::Incoming,
+                                });
+                            }
                             if s.contains("Advanced Account Protection") {
                                 self.pending_2fa = true;
                             }
@@ -1582,18 +1674,46 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                             }
                             match pkt.packet_type {
                                 GamePacketType::SetCharacterState => {
+                                    // Preserve raw values for on_ping_request anti-cheat echo.
                                     self.local.hack_type = pkt.value;
-                                    self.local.build_length = pkt.jump_count.saturating_sub(126);
-                                    self.local.punch_length =
-                                        pkt.animation_type.saturating_sub(126);
+                                    self.local.build_length = if pkt.jump_count >= 127 {
+                                        pkt.jump_count - 126
+                                    } else {
+                                        2
+                                    };
+                                    self.local.punch_length = if pkt.animation_type >= 127 {
+                                        pkt.animation_type - 126
+                                    } else {
+                                        2
+                                    };
                                     self.local.gravity = pkt.vector_x2;
                                     self.local.velocity = pkt.vector_y2;
-                                    if pkt.vector_x2 > 0.0 {
-                                        self.local.physics_cfg.gravity = pkt.vector_x2;
-                                    }
-                                    if pkt.vector_y2 > 0.0 {
-                                        self.local.physics_cfg.walk_speed = pkt.vector_y2;
-                                    }
+                                    // Never forward raw transport PacketFlags (0x04 SPAWN_RELATED, 0x08 EXTENDED) as character buffs.
+                                    self.local.char_state_flags = 0;
+                                    let (srv_grav, srv_speed) =
+                                        extract_server_physics(pkt.vector_x2, pkt.vector_y2);
+                                    self.local.server_gravity = srv_grav;
+                                    self.local.physics_cfg.gravity = srv_grav;
+                                    self.local.server_walk_speed = srv_speed;
+                                    self.local.physics_cfg.walk_speed = srv_speed;
+
+                                    let extra_hex = Self::format_extra_preview(&pkt.extra_data);
+                                    self.log_console(format!(
+                                        "[Bot] SetCharacterState val={} jc={} anim={} vec2=({:.1},{:.1}) flags=0x{:X} -> grav={:.1} spd={:.1} punch={} build={} extra({})=[{}]",
+                                        pkt.value,
+                                        pkt.jump_count,
+                                        pkt.animation_type,
+                                        pkt.vector_x2,
+                                        pkt.vector_y2,
+                                        pkt.flags.bits(),
+                                        srv_grav,
+                                        srv_speed,
+                                        self.local.punch_length,
+                                        self.local.build_length,
+                                        pkt.extra_data.len(),
+                                        extra_hex
+                                    ));
+                                    self.recompute_physics_mods();
                                 }
                                 GamePacketType::CallFunction => {
                                     let extra = pkt.extra_data.clone();
@@ -1604,7 +1724,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                                 .ok();
                                         }
                                     }
-                                    self.on_call_function(id, &extra);
+                                    self.on_call_function(id, pkt.net_id, &extra);
                                 }
                                 GamePacketType::PingRequest => {
                                     self.on_ping_request(pkt.value);
@@ -1627,7 +1747,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                 GamePacketType::SendMapData => {
                                     let _ = std::fs::write("world.dat", &pkt.extra_data);
                                     self.players.clear();
+                                    let prev_malady = self.local.malady;
                                     self.local = LocalPlayer::default();
+                                    self.local.malady = prev_malady;
                                     match World::parse(&pkt.extra_data) {
                                         Ok(world) => {
                                             self.log_console(format!(
@@ -1711,12 +1833,17 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                                 bot_id: self.bot_id,
                                                 objects: ws_objs,
                                             });
+                                            self.local.extra_mods_bits = 0;
+                                            self.interactive.tile_damage.clear();
+                                            self.recompute_physics_mods();
                                         }
                                         Err(e) => self
                                             .log_console(format!("[Bot] World parse error: {e}")),
                                     }
                                 }
                                 GamePacketType::State => self.on_state(&pkt),
+                                GamePacketType::SetExtraMods => self.on_set_extra_mods(&pkt),
+                                GamePacketType::OnStepOnTileMod => self.on_step_on_tile_mod(&pkt),
                                 GamePacketType::TileChangeRequest => self.on_tile_change(&pkt),
                                 GamePacketType::SendTileUpdateData => {
                                     self.on_send_tile_update_data(&pkt)
@@ -1898,7 +2025,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         self.log_console(format!("[Bot] PingReply sent (challenge={})", challenge));
     }
 
-    fn on_call_function(&mut self, id: enet::PeerID, extra_data: &[u8]) {
+    fn on_call_function(&mut self, id: enet::PeerID, target_net_id: u32, extra_data: &[u8]) {
         let vl = match VariantList::deserialize(extra_data) {
             Ok(v) => v,
             Err(e) => {
@@ -1979,6 +2106,14 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     self.local.net_id = data.get("netID").and_then(|s| s.parse().ok()).unwrap_or(0);
                     self.local.user_id =
                         data.get("userID").and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let spawn_pos = data.get("posXY").and_then(|s| {
+                        let mut parts = s.split('|');
+                        let x = parts.next()?.parse::<f32>().ok()?;
+                        let y = parts.next()?.parse::<f32>().ok()?;
+                        Some((x, y))
+                    });
+                    let settled_spawn = spawn_pos.map(|(x, y)| self.reset_local_physics_at(x, y));
+                    self.recompute_physics_mods();
                     self.log_console(format!(
                         "[Bot] OnSpawn (self) net_id={} user_id={}",
                         self.local.net_id, self.local.user_id
@@ -1991,6 +2126,18 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         let mut s = self.state.write().unwrap();
                         s.status = BotStatus::InGame;
                         s.net_id = self.local.net_id;
+                        if let Some((x, y, _)) = settled_spawn {
+                            s.pos_x = x / 32.0;
+                            s.pos_y = y / 32.0;
+                        }
+                    }
+                    if let Some((x, y, on_ground)) = settled_spawn {
+                        self.emit(WsEvent::BotMove {
+                            bot_id: self.bot_id,
+                            x: x / 32.0,
+                            y: y / 32.0,
+                            on_ground: Some(on_ground),
+                        });
                     }
                     self.emit(WsEvent::BotStatus {
                         bot_id: self.bot_id,
@@ -2091,25 +2238,60 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             "OnSetPos" => {
                 let (x, y) = vl.get(1).map(|v| v.as_vec2()).unwrap_or((0.0, 0.0));
-                self.pos_x = x;
-                self.pos_y = y;
-                self.local.physics.pos = (x, y);
-                self.local.physics.vel = (0.0, 0.0);
-                self.local.physics.on_ground = true;
+                let (px, py, on_ground) = self.reset_local_physics_at(x, y);
                 if self.pathfind_target.is_some() {
                     self.pathfind_recalc = true;
                 }
                 {
                     let mut s = self.state.write().unwrap();
-                    s.pos_x = x / 32.0;
-                    s.pos_y = y / 32.0;
+                    s.pos_x = px / 32.0;
+                    s.pos_y = py / 32.0;
                 }
-                self.log_console(format!("[Bot] OnSetPos → ({x}, {y})"));
+                self.log_console(format!("[Bot] OnSetPos → ({px}, {py})"));
                 self.emit(WsEvent::BotMove {
                     bot_id: self.bot_id,
-                    x: x / 32.0,
-                    y: y / 32.0,
+                    x: px / 32.0,
+                    y: py / 32.0,
+                    on_ground: Some(on_ground),
                 });
+            }
+            "OnSetClothing" => {
+                let is_local = target_net_id == self.local.net_id
+                    || self.local.net_id == 0
+                    || target_net_id == 0
+                    || target_net_id == u32::MAX;
+                if is_local {
+                    let v1 = vl.get(1).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
+                    let v2 = vl.get(2).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
+                    let v3 = vl.get(3).map(|v| v.as_vec3()).unwrap_or((0.0, 0.0, 0.0));
+                    let clothes = [
+                        v1.0.round().max(0.0) as u32,
+                        v1.1.round().max(0.0) as u32,
+                        v1.2.round().max(0.0) as u32,
+                        v2.0.round().max(0.0) as u32,
+                        v2.1.round().max(0.0) as u32,
+                        v2.2.round().max(0.0) as u32,
+                        v3.0.round().max(0.0) as u32,
+                        v3.1.round().max(0.0) as u32,
+                        v3.2.round().max(0.0) as u32,
+                    ];
+                    self.local.equipped_clothes = clothes;
+                    for item in self.inventory.items.values_mut() {
+                        let action_type = self
+                            .items_dat
+                            .find_by_id(item.id as u32)
+                            .map(|info| info.action_type)
+                            .unwrap_or(0);
+                        if action_type == 20 {
+                            if clothes.contains(&(item.id as u32)) {
+                                item.flag |= 1;
+                            } else {
+                                item.flag &= !1;
+                            }
+                        }
+                    }
+                    self.emit_inventory_update();
+                }
             }
             "OnSuperMainStartAcceptLogonHrdxs47254722215a" => {
                 self.consecutive_reconnect_failures = 0;
@@ -2161,6 +2343,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     message: format!("[Bubble #{net_id}] {text}"),
                     kind: ChatKind::Incoming,
                 });
+                if net_id == self.local.net_id as i32 || net_id == -1 || self.local.net_id == 0 {
+                    if let Some(malady_opt) = crate::physics::parse_malady_event(&text) {
+                        self.local.malady = malady_opt;
+                        self.recompute_physics_mods();
+                    }
+                }
                 let lower = text.to_lowercase();
                 if lower.contains("captcha")
                     || lower.contains("are you human")
@@ -2182,6 +2370,10 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             "OnConsoleMessage" => {
                 let message = vl.get(1).map(|v| v.as_string()).unwrap_or_default();
+                if let Some(malady_opt) = crate::physics::parse_malady_event(&message) {
+                    self.local.malady = malady_opt;
+                    self.recompute_physics_mods();
+                }
                 self.log_console(message);
             }
             "OnDialogRequest" => {
@@ -2297,6 +2489,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         if pkt.net_id == self.local.net_id {
             self.pos_x = pkt.vector_x;
             self.pos_y = pkt.vector_y;
+            self.local.physics.pos = (pkt.vector_x, pkt.vector_y);
+            self.local.physics.vel = (pkt.vector_x2, pkt.vector_y2);
             {
                 let mut s = self.state.write().unwrap();
                 s.pos_x = pkt.vector_x / 32.0;
@@ -2306,6 +2500,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 bot_id: self.bot_id,
                 x: pkt.vector_x / 32.0,
                 y: pkt.vector_y / 32.0,
+                on_ground: None,
             });
         } else if let Some(player) = self.players.get_mut(&(pkt.net_id as u32)) {
             player.position = (pkt.vector_x, pkt.vector_y);
@@ -2339,6 +2534,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
         let result = {
             let world = Arc::make_mut(self.world.as_mut().unwrap());
+            let is_bg = item_id != 18
+                && self
+                    .items_dat
+                    .find_by_id(item_id as u32)
+                    .is_some_and(|info| info.action_type == 18);
             if let Some(tile) = world.get_tile_mut(x, y) {
                 if item_id == 18 {
                     if tile.fg_item_id != 0 {
@@ -2347,6 +2547,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     } else {
                         tile.bg_item_id = 0;
                     }
+                } else if is_bg {
+                    tile.bg_item_id = item_id;
                 } else {
                     tile.fg_item_id = item_id;
                 }
@@ -2357,6 +2559,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         };
 
         if let Some((fg, bg)) = result {
+            self.clear_tile_damage(x, y);
             {
                 let mut s = self.state.write().unwrap();
                 if let Some(ti) = s.tiles.get_mut(idx) {
@@ -2391,6 +2594,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
         match result {
             Ok((fg,bg)) => {
+                self.clear_tile_damage(x, y);
                 {
                     let mut s = self.state.write().unwrap();
                     if let Some(ti) = s.tiles.get_mut(idx) {
@@ -2435,6 +2639,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
             match result {
                 Ok((fg,bg)) => {
+                    self.clear_tile_damage(x, y);
                     {
                         let mut s = self.state.write().unwrap();
                         if let Some(ti) = s.tiles.get_mut(idx) {
@@ -2470,10 +2675,15 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let idx = (y * width + x) as usize;
 
         let world = Arc::make_mut(self.world.as_mut().unwrap());
-        if let Some(tile) = world.get_tile_mut(x, y) {
+        let cleared = if let Some(tile) = world.get_tile_mut(x, y) {
             tile.fg_item_id = 0;
             tile.tile_type = TileType::Basic;
-            let bg = tile.bg_item_id;
+            Some(tile.bg_item_id)
+        } else {
+            None
+        };
+        if let Some(bg) = cleared {
+            self.clear_tile_damage(x, y);
             {
                 let mut s = self.state.write().unwrap();
                 if let Some(ti) = s.tiles.get_mut(idx) {
@@ -2501,7 +2711,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             ));
         } else {
             // animation_type != 0
-            let amount = pkt.jump_count;
+            let amount = pkt.animation_type;
             self.inventory.add_item(item_id, amount);
             self.log_console(format!(
                 "[Bot] ModifyItemInventory item={item_id} +{amount}"
@@ -2510,8 +2720,191 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         self.emit_inventory_update();
     }
 
+    fn format_extra_preview(data: &[u8]) -> String {
+        data.iter()
+            .take(24)
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn on_set_extra_mods(&mut self, pkt: &GameUpdatePacket) {
+        let hex = Self::format_extra_preview(&pkt.extra_data);
+        self.log_console(format!(
+            "[Bot] SetExtraMods val={} jc={} anim={} vec2=({:.1},{:.1}) flags=0x{:X} extra({})=[{}]",
+            pkt.value,
+            pkt.jump_count,
+            pkt.animation_type,
+            pkt.vector_x2,
+            pkt.vector_y2,
+            pkt.flags.bits(),
+            pkt.extra_data.len(),
+            hex
+        ));
+        self.recompute_physics_mods();
+    }
+
+    fn on_step_on_tile_mod(&mut self, pkt: &GameUpdatePacket) {
+        let hex = Self::format_extra_preview(&pkt.extra_data);
+        self.log_console(format!(
+            "[Bot] OnStepOnTileMod val={} int=({},{}) jc={} anim={} vec2=({:.1},{:.1}) flags=0x{:X} extra({})=[{}]",
+            pkt.value,
+            pkt.int_x,
+            pkt.int_y,
+            pkt.jump_count,
+            pkt.animation_type,
+            pkt.vector_x2,
+            pkt.vector_y2,
+            pkt.flags.bits(),
+            pkt.extra_data.len(),
+            hex
+        ));
+        self.recompute_physics_mods();
+    }
+
+    fn effective_action_reach(&self) -> u8 {
+        self.interactive
+            .reach_override
+            .unwrap_or_else(|| self.interactive.punch_reach.max(self.interactive.build_reach))
+            .clamp(1, 20)
+    }
+
+    fn effective_reach_for_action(&self, item_id: u32, is_punch: bool) -> i32 {
+        if let Some(ov) = self.interactive.reach_override {
+            return ov.clamp(1, 20) as i32;
+        }
+        let reach = if is_punch || item_id == 18 {
+            self.interactive.punch_reach
+        } else if item_id == 32 {
+            self.interactive.punch_reach.max(self.interactive.build_reach)
+        } else {
+            self.interactive.build_reach
+        };
+        reach.max(2) as i32
+    }
+
+    fn clear_tile_damage(&mut self, x: u32, y: u32) {
+        if self.interactive.tile_damage.remove(&(x, y)).is_some() {
+            self.emit(WsEvent::TileDamage {
+                bot_id: self.bot_id,
+                x,
+                y,
+                damage: 0,
+                max_health: 0,
+            });
+        }
+    }
+
+    fn record_tile_damage(&mut self, tile_x: i32, tile_y: i32) {
+        let Ok(ux) = u32::try_from(tile_x) else { return };
+        let Ok(uy) = u32::try_from(tile_y) else { return };
+        let Some(target_item) = self.world.as_ref().and_then(|w| {
+            w.get_tile(ux, uy).map(|t| {
+                if t.fg_item_id != 0 {
+                    t.fg_item_id as u32
+                } else {
+                    t.bg_item_id as u32
+                }
+            })
+        }) else {
+            return;
+        };
+        if target_item == 0 {
+            return;
+        }
+        let Some(info) = self.items_dat.find_by_id(target_item) else {
+            return;
+        };
+        if info.action_type == 1 || info.block_health == 0 {
+            return;
+        }
+        let max_health = info.block_health as u16;
+        let dmg = self.local.physics_mods.punch_damage.max(1) as u16;
+        let now = std::time::Instant::now();
+        let entry = self
+            .interactive
+            .tile_damage
+            .entry((ux, uy))
+            .or_insert(TileDamageEntry {
+                damage: 0,
+                max_health,
+                last_hit: now,
+            });
+        if now.duration_since(entry.last_hit) > std::time::Duration::from_millis(4500)
+            || entry.max_health != max_health
+        {
+            entry.damage = 0;
+            entry.max_health = max_health;
+        }
+        entry.damage = entry.damage.saturating_add(dmg).min(max_health);
+        entry.last_hit = now;
+        let cur_dmg = entry.damage;
+        self.emit(WsEvent::TileDamage {
+            bot_id: self.bot_id,
+            x: ux,
+            y: uy,
+            damage: cur_dmg,
+            max_health,
+        });
+    }
+
+    pub fn recompute_physics_mods(&mut self) {
+        let mut equipped_ids: Vec<u32> = self
+            .local
+            .equipped_clothes
+            .iter()
+            .copied()
+            .filter(|&id| id != 0)
+            .collect();
+        for item in self.inventory.items.values() {
+            if (item.flag & 1) != 0 {
+                let id = item.id as u32;
+                if !equipped_ids.contains(&id) {
+                    equipped_ids.push(id);
+                }
+            }
+        }
+        let server = crate::physics::ServerCharacterModifiers {
+            state_mod_flags: self.local.char_state_flags,
+            extra_mods_bits: self.local.extra_mods_bits,
+            server_walk_speed_overridden: (self.local.server_walk_speed - 250.0).abs() > 1.0,
+            server_punch_reach: self.local.punch_length.max(2),
+            server_build_reach: self.local.build_length.max(2),
+        };
+        let mods = crate::physics::resolve_character_modifiers(
+            &self.items_dat,
+            &equipped_ids,
+            self.local.malady,
+            server,
+        );
+        self.interactive.punch_reach = mods.punch_reach;
+        self.interactive.build_reach = mods.build_reach;
+        let eff_reach = self.effective_action_reach();
+        self.interactive.action_reach = eff_reach;
+
+        if mods != self.local.physics_mods {
+            self.local.physics_mods = mods.clone();
+            if let Ok(mut s) = self.state.write() {
+                s.physics_mods = mods.clone();
+                s.punch_reach = mods.punch_reach;
+                s.build_reach = mods.build_reach;
+                s.reach_override = self.interactive.reach_override;
+                s.action_reach = eff_reach;
+            }
+            self.emit(WsEvent::BotPhysicsMods {
+                bot_id: self.bot_id,
+                mods,
+            });
+        } else if let Ok(mut s) = self.state.write() {
+            s.punch_reach = mods.punch_reach;
+            s.build_reach = mods.build_reach;
+            s.reach_override = self.interactive.reach_override;
+            s.action_reach = eff_reach;
+        }
+    }
+
     fn emit_inventory_update(&mut self) {
-        let slots: Vec<InvSlot> = self
+        let mut slots: Vec<InvSlot> = self
             .inventory
             .items
             .values()
@@ -2526,32 +2919,38 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     .unwrap_or(0),
             })
             .collect();
+        // Deterministic Growtopia order: placeables/seeds/consumables first, wearables next, tools (18/32) last
+        slots.sort_by_key(|s| {
+            let tier: u8 = if s.item_id == 18 || s.item_id == 32 {
+                2
+            } else if s.action_type == 20 {
+                1
+            } else {
+                0
+            };
+            (tier, s.item_id)
+        });
+        let ws_items: Vec<WsInvItem> = slots
+            .iter()
+            .map(|s| WsInvItem {
+                item_id: s.item_id,
+                amount: s.amount,
+                is_active: s.is_active,
+                action_type: s.action_type,
+            })
+            .collect();
         {
             let mut s = self.state.write().unwrap();
             s.inventory = slots;
             s.inventory_size = self.inventory.size;
         }
-        let ws_items: Vec<WsInvItem> = self
-            .inventory
-            .items
-            .values()
-            .map(|i| WsInvItem {
-                item_id: i.id,
-                amount: i.amount,
-                is_active: i.flag & 1 != 0,
-                action_type: self
-                    .items_dat
-                    .find_by_id(i.id as u32)
-                    .map(|info| info.action_type)
-                    .unwrap_or(0),
-            })
-            .collect();
         self.emit(WsEvent::InventoryUpdate {
             bot_id: self.bot_id,
             gems: self.inventory.gems,
             inventory_size: self.inventory.size,
             items: ws_items,
         });
+        self.recompute_physics_mods();
     }
 
     fn on_item_change_object(&mut self, pkt: &GameUpdatePacket) {
@@ -2779,12 +3178,42 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
     }
 
+    /// Resets local physics at `(x, y)` and immediately probes loaded world tiles
+    /// so spawns/teleports start flush on solid surfaces when grounded.
+    fn reset_local_physics_at(&mut self, x: f32, y: f32) -> (f32, f32, bool) {
+        self.local.physics.pos = (x, y);
+        self.local.physics.vel = (0.0, 0.0);
+        self.local.physics.on_ground = false;
+        self.local.physics.is_jumping = false;
+        self.local.physics.trampoline = false;
+        self.local.physics.jump_pulse = false;
+        self.local.physics.air_jumps_used = 0;
+        self.local.physics.slow_falling = false;
+        self.local.physics.jetpack_thrust_timer = 0.0;
+
+        if let Some(w) = &self.world {
+            let engine = crate::physics::PhysicsEngine::new(self.local.physics_cfg.clone());
+            let collision = crate::physics::BotWorldCollision::new(
+                &w.tile_map,
+                &self.items_dat,
+                self.local.user_id,
+            );
+            engine.settle_on_ground(&mut self.local.physics, &collision);
+        }
+
+        self.pos_x = self.local.physics.pos.0;
+        self.pos_y = self.local.physics.pos.1;
+        (self.pos_x, self.pos_y, self.local.physics.on_ground)
+    }
+
     pub fn walk(&mut self, tile_x: u32, tile_y: u32) {
         if self.captcha_active {
             return;
         }
-        let target_x = tile_x as f32 * 32.0;
-        let target_y = tile_y as f32 * 32.0;
+        // Center the 20x30 Growtopia hitbox horizontally inside the 32x32 tile (+6px)
+        // and rest its bottom (+30px) flush on the tile floor (+2px -> tile_y*32+32).
+        let target_x = tile_x as f32 * 32.0 + 6.0;
+        let target_y = tile_y as f32 * 32.0 + 2.0;
 
         // Ensure physics position aligns with bot coordinate
         if (self.local.physics.pos.0 - self.pos_x).abs() > 48.0
@@ -2822,10 +3251,22 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     &self.items_dat,
                     self.local.user_id,
                 );
-                engine.step(&mut self.local.physics, input, &collision, dt);
+                engine.step_with_modifiers(
+                    &mut self.local.physics,
+                    input,
+                    &self.local.physics_mods,
+                    &collision,
+                    dt,
+                );
             } else {
                 let collision = crate::physics::SimpleCollisionMap::new(100, 60);
-                engine.step(&mut self.local.physics, input, &collision, dt);
+                engine.step_with_modifiers(
+                    &mut self.local.physics,
+                    input,
+                    &self.local.physics_mods,
+                    &collision,
+                    dt,
+                );
             }
 
             self.pos_x = self.local.physics.pos.0;
@@ -2841,11 +3282,12 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 bot_id: self.bot_id,
                 x: self.pos_x / 32.0,
                 y: self.pos_y / 32.0,
+                on_ground: Some(self.local.physics.on_ground),
             });
 
-            // Send movement packet roughly every ~40ms or on final step
-            if step_idx % 2 == 1 || step_idx == num_steps - 1 {
-                let flags = self.local.physics.to_packet_flags();
+            // Send movement packet immediately on jump launch or roughly every ~40ms
+            if self.local.physics.jump_pulse || step_idx % 2 == 1 || step_idx == num_steps - 1 {
+                let flags = self.local.physics.consume_packet_flags();
                 let pkt = GameUpdatePacket {
                     packet_type: GamePacketType::State,
                     vector_x: self.pos_x,
@@ -2865,25 +3307,31 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
         // Final resting snap to target tile if within close proximity
         if (self.pos_x - target_x).abs() <= 16.0 && (self.pos_y - target_y).abs() <= 24.0 {
-            self.pos_x = target_x;
-            self.pos_y = target_y + 2.0;
-            self.local.physics.pos = (self.pos_x, self.pos_y);
-            self.local.physics.vel = (0.0, 0.0);
-            self.local.physics.on_ground = true;
-            self.local.physics.is_jumping = false;
+            let (px, py, on_ground) = if self.world.is_some() {
+                self.reset_local_physics_at(target_x, target_y)
+            } else {
+                self.pos_x = target_x;
+                self.pos_y = target_y;
+                self.local.physics.pos = (self.pos_x, self.pos_y);
+                self.local.physics.vel = (0.0, 0.0);
+                self.local.physics.on_ground = true;
+                self.local.physics.is_jumping = false;
+                (target_x, target_y, true)
+            };
 
             {
                 let mut s = self.state.write().unwrap();
-                s.pos_x = target_x / 32.0;
-                s.pos_y = target_y / 32.0;
+                s.pos_x = px / 32.0;
+                s.pos_y = py / 32.0;
             }
             self.emit(WsEvent::BotMove {
                 bot_id: self.bot_id,
-                x: target_x / 32.0,
-                y: target_y / 32.0,
+                x: px / 32.0,
+                y: py / 32.0,
+                on_ground: Some(on_ground),
             });
 
-            let final_flags = self.local.physics.to_packet_flags();
+            let final_flags = self.local.physics.consume_packet_flags();
             let final_pkt = GameUpdatePacket {
                 packet_type: GamePacketType::State,
                 vector_x: self.pos_x,
@@ -2899,22 +3347,66 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         }
     }
 
-    pub fn send_tile_action(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
+    /// Send a TileChangeRequest + animation State packet at exact tile `(tile_x, tile_y)`.
+    /// Returns `true` if the packet was sent.
+    pub fn send_tile_action_at(
+        &mut self,
+        tile_x: i32,
+        tile_y: i32,
+        item_id: u32,
+        is_punch: bool,
+    ) -> bool {
         if self.captcha_active {
-            return;
+            return false;
         }
-        if !is_punch && !self.inventory.has_item(item_id as u16, 1) {
-            return;
+        if !is_punch
+            && item_id != 18
+            && item_id != 32
+            && !self.inventory.has_item(item_id as u16, 1)
+        {
+            return false;
         }
 
-        let base_x = (self.pos_x / 32.0).floor() as i32;
-        let base_y = (self.pos_y / 32.0).floor() as i32;
-        let tile_x = base_x + offset_x;
-        let tile_y = base_y + offset_y;
+        let self_tile_x = ((self.pos_x + 10.0) / 32.0).floor() as i32;
+        let self_tile_y = ((self.pos_y + 15.0) / 32.0).floor() as i32;
+        let reach = self.effective_reach_for_action(item_id, is_punch);
+        if (tile_x - self_tile_x).abs() > reach || (tile_y - self_tile_y).abs() > reach {
+            return false;
+        }
 
-        let reach = self.interactive.action_reach as i32;
-        if offset_x.abs() > reach || offset_y.abs() > reach {
-            return;
+        if let Some(ref world) = self.world {
+            if tile_x < 0
+                || tile_y < 0
+                || tile_x >= world.tile_map.width as i32
+                || tile_y >= world.tile_map.height as i32
+            {
+                return false;
+            }
+            if !is_punch && item_id != 18 && item_id != 32 {
+                if let Some(tile) = world.get_tile(tile_x as u32, tile_y as u32) {
+                    let action_type = self
+                        .items_dat
+                        .find_by_id(item_id)
+                        .map(|info| info.action_type)
+                        .unwrap_or(0);
+                    let valid = if action_type == 18 {
+                        tile.bg_item_id == 0
+                    } else if action_type == 19 || item_id % 2 == 1 {
+                        tile.fg_item_id == 0 || tile.fg_item_id % 2 == 1
+                    } else {
+                        tile.fg_item_id == 0
+                    };
+                    if !valid {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if self_tile_x > tile_x {
+            self.local.physics.facing_left = true;
+        } else if self_tile_x < tile_x {
+            self.local.physics.facing_left = false;
         }
 
         let mut pkt = GameUpdatePacket {
@@ -2927,15 +3419,21 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             ..Default::default()
         };
         self.send_game_packet(&pkt, true);
+        if is_punch || item_id == 18 {
+            self.record_tile_damage(tile_x, tile_y);
+        }
 
-        let mut flags = if is_punch {
-            packet::PacketFlags::PUNCH
+        let mut flags = self.local.physics.to_action_packet_flags();
+        if is_punch {
+            flags.insert(packet::PacketFlags::PUNCH);
         } else {
-            packet::PacketFlags::PLACE
-        } | packet::PacketFlags::STANDING;
-        flags.set(packet::PacketFlags::FACING_LEFT, base_x > tile_x);
+            flags.insert(packet::PacketFlags::PLACE);
+        }
+        flags.set(packet::PacketFlags::FACING_LEFT, self.local.physics.facing_left);
 
         pkt.packet_type = GamePacketType::State;
+        pkt.vector_x2 = self.local.physics.vel.0;
+        pkt.vector_y2 = self.local.physics.vel.1;
         pkt.flags = flags;
         self.send_game_packet(&pkt, true);
 
@@ -2943,6 +3441,18 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             self.inventory.sub_item(item_id as u16, 1);
             self.emit_inventory_update();
         }
+        true
+    }
+
+    pub fn send_tile_action(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
+        let self_tile_x = ((self.pos_x + 10.0) / 32.0).floor() as i32;
+        let self_tile_y = ((self.pos_y + 15.0) / 32.0).floor() as i32;
+        self.send_tile_action_at(
+            self_tile_x + offset_x,
+            self_tile_y + offset_y,
+            item_id,
+            is_punch,
+        );
     }
 
     pub fn place(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
@@ -3787,36 +4297,67 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 if !enabled {
                     self.interactive.input = crate::physics::MovementInput::default();
                     self.interactive.hold = None;
+                    self.interactive.pending_tap = None;
+                    self.interactive.input_dirty = false;
+                    self.interactive.was_moving = false;
                 }
                 if let Ok(mut s) = self.state.write() {
                     s.interactive = enabled;
                 }
             }
             BotCommand::SetInput { left, right, jump, down } => {
-                self.interactive.input.move_left = left;
-                self.interactive.input.move_right = right;
-                self.interactive.input.jump = jump;
-                self.interactive.input.drop_down = down;
-                if left {
+                let next_input = crate::physics::MovementInput {
+                    move_left: left,
+                    move_right: right,
+                    jump,
+                    drop_down: down,
+                };
+                if self.interactive.input != next_input {
+                    self.interactive.input_dirty = true;
+                }
+                self.interactive.input = next_input;
+                if !self.interactive.enabled && (left || right || jump || down) {
+                    self.interactive.enabled = true;
+                    self.interactive.last_tick = std::time::Instant::now();
+                    if let Ok(mut s) = self.state.write() {
+                        s.interactive = true;
+                    }
+                }
+                if left && !right {
                     self.local.physics.facing_left = true;
-                } else if right {
+                } else if right && !left {
                     self.local.physics.facing_left = false;
                 }
                 self.interactive.last_beat = std::time::Instant::now();
             }
             BotCommand::HoldAction { active, x, y, item } => {
                 if active {
-                    self.interactive.hold = Some(HoldTarget { x, y, item });
+                    let target = HoldTarget { x, y, item };
+                    self.interactive.hold = Some(target.clone());
+                    self.interactive.pending_tap = Some(target);
+                    if !self.interactive.enabled {
+                        self.interactive.enabled = true;
+                        self.interactive.last_tick = std::time::Instant::now();
+                        if let Ok(mut s) = self.state.write() {
+                            s.interactive = true;
+                        }
+                    }
                 } else {
                     self.interactive.hold = None;
                 }
                 self.interactive.last_beat = std::time::Instant::now();
             }
             BotCommand::SetActionReach { tiles } => {
-                let clamped = tiles.clamp(1, 20);
-                self.interactive.action_reach = clamped;
+                self.interactive.reach_override = if tiles == 0 {
+                    None
+                } else {
+                    Some(tiles.clamp(1, 20))
+                };
+                let eff = self.effective_action_reach();
+                self.interactive.action_reach = eff;
                 if let Ok(mut s) = self.state.write() {
-                    s.action_reach = clamped;
+                    s.reach_override = self.interactive.reach_override;
+                    s.action_reach = eff;
                 }
             }
             BotCommand::InteractiveHeartbeat => {
@@ -4154,10 +4695,22 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 &self.items_dat,
                 self.local.user_id,
             );
-            engine.step(&mut self.local.physics, self.interactive.input, &collision, dt);
+            engine.step_with_modifiers(
+                &mut self.local.physics,
+                self.interactive.input,
+                &self.local.physics_mods,
+                &collision,
+                dt,
+            );
         } else {
             let collision = crate::physics::SimpleCollisionMap::new(100, 60);
-            engine.step(&mut self.local.physics, self.interactive.input, &collision, dt);
+            engine.step_with_modifiers(
+                &mut self.local.physics,
+                self.interactive.input,
+                &self.local.physics_mods,
+                &collision,
+                dt,
+            );
         }
 
         self.pos_x = self.local.physics.pos.0;
@@ -4167,7 +4720,20 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let dy = (self.pos_y - old_y).abs();
         let ground_changed = old_on_ground != self.local.physics.on_ground;
 
-        if dx > 0.2 || dy > 0.2 || ground_changed {
+        let is_moving =
+            self.local.physics.vel.0.abs() > 1.0 || self.local.physics.vel.1.abs() > 1.0;
+        let stopped_moving = self.interactive.was_moving && !is_moving;
+        let started_moving = !self.interactive.was_moving && is_moving;
+        let facing_changed = self.interactive.was_facing_left != self.local.physics.facing_left;
+        let landed = !old_on_ground && self.local.physics.on_ground;
+        let time_for_state =
+            self.interactive.last_state_sent.elapsed() >= std::time::Duration::from_millis(60);
+        // Cap BotMove broadcasts at ~60Hz while flushing stop/landing/facing transitions immediately
+        let move_emit_due =
+            self.interactive.last_move_emit.elapsed() >= std::time::Duration::from_millis(16);
+
+        if ground_changed || stopped_moving || facing_changed || ((dx > 0.05 || dy > 0.05) && move_emit_due) {
+            self.interactive.last_move_emit = std::time::Instant::now();
             if let Ok(mut s) = self.state.write() {
                 s.pos_x = self.pos_x / 32.0;
                 s.pos_y = self.pos_y / 32.0;
@@ -4176,17 +4742,22 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 bot_id: self.bot_id,
                 x: self.pos_x / 32.0,
                 y: self.pos_y / 32.0,
+                on_ground: Some(self.local.physics.on_ground),
             });
         }
 
-        // Send network State packet when velocity/ground state changes or every ~100ms
-        let is_moving = self.local.physics.vel.0.abs() > 1.0 || self.local.physics.vel.1.abs() > 1.0;
-        let landed = !old_on_ground && self.local.physics.on_ground;
-        let time_for_state = self.interactive.last_state_sent.elapsed() >= std::time::Duration::from_millis(100);
-
-        if landed || (is_moving && time_for_state) || ground_changed {
+        // Send network State packet immediately on press/release/flip/landing, or every 60ms while moving
+        if self.local.physics.jump_pulse
+            || landed
+            || ground_changed
+            || started_moving
+            || stopped_moving
+            || facing_changed
+            || self.interactive.input_dirty
+            || (is_moving && time_for_state)
+        {
             self.interactive.last_state_sent = now;
-            let flags = self.local.physics.to_packet_flags();
+            let flags = self.local.physics.consume_packet_flags();
             let pkt = GameUpdatePacket {
                 packet_type: GamePacketType::State,
                 vector_x: self.pos_x,
@@ -4200,33 +4771,41 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             };
             self.send_game_packet(&pkt, false);
         }
+        self.interactive.input_dirty = false;
+        self.interactive.was_moving = is_moving;
+        self.interactive.was_facing_left = self.local.physics.facing_left;
 
-        // Continuous Hold Action Scheduler (for punching / placing)
-        if let Some(hold) = self.interactive.hold.clone() {
-            if self.interactive.last_hit.elapsed() >= std::time::Duration::from_millis(self.interactive.hit_interval_ms) {
+        // Execute quick single-click taps immediately, or repeat held clicks every hit_interval_ms
+        let action_target = if let Some(tap) = self.interactive.pending_tap.take() {
+            Some((tap, true))
+        } else if self.interactive.last_hit.elapsed()
+            >= std::time::Duration::from_millis(self.interactive.hit_interval_ms)
+        {
+            self.interactive.hold.clone().map(|h| (h, false))
+        } else {
+            None
+        };
+
+        if let Some((target, is_tap)) = action_target {
+            if !is_tap
+                || self.interactive.last_hit.elapsed() >= std::time::Duration::from_millis(40)
+            {
                 self.interactive.last_hit = now;
                 let center_x = self.pos_x + 10.0;
                 let center_y = self.pos_y + 15.0;
                 let bot_tile_x = (center_x / 32.0).floor() as i32;
                 let bot_tile_y = (center_y / 32.0).floor() as i32;
-                let ox = hold.x - bot_tile_x;
-                let oy = hold.y - bot_tile_y;
-                let reach = self.interactive.action_reach as i32;
+                let reach = self.effective_reach_for_action(target.item, target.item == 18);
 
-                if ox.abs() <= reach && oy.abs() <= reach {
-                    if ox < 0 {
-                        self.local.physics.facing_left = true;
-                    } else if ox > 0 {
-                        self.local.physics.facing_left = false;
-                    }
-
-                    if hold.item == 18 {
-                        self.send_tile_action(ox, oy, 18, true);
-                    } else if hold.item == 32 {
-                        self.send_tile_action(ox, oy, 32, false);
+                if (target.x - bot_tile_x).abs() <= reach && (target.y - bot_tile_y).abs() <= reach
+                {
+                    if target.item == 18 {
+                        self.send_tile_action_at(target.x, target.y, 18, true);
+                    } else if target.item == 32 {
+                        self.send_tile_action_at(target.x, target.y, 32, false);
                         self.interactive.hold = None;
                     } else {
-                        self.send_tile_action(ox, oy, hold.item, false);
+                        self.send_tile_action_at(target.x, target.y, target.item, false);
                     }
                 }
             }
@@ -4556,7 +5135,7 @@ mod tests {
         for x in 0..10 {
             map.set(x, 5, TileCollisionKind::Solid);
         }
-        let mut state = PhysicsState::new(32.0, 128.0);
+        let mut state = PhysicsState::new(32.0, 130.0);
         state.on_ground = true;
 
         // Jump impulse
@@ -4567,7 +5146,7 @@ mod tests {
 
         // Release jump and simulate 1.5 seconds (75 steps of 20ms)
         let idle_input = MovementInput::default();
-        let initial_y = 128.0;
+        let initial_y = 130.0;
         let mut min_y = initial_y;
         for _ in 0..75 {
             engine.step(&mut state, idle_input, &map, 0.02);
@@ -4607,5 +5186,383 @@ mod tests {
         let total_displacement = state.pos.0 - 100.0;
         // 1 second walk should move several tiles (~250-300 px)
         assert!(total_displacement > 200.0, "1s walk should cover several tiles: displacement={}", total_displacement);
+    }
+
+    #[test]
+    fn test_extract_chat_display_message_filters_sfx_packets() {
+        assert_eq!(
+            extract_chat_display_message("delayMS|0\naction|play_sfx\nfile|audio/door_shut.wav"),
+            None
+        );
+        assert_eq!(
+            extract_chat_display_message("action|play_sfx\nfile|audio/beep.wav\ndelayMS|0"),
+            None
+        );
+        assert_eq!(
+            extract_chat_display_message("action|log\nmsg|`oEntered world STOILOS"),
+            Some("`oEntered world STOILOS".to_string())
+        );
+        assert_eq!(
+            extract_chat_display_message("[System] Welcome"),
+            Some("[System] Welcome".to_string())
+        );
+    }
+
+    fn new_test_bot(
+        items_dat: Arc<crate::items::ItemsDat>,
+        state: Arc<RwLock<BotState>>,
+        cmd_rx: CmdReceiver,
+        ws_tx: Option<WsTx>,
+    ) -> Bot {
+        Bot {
+            host: BotHost::None,
+            proxy: None,
+            username: "tester".to_string(),
+            login_method: LoginMethod::Ltoken,
+            ltoken: String::new(),
+            meta: String::new(),
+            mac: "02:00:00:00:00:01".to_string(),
+            hash: 0,
+            hash2: 0,
+            wk: String::new(),
+            rid: String::new(),
+            last_redirect_token: None,
+            last_redirect_uuid: None,
+            redirect: None,
+            peer_id: None,
+            pos_x: 0.0,
+            pos_y: 0.0,
+            start_time: std::time::Instant::now(),
+            local: LocalPlayer::default(),
+            players: std::collections::HashMap::new(),
+            inventory: Inventory::default(),
+            world: None,
+            state,
+            cmd_rx,
+            temporary_data: TemporaryData::default(),
+            auto_collect: true,
+            ignore_gems: false,
+            ignore_essences: false,
+            auto_leave_on_mod: false,
+            auto_ban: false,
+            auto_reconnect: false,
+            manual_disconnect: false,
+            reconnect_interval: 8000,
+            collect_radius_tiles: 3,
+            collect_blacklist: HashSet::new(),
+            collect_timer: std::time::Instant::now(),
+            collect_interval: 500,
+            collect_path_check: true,
+            pathfind_target: None,
+            pathfind_recalc: false,
+            delays: BotDelays::default(),
+            items_dat,
+            event_tx: None,
+            script_req_rx: None,
+            script_reply_tx: None,
+            script_stop: Arc::new(AtomicBool::new(false)),
+            captcha_active: false,
+            active_dialog: None,
+            reconnect_after: None,
+            pending_2fa: false,
+            pending_relogon: false,
+            pending_server_overload: false,
+            pending_too_many_logins: false,
+            pending_update_required: false,
+            pending_maintenance: false,
+            stop_requested: false,
+            bot_id: 7,
+            ws_tx,
+            last_ping: 0,
+            pending_ip_limit: false,
+            consecutive_reconnect_failures: 0,
+            last_proxy_roll: None,
+            current_proxy_ip: None,
+            vsproxy_cfg: None,
+            auto_rotate_reconnect: false,
+            interactive: InteractiveState::default(),
+        }
+    }
+
+    #[test]
+    fn test_interactive_set_input_and_quick_tap_preservation() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let state = Arc::new(RwLock::new(BotState::default()));
+        let items = Arc::new(crate::items::ItemsDat {
+            version: 0,
+            items: Vec::new(),
+        });
+        let mut bot = new_test_bot(items, state.clone(), rx, None);
+        assert_eq!(bot.interactive.action_reach, 2);
+
+        // Quick click (down + immediate up) must keep pending_tap so single click is never lost.
+        bot.handle_command(BotCommand::HoldAction {
+            active: true,
+            x: 12,
+            y: 23,
+            item: 18,
+        });
+        assert!(bot.interactive.enabled, "active click enables interactive");
+        bot.handle_command(BotCommand::HoldAction {
+            active: false,
+            x: 12,
+            y: 23,
+            item: 18,
+        });
+        assert!(bot.interactive.hold.is_none());
+        let tap = bot.interactive.pending_tap.clone().expect("pending_tap must survive quick release");
+        assert_eq!((tap.x, tap.y, tap.item), (12, 23, 18));
+
+        // Active WASD key sets dirty flag + facing + auto-enables interactive
+        bot.handle_command(BotCommand::SetInteractive { enabled: false });
+        assert!(bot.interactive.pending_tap.is_none());
+        bot.handle_command(BotCommand::SetInput {
+            left: true,
+            right: false,
+            jump: false,
+            down: false,
+        });
+        assert!(bot.interactive.enabled);
+        assert!(bot.interactive.input_dirty);
+        assert!(bot.local.physics.facing_left);
+        assert!(state.read().unwrap().interactive);
+    }
+
+    #[test]
+    fn test_send_tile_action_at_exact_coords_wrench_and_bg_tile_change() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let (ws_tx, mut ws_rx) = tokio::sync::broadcast::channel(32);
+        let state = Arc::new(RwLock::new(BotState::default()));
+        let items = if std::path::Path::new("items.dat").exists() {
+            Arc::new(crate::items::ItemsDat::parse(&std::fs::read("items.dat").unwrap()).unwrap())
+        } else {
+            Arc::new(crate::items::ItemsDat {
+                version: 0,
+                items: Vec::new(),
+            })
+        };
+        let mut bot = new_test_bot(items, state, rx, Some(ws_tx));
+
+        // Load real world.dat if present for authentic tile validation + bg vs fg check
+        if std::path::Path::new("world.dat").exists() {
+            let world = crate::world::World::parse(&std::fs::read("world.dat").unwrap()).unwrap();
+            let door = world.tile_map.tiles.iter().find(|t| t.fg_item_id == 6).unwrap();
+            let (dx, dy) = (door.x as i32, door.y as i32);
+            bot.world = Some(Arc::new(world));
+
+            // Position right-shifted inside tile (pos_x % 32 == 25 >= 22): old ox+base_x math was off by 1!
+            // Center = 10 + dx*32 + 25 = (dx+1)*32 + 3 -> center tile is dx+1!
+            bot.pos_x = (dx as f32) * 32.0 + 25.0;
+            bot.pos_y = (dy as f32) * 32.0;
+
+            // Wrench (32) works even without inventory item 32
+            assert!(bot.send_tile_action_at(dx + 1, dy, 32, false));
+
+            // Add Dirt (2) & Cave Background (14)
+            bot.inventory.add_item(2, 5);
+            bot.inventory.add_item(14, 5);
+
+            // Placing Dirt onto non-empty Bedrock tile (dx, dy+1) must fail without consuming Dirt
+            assert!(!bot.send_tile_action_at(dx, dy + 1, 2, false));
+            assert_eq!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0), 5);
+
+            // Placing Dirt onto air tile (dx + 2, dy) succeeds & decrements to 4
+            assert!(bot.send_tile_action_at(dx + 2, dy, 2, false));
+            assert_eq!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0), 4);
+
+            // Background item (14, Cave Background) in on_tile_change updates bg_item_id, NOT fg_item_id
+            let mut pkt = GameUpdatePacket {
+                packet_type: GamePacketType::TileChangeRequest,
+                int_x: dx + 2,
+                int_y: dy - 1,
+                value: 14,
+                ..Default::default()
+            };
+            bot.on_tile_change(&pkt);
+            let updated = bot
+                .world
+                .as_ref()
+                .unwrap()
+                .get_tile((dx + 2) as u32, (dy - 1) as u32)
+                .unwrap();
+            assert_eq!(updated.bg_item_id, 14);
+            assert_eq!(updated.fg_item_id, 0);
+
+            // Foreground item (2, Dirt) in on_tile_change updates fg_item_id
+            pkt.value = 2;
+            pkt.int_y = dy;
+            bot.on_tile_change(&pkt);
+            let fg_updated = bot
+                .world
+                .as_ref()
+                .unwrap()
+                .get_tile((dx + 2) as u32, dy as u32)
+                .unwrap();
+            assert_eq!(fg_updated.fg_item_id, 2);
+
+            // Verify TileUpdate event emitted with bg=14, fg=0
+            let mut saw_bg_event = false;
+            while let Ok(ev) = ws_rx.try_recv() {
+                if let WsEvent::TileUpdate { x, y, fg, bg, .. } = ev {
+                    if x == (dx + 2) as u32 && y == (dy - 1) as u32 && fg == 0 && bg == 14 {
+                        saw_bg_event = true;
+                    }
+                }
+            }
+            assert!(saw_bg_event, "on_tile_change must emit WsEvent::TileUpdate with bg=14");
+        }
+
+        // Verify ModifyItemInventory add path uses pkt.animation_type
+        bot.on_modify_item_inventory(&GameUpdatePacket {
+            packet_type: GamePacketType::ModifyItemInventory,
+            value: 2,
+            jump_count: 0,
+            animation_type: 3,
+            ..Default::default()
+        });
+        assert!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0) >= 3);
+    }
+
+    #[test]
+    fn test_on_set_clothing_malady_and_deterministic_inventory_sort() {
+        let items_dat = Arc::new(if std::path::Path::new("items.dat").exists() {
+            let data = std::fs::read("items.dat").unwrap();
+            crate::items::ItemsDat::parse(&data).unwrap()
+        } else {
+            return;
+        });
+        let (ws_tx, mut ws_rx) = tokio::sync::broadcast::channel(32);
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let state = Arc::new(RwLock::new(BotState::default()));
+        let mut bot = new_test_bot(items_dat, state.clone(), cmd_rx, Some(ws_tx));
+        bot.local.net_id = 42;
+
+        // Add items in unsorted order: Wrench (32), Fist (18), Fairy Wings (156, cloth), Lava (4), Dirt (2)
+        bot.inventory.add_item(32, 1);
+        bot.inventory.add_item(18, 1);
+        bot.inventory.add_item(156, 1);
+        bot.inventory.add_item(4, 5);
+        bot.inventory.add_item(2, 5);
+        bot.emit_inventory_update();
+
+        let ids: Vec<u16> = state.read().unwrap().inventory.iter().map(|s| s.item_id).collect();
+        assert_eq!(ids, vec![2, 4, 156, 18, 32], "inventory must sort deterministically: blocks -> wearables -> tools");
+
+        // Equip Fairy Wings (156) via OnSetClothing VariantList (slot 6 = back)
+        let vl_bytes = {
+            let mut b = vec![4u8]; // count=4
+            // idx 0: String "OnSetClothing"
+            b.push(0); b.push(2);
+            let fn_name = b"OnSetClothing";
+            b.extend_from_slice(&(fn_name.len() as u32).to_le_bytes());
+            b.extend_from_slice(fn_name);
+            // idx 1: Vec3(0,0,0)
+            b.push(1); b.push(4);
+            for _ in 0..3 { b.extend_from_slice(&0.0f32.to_le_bytes()); }
+            // idx 2: Vec3(0,0,0)
+            b.push(2); b.push(4);
+            for _ in 0..3 { b.extend_from_slice(&0.0f32.to_le_bytes()); }
+            // idx 3: Vec3(156,0,0) -> back = 156
+            b.push(3); b.push(4);
+            b.extend_from_slice(&156.0f32.to_le_bytes());
+            b.extend_from_slice(&0.0f32.to_le_bytes());
+            b.extend_from_slice(&0.0f32.to_le_bytes());
+            b
+        };
+        bot.on_call_function(enet::PeerID(0), 42, &vl_bytes);
+
+        assert_eq!(bot.local.physics_mods.max_air_jumps, 1);
+        assert!(
+            state.read().unwrap().inventory.iter().find(|s| s.item_id == 156).unwrap().is_active,
+            "OnSetClothing should mark Fairy Wings active in inventory"
+        );
+
+        let mut saw_mods_ev = false;
+        while let Ok(ev) = ws_rx.try_recv() {
+            if let WsEvent::BotPhysicsMods { mods, .. } = ev {
+                if mods.max_air_jumps == 1 {
+                    saw_mods_ev = true;
+                }
+            }
+        }
+        assert!(saw_mods_ev, "OnSetClothing must emit BotPhysicsMods event");
+
+        // Malady detected via OnTalkBubble / OnConsoleMessage reduces speed & jump
+        let msg = "You caught a Malady: Chicken Feet!";
+        let mut tb = vec![3u8];
+        tb.push(0); tb.push(2);
+        tb.extend_from_slice(&(12u32).to_le_bytes());
+        tb.extend_from_slice(b"OnTalkBubble");
+        tb.push(1); tb.push(9);
+        tb.extend_from_slice(&42i32.to_le_bytes());
+        tb.push(2); tb.push(2);
+        tb.extend_from_slice(&(msg.len() as u32).to_le_bytes());
+        tb.extend_from_slice(msg.as_bytes());
+        bot.on_call_function(enet::PeerID(0), 42, &tb);
+
+        assert_eq!(bot.local.physics_mods.malady, Some(crate::physics::MaladyKind::ChickenFeet));
+        assert!(bot.local.physics_mods.speed_multiplier < 0.75);
+        assert!(bot.local.physics_mods.jump_multiplier < 0.85);
+    }
+
+    #[test]
+    fn test_extract_server_physics_handles_canonical_and_swapped_packets() {
+        assert_eq!(extract_server_physics(1000.0, 250.0), (1000.0, 250.0));
+        assert_eq!(extract_server_physics(250.0, 1000.0), (1000.0, 250.0));
+        assert_eq!(extract_server_physics(275.0, 1000.0), (1000.0, 275.0));
+        assert_eq!(extract_server_physics(0.0, 0.0), (1000.0, 250.0));
+        assert_eq!(extract_server_physics(50.0, 50.0), (1000.0, 250.0));
+    }
+
+    #[test]
+    fn test_set_action_reach_override_and_pickaxe_tile_damage() {
+        let items_dat = Arc::new(if std::path::Path::new("items.dat").exists() {
+            let data = std::fs::read("items.dat").unwrap();
+            crate::items::ItemsDat::parse(&data).unwrap()
+        } else {
+            return;
+        });
+        let (ws_tx, mut ws_rx) = tokio::sync::broadcast::channel(32);
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let state = Arc::new(RwLock::new(BotState::default()));
+        let mut bot = new_test_bot(items_dat, state.clone(), cmd_rx, Some(ws_tx));
+
+        // 1. Bare hand = 6 dmg, Pickaxe (98) equipped = 8 dmg
+        bot.recompute_physics_mods();
+        assert_eq!(bot.local.physics_mods.punch_damage, 6);
+        bot.local.equipped_clothes[5] = 98;
+        bot.recompute_physics_mods();
+        assert_eq!(bot.local.physics_mods.punch_damage, 8);
+
+        // 2. SetActionReach(0) clears override back to native separate reach
+        bot.interactive.punch_reach = 3;
+        bot.interactive.build_reach = 2;
+        bot.handle_command(BotCommand::SetActionReach { tiles: 9 });
+        assert_eq!(bot.interactive.reach_override, Some(9));
+        assert_eq!(bot.effective_reach_for_action(18, true), 9);
+        bot.handle_command(BotCommand::SetActionReach { tiles: 0 });
+        assert_eq!(bot.interactive.reach_override, None);
+        assert_eq!(bot.effective_reach_for_action(18, true), 3);
+        assert_eq!(bot.effective_reach_for_action(2, false), 2);
+
+        // 3. Pickaxe damage against a dirt block (item 2, block_health = 18) emits 8, 16, 18
+        if std::path::Path::new("world.dat").exists() {
+            let world = crate::world::World::parse(&std::fs::read("world.dat").unwrap()).unwrap();
+            let dirt = world.tile_map.tiles.iter().find(|t| t.fg_item_id == 2).unwrap();
+            let (tx, ty) = (dirt.x, dirt.y);
+            bot.world = Some(Arc::new(world));
+            bot.record_tile_damage(tx as i32, ty as i32);
+            bot.record_tile_damage(tx as i32, ty as i32);
+            bot.record_tile_damage(tx as i32, ty as i32);
+            let mut damages = Vec::new();
+            while let Ok(ev) = ws_rx.try_recv() {
+                if let WsEvent::TileDamage { x, y, damage, max_health, .. } = ev {
+                    if x == tx && y == ty {
+                        damages.push((damage, max_health));
+                    }
+                }
+            }
+            assert_eq!(damages, vec![(8, 18), (16, 18), (18, 18)]);
+        }
     }
 }

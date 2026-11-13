@@ -1,14 +1,19 @@
 pub mod collision;
 pub mod config;
 pub mod engine;
+pub mod modifiers;
 pub mod state;
 
 #[cfg(test)]
 mod tests;
 
 pub use collision::{CollisionProvider, SimpleCollisionMap, TileCollisionKind, AABB};
-pub use config::PhysicsConfig;
+pub use config::{CharacterModifiers, MaladyKind, PhysicsConfig};
 pub use engine::{MovementInput, PhysicsEngine};
+pub use modifiers::{
+    classify_item_physics, parse_malady_event, resolve_character_modifiers,
+    ServerCharacterModifiers,
+};
 pub use state::PhysicsState;
 
 use crate::items::ItemsDat;

@@ -19,6 +19,18 @@ pub struct PhysicsState {
     pub trampoline: bool,
     /// True if sliding on ice or low-friction surface.
     pub sliding: bool,
+    /// Number of mid-air double jumps consumed since leaving ground.
+    pub air_jumps_used: u8,
+    /// Previous tick jump input state for edge-triggered double jumps.
+    pub prev_jump_held: bool,
+    /// True while descending under Slow Fall / Parasol drag.
+    pub slow_falling: bool,
+    /// Elapsed seconds of sustained airborne jetpack thrust in the current jump.
+    pub jetpack_thrust_timer: f32,
+    /// One-shot pulse emitted on the tick a jump or trampoline bounce begins.
+    /// Consumed once when building a State movement packet so holding Jump does
+    /// not transmit repeated PacketFlags::JUMP packets while airborne.
+    pub jump_pulse: bool,
 }
 
 impl Default for PhysicsState {
@@ -32,6 +44,11 @@ impl Default for PhysicsState {
             facing_left: false,
             trampoline: false,
             sliding: false,
+            air_jumps_used: 0,
+            prev_jump_held: false,
+            slow_falling: false,
+            jetpack_thrust_timer: 0.0,
+            jump_pulse: false,
         }
     }
 }
@@ -60,7 +77,7 @@ impl PhysicsState {
             flags |= PacketFlags::FACING_LEFT;
         }
 
-        if self.is_jumping || (!self.on_ground && self.vel.1 < -20.0) {
+        if self.jump_pulse {
             flags |= PacketFlags::JUMP;
         }
 
@@ -76,6 +93,25 @@ impl PhysicsState {
             flags |= PacketFlags::SLIDE;
         }
 
+        if self.slow_falling {
+            flags |= PacketFlags::PARASOL;
+        }
+
+        flags
+    }
+
+    /// Serialize movement flags for a network State packet and clear the one-shot `jump_pulse`.
+    pub fn consume_packet_flags(&mut self) -> PacketFlags {
+        let flags = self.to_packet_flags();
+        self.jump_pulse = false;
+        flags
+    }
+
+    /// Serialize movement context flags for punch/place action packets without emitting or
+    /// consuming a jump pulse.
+    pub fn to_action_packet_flags(&self) -> PacketFlags {
+        let mut flags = self.to_packet_flags();
+        flags.remove(PacketFlags::JUMP);
         flags
     }
 }

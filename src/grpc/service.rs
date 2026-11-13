@@ -274,7 +274,9 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::Chat { bot_id, .. }
         | WsEvent::DialogRequest { bot_id, .. }
         | WsEvent::DialogClose { bot_id }
-        | WsEvent::WorldMenu { bot_id, .. } => *bot_id,
+        | WsEvent::WorldMenu { bot_id, .. }
+        | WsEvent::BotPhysicsMods { bot_id, .. }
+        | WsEvent::TileDamage { bot_id, .. } => *bot_id,
     }
 }
 
@@ -329,11 +331,13 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
                 world_name: world_name.clone(),
             })
         }
-        WsEvent::BotMove { bot_id, x, y } => mori::bot_event::Event::BotMove(mori::BotMoveEvent {
-            bot_id: *bot_id,
-            x: *x,
-            y: *y,
-        }),
+        WsEvent::BotMove { bot_id, x, y, on_ground: _ } => {
+            mori::bot_event::Event::BotMove(mori::BotMoveEvent {
+                bot_id: *bot_id,
+                x: *x,
+                y: *y,
+            })
+        }
         WsEvent::BotGems { bot_id, gems } => mori::bot_event::Event::BotGems(mori::BotGemsEvent {
             bot_id: *bot_id,
             gems: *gems,
@@ -505,6 +509,18 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             mori::bot_event::Event::Console(mori::ConsoleEvent {
                 bot_id: *bot_id,
                 message: format!("[WorldMenu] {} sections received", sections.len()),
+            })
+        }
+        WsEvent::BotPhysicsMods { bot_id, mods } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[PhysicsMods] {}", mods.active_effects.join(", ")),
+            })
+        }
+        WsEvent::TileDamage { bot_id, x, y, damage, max_health } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[TileDamage] ({x},{y}) {damage}/{max_health}"),
             })
         }
     };

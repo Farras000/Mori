@@ -15,12 +15,12 @@ In standard Growtopia gameplay, character movement is client-simulated and serve
 
 * **Tile Dimensions**: $32.0 \times 32.0$ pixels per tile.
 * **Standard World Size**: 100 tiles wide by 60 tiles high ($3200 \times 1920$ pixels).
-* **Player Axis-Aligned Bounding Box (AABB)**:
-  * Width: $20.0\text{ px}$ (centered horizontally within a 32px tile, offset by $6.0\text{ px}$).
-  * Height: $30.0\text{ px}$ (offset from the tile top by $2.0\text{ px}$).
+* **Player Axis-Aligned Bounding Box (AABB)** (`colrect|0|0|20|30`):
+  * Width: $20.0\text{ px}$ (offset $0.0\text{ px}$; standing centered in a 32px tile at $x = \text{tile\_x} \times 32 + 6$).
+  * Height: $30.0\text{ px}$ (offset $0.0\text{ px}$; standing flush on a floor tile at $y = \text{floor\_tile\_y} \times 32 - 30$).
   * Bounding Box bounds:
-    $$\text{left} = x + 6.0, \quad \text{right} = x + 26.0$$
-    $$\text{top} = y + 2.0, \quad \text{bottom} = y + 32.0$$
+    $$\text{left} = x, \quad \text{right} = x + 20.0$$
+    $$\text{top} = y, \quad \text{bottom} = y + 30.0$$
 
 ---
 
@@ -81,7 +81,7 @@ When sending movement updates to the server via `GamePacketType::State`:
 | `WALK` | `0x0000_0001` | $|v_x| > 1.0$ (player in horizontal motion) |
 | `FACING_LEFT` | `0x0000_0010` | Moving or looking to the left |
 | `STANDING` | `0x0000_0020` | `on_ground == true` (resting on solid/platform) |
-| `JUMP` | `0x0000_0080` | `is_jumping == true` ($v_y < 0$ in the air) |
+| `JUMP` | `0x0000_0080` | `jump_pulse == true` (one-shot on jump launch / valid double-jump / trampoline bounce) |
 | `TRAMPOLINE` | `0x0000_8000` | Recently rebounded from a bouncy tile |
 | `SLIDE` | `0x0002_0000` | Sliding along ice or slippery surfaces |
 | `SWIM` | `0x0010_0000` | Submerged in water |

@@ -106,11 +106,11 @@ export class RTTEX {
       type: header,
       version: img.readU8(),
       reserved: img.readU8(),
-      width: img.readI32(),
       height: img.readI32(),
+      width: img.readI32(),
       format: img.readI32(),
-      originalWidth: img.readI32(),
       originalHeight: img.readI32(),
+      originalWidth: img.readI32(),
       isAlpha: img.readU8(),
       isCompressed: img.readU8(),
       reservedFlags: img.readU16(),
@@ -152,8 +152,8 @@ export class RTTEX {
     if (finalHeader === "RTTXTR") {
       const buf = new ExtendBuffer(data);
       buf.mempos = 8;
-      const width = buf.readI32();
       const height = buf.readI32();
+      const width = buf.readI32();
       const pixelData = new Uint8Array(data.slice(124));
 
       return await flipVerticalAndEncodePNG(width, height, pixelData);

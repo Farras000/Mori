@@ -19,10 +19,10 @@ type Page = 'bots' | 'items' | 'proxy' | 'docs' | 'grpc' | 'game'
 type AuthState = 'loading' | 'setup' | 'login' | 'authenticated'
 
 export default function App() {
-  useMoriStore()
+  const [authState, setAuthState] = useState<AuthState>('loading')
+  useMoriStore(authState === 'authenticated')
   const bots = useAtomValue(botsAtom)
   const dialogBot = Array.from(bots.values()).find((b) => b.active_dialog != null)
-  const [authState, setAuthState] = useState<AuthState>('loading')
   const [page, setPage] = useState<Page>(() => {
     if (typeof window !== 'undefined' && window.location.pathname.startsWith('/game')) {
       return 'game'

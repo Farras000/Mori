@@ -70,6 +70,13 @@ impl Variant {
             _ => (0.0, 0.0),
         }
     }
+
+    pub fn as_vec3(&self) -> (f32, f32, f32) {
+        match self {
+            Self::Vec3(x, y, z) => (*x, *y, *z),
+            _ => (0.0, 0.0, 0.0),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

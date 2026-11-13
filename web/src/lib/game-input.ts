@@ -54,8 +54,8 @@ export class GameInputManager {
       }
     }, 1000)
 
-    window.addEventListener('keydown', this.handleKeyDown)
-    window.addEventListener('keyup', this.handleKeyUp)
+    window.addEventListener('keydown', this.handleKeyDown, true)
+    window.addEventListener('keyup', this.handleKeyUp, true)
     window.addEventListener('blur', this.handleBlur)
     document.addEventListener('visibilitychange', this.handleVisibilityChange)
   }
@@ -69,8 +69,8 @@ export class GameInputManager {
       this.heartbeatInterval = null
     }
 
-    window.removeEventListener('keydown', this.handleKeyDown)
-    window.removeEventListener('keyup', this.handleKeyUp)
+    window.removeEventListener('keydown', this.handleKeyDown, true)
+    window.removeEventListener('keyup', this.handleKeyUp, true)
     window.removeEventListener('blur', this.handleBlur)
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
 
@@ -94,11 +94,13 @@ export class GameInputManager {
         next.left = true
         changed = true
       }
+      e.preventDefault()
     } else if (e.code === 'KeyD' || e.code === 'ArrowRight') {
       if (!next.right) {
         next.right = true
         changed = true
       }
+      e.preventDefault()
     } else if (e.code === 'KeyW' || e.code === 'ArrowUp' || e.code === 'Space') {
       if (!next.jump) {
         next.jump = true

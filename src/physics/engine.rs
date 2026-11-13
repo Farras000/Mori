@@ -1,6 +1,6 @@
 use super::{
     collision::{CollisionProvider, TileCollisionKind, AABB},
-    config::PhysicsConfig,
+    config::{CharacterModifiers, PhysicsConfig},
     state::PhysicsState,
 };
 
@@ -32,7 +32,7 @@ impl PhysicsEngine {
         Self { config }
     }
 
-    /// Simulate a single delta time step (subdivided for stability).
+    /// Simulate a single delta time step using default item/malady modifiers.
     pub fn step(
         &self,
         state: &mut PhysicsState,
@@ -40,13 +40,29 @@ impl PhysicsEngine {
         world: &impl CollisionProvider,
         dt: f32,
     ) {
+        self.step_with_modifiers(state, input, &CharacterModifiers::default(), world, dt);
+    }
+
+    /// Simulate a single delta time step with active gear and malady modifiers (subdivided for stability).
+    pub fn step_with_modifiers(
+        &self,
+        state: &mut PhysicsState,
+        input: MovementInput,
+        mods: &CharacterModifiers,
+        world: &impl CollisionProvider,
+        dt: f32,
+    ) {
+        // Clear the one-shot jump event pulse once per step call so a jump fired
+        // in any sub-step stays visible to network serialization at the end of the step.
+        state.jump_pulse = false;
+
         // Sub-step large deltas to prevent tunneling through tiles.
         const MAX_SUB_STEP: f32 = 1.0 / 60.0;
         let mut remaining = dt.clamp(0.0, 0.5);
 
         while remaining > 0.0 {
             let step_dt = remaining.min(MAX_SUB_STEP);
-            self.tick_internal(state, input, world, step_dt);
+            self.tick_internal(state, input, mods, world, step_dt);
             remaining -= step_dt;
         }
     }
@@ -55,6 +71,7 @@ impl PhysicsEngine {
         &self,
         state: &mut PhysicsState,
         input: MovementInput,
+        mods: &CharacterModifiers,
         world: &impl CollisionProvider,
         dt: f32,
     ) {
@@ -65,7 +82,16 @@ impl PhysicsEngine {
         let in_water = self.check_water_overlap(&current_aabb, world);
         state.in_water = in_water;
 
-        // 2. Horizontal Acceleration & Friction
+        // 2. Horizontal Acceleration, Strict Speed Cap & Friction
+        let speed_mul = mods.speed_multiplier.clamp(0.35, 2.0);
+        let air_boost = if !state.on_ground && !in_water && input.jump && mods.long_jump_speed_boost > 1.0 {
+            mods.long_jump_speed_boost
+        } else {
+            1.0
+        };
+        let effective_walk_speed =
+            (self.config.walk_speed * speed_mul * air_boost).clamp(60.0, self.config.max_walk_speed_cap);
+
         let friction = if in_water {
             self.config.water_drag
         } else if state.on_ground {
@@ -74,14 +100,34 @@ impl PhysicsEngine {
             self.config.air_friction
         };
 
-        if input.move_left {
+        if input.move_left && !input.move_right {
             state.facing_left = true;
-            let accel = if in_water { self.config.acceleration * 0.6 } else { self.config.acceleration };
-            state.vel.0 = (state.vel.0 - accel * dt).max(-self.config.walk_speed);
-        } else if input.move_right {
+            let accel = if in_water {
+                self.config.acceleration * 0.6
+            } else if !state.on_ground {
+                self.config.acceleration * 0.85
+            } else {
+                self.config.acceleration
+            };
+            if state.vel.0 >= -effective_walk_speed {
+                state.vel.0 = (state.vel.0 - accel * dt).max(-effective_walk_speed);
+            } else {
+                state.vel.0 = (state.vel.0 + accel * dt).min(-effective_walk_speed);
+            }
+        } else if input.move_right && !input.move_left {
             state.facing_left = false;
-            let accel = if in_water { self.config.acceleration * 0.6 } else { self.config.acceleration };
-            state.vel.0 = (state.vel.0 + accel * dt).min(self.config.walk_speed);
+            let accel = if in_water {
+                self.config.acceleration * 0.6
+            } else if !state.on_ground {
+                self.config.acceleration * 0.85
+            } else {
+                self.config.acceleration
+            };
+            if state.vel.0 <= effective_walk_speed {
+                state.vel.0 = (state.vel.0 + accel * dt).min(effective_walk_speed);
+            } else {
+                state.vel.0 = (state.vel.0 - accel * dt).max(effective_walk_speed);
+            }
         } else {
             state.vel.0 *= friction.powf(dt * 60.0);
             if state.vel.0.abs() < 1.5 {
@@ -89,30 +135,67 @@ impl PhysicsEngine {
             }
         }
 
-        // 3. Vertical Dynamics (Gravity & Jump)
+        // 3. Vertical Dynamics (Gravity, Ground Jump, Double Jump, Jetpack Thrust & Slow Fall)
+        let jump_mul = mods.jump_multiplier.clamp(0.45, 1.8);
+        let effective_jump_impulse = self.config.jump_impulse * jump_mul;
+        let jump_just_pressed = input.jump && !state.prev_jump_held;
+
         if in_water {
             // Water physics
+            state.slow_falling = false;
+            state.air_jumps_used = 0;
+            state.jetpack_thrust_timer = 0.0;
             let eff_gravity = self.config.gravity * self.config.water_drag * 0.4;
             state.vel.1 = (state.vel.1 + eff_gravity * dt).min(self.config.terminal_velocity * 0.4);
 
             if input.jump {
-                state.vel.1 = self.config.water_swim_impulse;
+                state.vel.1 = self.config.water_swim_impulse * jump_mul.clamp(0.75, 1.2);
                 state.is_jumping = true;
                 state.on_ground = false;
+            }
+        } else if state.on_ground && jump_just_pressed {
+            // Ground jump is edge-triggered (matching native Growtopia: holding Jump must not auto-hop on land)
+            state.vel.1 = effective_jump_impulse;
+            state.on_ground = false;
+            state.is_jumping = true;
+            state.jump_pulse = true;
+            state.trampoline = false;
+            state.slow_falling = false;
+            state.air_jumps_used = 0;
+            state.jetpack_thrust_timer = 0.0;
+        } else if !state.on_ground && jump_just_pressed && state.air_jumps_used < mods.max_air_jumps {
+            // Wings / Double Jump (edge-triggered so holding W doesn't auto-burn)
+            state.vel.1 = effective_jump_impulse * 0.96;
+            state.air_jumps_used += 1;
+            state.is_jumping = true;
+            state.jump_pulse = true;
+            state.trampoline = false;
+            state.slow_falling = false;
+        } else if !state.on_ground {
+            let mut eff_gravity = self.config.gravity;
+            if input.jump && mods.air_thrust_accel > 0.0 && state.jetpack_thrust_timer < 0.30 {
+                eff_gravity = (eff_gravity - mods.air_thrust_accel).max(120.0);
+                state.jetpack_thrust_timer += dt;
+            }
+            let mut max_fall = self.config.terminal_velocity;
+            if mods.slow_fall && input.jump && state.vel.1 >= 0.0 {
+                state.slow_falling = true;
+                max_fall = mods.slow_fall_max_vy.max(40.0);
+                eff_gravity = eff_gravity.min(self.config.gravity * 0.35);
+            } else {
+                state.slow_falling = false;
+            }
+            if !input.jump && state.vel.1 < 0.0 && !state.trampoline {
+                eff_gravity += self.config.jump_cut_decel;
+            }
+            state.vel.1 = (state.vel.1 + eff_gravity * dt).min(max_fall);
+            if state.vel.1 >= 0.0 {
+                state.is_jumping = false;
             }
         } else {
-            // Normal air / ground physics
-            if state.on_ground && input.jump {
-                state.vel.1 = self.config.jump_impulse;
-                state.on_ground = false;
-                state.is_jumping = true;
-                state.trampoline = false;
-            } else if !state.on_ground {
-                state.vel.1 = (state.vel.1 + self.config.gravity * dt).min(self.config.terminal_velocity);
-                if state.vel.1 >= 0.0 {
-                    state.is_jumping = false;
-                }
-            }
+            state.slow_falling = false;
+            state.air_jumps_used = 0;
+            state.jetpack_thrust_timer = 0.0;
         }
 
         // 4. Resolve Horizontal (X) Motion and Collision
@@ -194,6 +277,9 @@ impl PhysicsEngine {
                                 state.on_ground = true;
                                 state.is_jumping = false;
                                 state.trampoline = false;
+                                state.air_jumps_used = 0;
+                                state.slow_falling = false;
+                                state.jetpack_thrust_timer = 0.0;
                                 landed = true;
                             }
                         }
@@ -208,6 +294,9 @@ impl PhysicsEngine {
                                     state.on_ground = true;
                                     state.is_jumping = false;
                                     state.trampoline = false;
+                                    state.air_jumps_used = 0;
+                                    state.slow_falling = false;
+                                    state.jetpack_thrust_timer = 0.0;
                                     landed = true;
                                 }
                             }
@@ -220,6 +309,10 @@ impl PhysicsEngine {
                                 state.trampoline = true;
                                 state.on_ground = false;
                                 state.is_jumping = true;
+                                state.jump_pulse = true;
+                                state.air_jumps_used = 0;
+                                state.slow_falling = false;
+                                state.jetpack_thrust_timer = 0.0;
                                 landed = true;
                             }
                         }
@@ -257,6 +350,7 @@ impl PhysicsEngine {
         }
 
         state.pos.1 = target_y;
+        state.prev_jump_held = input.jump;
     }
 
     fn check_water_overlap(&self, aabb: &AABB, world: &impl CollisionProvider) -> bool {
@@ -274,5 +368,56 @@ impl PhysicsEngine {
             }
         }
         false
+    }
+
+    /// Probes within +/- 2.5px of the entity's feet so spawns and teleports over loaded
+    /// world geometry start cleanly grounded at the exact tile surface instead of briefly
+    /// reporting airborne or overlapping into the floor.
+    pub fn settle_on_ground(&self, state: &mut PhysicsState, world: &impl CollisionProvider) -> bool {
+        const TILE_SIZE: f32 = 32.0;
+        let aabb = AABB::from_pos(state.pos.0, state.pos.1, &self.config);
+        let min_tx = (aabb.left / TILE_SIZE).floor() as i32;
+        let max_tx = ((aabb.right - 0.1) / TILE_SIZE).floor() as i32;
+        let min_ty = ((aabb.bottom - 2.5) / TILE_SIZE).floor() as i32;
+        let max_ty = ((aabb.bottom + 2.5) / TILE_SIZE).floor() as i32;
+
+        let mut best_y: Option<f32> = None;
+        for ty in min_ty..=max_ty {
+            let tile_top = ty as f32 * TILE_SIZE;
+            if (aabb.bottom - tile_top).abs() > 2.5 {
+                continue;
+            }
+            for tx in min_tx..=max_tx {
+                let col = world.get_tile_collision(tx, ty);
+                let is_floor = match col {
+                    TileCollisionKind::Solid | TileCollisionKind::Ice => true,
+                    TileCollisionKind::Platform => aabb.bottom <= tile_top + 4.0,
+                    _ => false,
+                };
+                if is_floor {
+                    let max_allowed_y =
+                        tile_top - self.config.hitbox_offset_y - self.config.hitbox_height;
+                    best_y = Some(match best_y {
+                        Some(prev) => prev.min(max_allowed_y),
+                        None => max_allowed_y,
+                    });
+                }
+            }
+        }
+
+        if let Some(y) = best_y {
+            state.pos.1 = y;
+            state.vel.1 = 0.0;
+            state.on_ground = true;
+            state.is_jumping = false;
+            state.trampoline = false;
+            state.air_jumps_used = 0;
+            state.slow_falling = false;
+            state.jetpack_thrust_timer = 0.0;
+            true
+        } else {
+            state.on_ground = false;
+            false
+        }
     }
 }

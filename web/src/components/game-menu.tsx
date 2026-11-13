@@ -31,7 +31,7 @@ export function GameMenu({
   onActionReachChange,
 }: GameMenuProps) {
   const [tab, setTab] = useState<'main' | 'options'>('main')
-  const [extendedReach, setExtendedReach] = useState(actionReach > 4)
+  const extendedReach = bot.reach_override !== null && bot.reach_override !== undefined
 
   if (!isOpen) return null
 
@@ -50,8 +50,7 @@ export function GameMenu({
   }
 
   const handleToggleExtendedReach = (enabled: boolean) => {
-    setExtendedReach(enabled)
-    const newReach = enabled ? Math.max(8, actionReach) : 4
+    const newReach = enabled ? Math.max(8, actionReach) : 0
     onActionReachChange(newReach)
     api.sendCmd(bot.id, { type: 'set_action_reach', tiles: newReach }).catch(() => {})
   }
@@ -142,7 +141,7 @@ export function GameMenu({
                         <Zap className="w-3.5 h-3.5 text-amber-400" /> Extended Action Reach
                       </span>
                       <span className="text-[10px] text-muted-foreground">
-                        Jangkauan punch & place melebihi native 4 tiles
+                        Jangkauan punch &amp; place melebihi native reach (default 2 tiles)
                       </span>
                     </div>
                     <Switch
@@ -159,7 +158,7 @@ export function GameMenu({
                       </div>
                       <input
                         type="range"
-                        min={4}
+                        min={2}
                         max={20}
                         step={1}
                         value={actionReach}

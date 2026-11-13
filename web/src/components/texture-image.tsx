@@ -86,7 +86,7 @@ export const TextureImage = memo(function TextureImage({ item, flags = 0, onLoad
     async function loadTexture() {
       try {
         const coords = getIsolatedSpriteCoords(item, flags);
-        const croppedUrl = await textureCacheManager.getCroppedTile(
+        const croppedUrl = await textureCacheManager.getCroppedItemIcon(
           item.texture_file_name,
           coords.x,
           coords.y

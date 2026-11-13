@@ -65,8 +65,14 @@ pub enum WsEvent {
     BotStatus { bot_id: u32, status: String },
     /// Bot entered or left a world (world_name is empty when leaving).
     BotWorld { bot_id: u32, world_name: String },
-    /// Bot position updated (tile coordinates).
-    BotMove { bot_id: u32, x: f32, y: f32 },
+    /// Bot position updated (tile coordinates). `on_ground` lets the renderer plant feet immediately on impact.
+    BotMove {
+        bot_id: u32,
+        x: f32,
+        y: f32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        on_ground: Option<bool>,
+    },
     /// Bot gems balance updated.
     BotGems { bot_id: u32, gems: i32 },
     /// Bot ping updated (emitted when value changes).
@@ -105,6 +111,10 @@ pub enum WsEvent {
     DialogClose { bot_id: u32 },
     /// World select menu received with sections/worlds.
     WorldMenu { bot_id: u32, sections: Vec<crate::bot_state::WorldMenuSection> },
+    /// Character physics modifiers updated (wings double jump, jetpack, slow fall, malady).
+    BotPhysicsMods { bot_id: u32, mods: crate::physics::CharacterModifiers },
+    /// Tile crack/damage progress updated (from punch / tile damage tracking).
+    TileDamage { bot_id: u32, x: u32, y: u32, damage: u16, max_health: u16 },
 }
 
 /// Direction of a chat message.

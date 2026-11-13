@@ -101,6 +101,21 @@ export interface ProxyInfo {
   password?: string;
 }
 
+export interface CharacterModifiers {
+  speed_multiplier: number;
+  jump_multiplier: number;
+  max_air_jumps: number;
+  slow_fall: boolean;
+  slow_fall_max_vy: number;
+  air_thrust_accel: number;
+  long_jump_speed_boost: number;
+  malady: string | null;
+  punch_damage: number;
+  punch_reach: number;
+  build_reach: number;
+  active_effects: string[];
+}
+
 export interface WorldMenuEntry {
   name: string;
   count: number;
@@ -157,7 +172,11 @@ export interface BotState {
   active_dialog?: WsDialog | null;
   world_menu?: WorldMenuSection[];
   action_reach?: number;
+  punch_reach?: number;
+  build_reach?: number;
+  reach_override?: number | null;
   interactive?: boolean;
+  physics_mods?: CharacterModifiers;
 }
 
 export interface SpawnBotBody {
