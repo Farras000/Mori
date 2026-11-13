@@ -422,6 +422,7 @@ impl BotManager {
     pub fn stop(&mut self, id: u32, reason: &str) -> bool {
         if let Some(entry) = self.bots.remove(&id) {
             entry.stop_flag.store(true, Ordering::Relaxed);
+            crate::vsproxy::unregister_bot(id);
             let _ = self.ws_tx.send(WsEvent::BotRemoved { bot_id: id });
             // The stored configuration is KEPT: stopping a bot is a temporary
             // action, "forgetting" it is explicit (DELETE /bots/saved/{id}).

@@ -14,6 +14,7 @@ import {
   ChevronsDown,
   Trash,
   Trash2,
+  RotateCw,
 } from "lucide-react";
 import { useSetAtom, useAtomValue } from "jotai";
 import {
@@ -143,6 +144,13 @@ export function BotDetail({ bot }: { bot: LiveBot }) {
             {bot.status === "disconnected" ? "-" : `${bot.ping_ms}ms`}
           </span>
         )}
+        <button
+          title="ROLL IP"
+          onClick={() => api.sendCmd(bot.id, { type: "roll_proxy" })}
+          className="w-5 h-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <RotateCw className="w-3 h-3" />
+        </button>
         <button
           title="Reconnect"
           onClick={() => api.sendCmd(bot.id, { type: "reconnect" })}
@@ -877,6 +885,7 @@ function ConfigTab({
   const [proxyStatus, setProxyStatus] = useState("");
   const [proxyBusy, setProxyBusy] = useState(false);
   const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyRolling, setProxyRolling] = useState(false);
 
   useEffect(() => {
     setProxyStr(formatProxy(proxy));
@@ -969,6 +978,20 @@ function ConfigTab({
       setProxyStatus(e?.message ? `Failed: ${e.message}` : "Test failed");
     } finally {
       setProxyTesting(false);
+    }
+  }
+
+  async function rollProxy() {
+    setProxyRolling(true);
+    setProxyStatus("Rolling IP…");
+    try {
+      await api.sendCmd(botId, { type: "roll_proxy" });
+      setProxyStatus("Roll IP requested");
+    } catch {
+      setProxyStatus("Roll IP failed");
+    } finally {
+      setProxyRolling(false);
+      setTimeout(() => setProxyStatus(""), 4000);
     }
   }
 
@@ -1225,11 +1248,20 @@ function ConfigTab({
           </p>
         )}
         <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" className="text-xs" onClick={saveProxy} disabled={proxyBusy}>
+          <Button size="sm" className="text-xs" onClick={saveProxy} disabled={proxyBusy || proxyRolling}>
             {proxyBusy ? "Saving…" : needsDisconnect ? "Disconnect & Save" : "Save proxy"}
           </Button>
-          <Button size="sm" variant="outline" className="text-xs" onClick={testProxy} disabled={proxyTesting || proxyBusy}>
+          <Button size="sm" variant="outline" className="text-xs" onClick={testProxy} disabled={proxyTesting || proxyBusy || proxyRolling}>
             {proxyTesting ? "Testing…" : "Test"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="text-xs font-semibold"
+            disabled={proxyRolling || proxyBusy}
+            onClick={rollProxy}
+          >
+            {proxyRolling ? "Rolling IP…" : "ROLL IP"}
           </Button>
           <Button
             size="sm"
