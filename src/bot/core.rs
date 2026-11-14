@@ -248,17 +248,94 @@ fn extract_chat_display_message(raw: &str) -> Option<String> {
     }
 
     if !msg_lines.is_empty() {
-        return Some(msg_lines.join("\n"));
+        let joined = clean_gt_talk_bubble(&msg_lines.join("\n"));
+        return (!joined.is_empty()).then_some(joined);
     }
     if has_protocol_kv {
         return None;
     }
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
+    let cleaned = clean_gt_talk_bubble(raw);
+    if cleaned.is_empty() {
         None
     } else {
-        Some(trimmed.to_string())
+        Some(cleaned)
     }
+}
+
+/// Remove Growtopia chat/talk-bubble metadata prefixes such as
+/// `CP:0_PL:1_OID:_` or `CP:_PL:0_OID:_` while keeping the message body intact.
+fn clean_gt_talk_bubble(raw: &str) -> String {
+    let mut s = raw.trim();
+    loop {
+        if let Some(rest) = strip_one_cp_prefix(s) {
+            s = rest.trim_start();
+        } else {
+            break;
+        }
+    }
+    // Also remove any embedded occurrence following a space (some private/retail packets echo it).
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(idx) = rest.find("CP:") {
+        let before = &rest[..idx];
+        let at_boundary = before.is_empty() || before.ends_with(char::is_whitespace);
+        if at_boundary {
+            if let Some(after) = strip_one_cp_prefix(&rest[idx..]) {
+                out.push_str(before);
+                rest = after;
+                continue;
+            }
+        }
+        out.push_str(&rest[..idx + 3]);
+        rest = &rest[idx + 3..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
+}
+
+fn strip_one_cp_prefix(s: &str) -> Option<&str> {
+    let after_cp = s.strip_prefix("CP:")?;
+    let pl_rel = after_cp.find("_PL:")?;
+    let cp_val = &after_cp[..pl_rel];
+    if cp_val.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let after_pl = &after_cp[pl_rel + 4..];
+    let oid_rel = after_pl.find("_OID:")?;
+    let pl_val = &after_pl[..oid_rel];
+    if pl_val.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let after_oid = &after_pl[oid_rel + 5..];
+    let end_rel = after_oid.find('_')?;
+    let oid_val = &after_oid[..end_rel];
+    if oid_val.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some(&after_oid[end_rel + 1..])
+}
+
+/// Detect Growtopia server rejection messages triggered by blocked block placement.
+fn is_placement_rejection_msg(msg: &str) -> bool {
+    let lower = strip_gt_color_codes(msg).to_lowercase();
+    [
+        "area is locked",
+        "locked by",
+        "don't have access",
+        "do not have access",
+        "no access",
+        "can't build",
+        "cannot build",
+        "can't place",
+        "cannot place",
+        "that's locked",
+        "it's locked",
+        "must be placed",
+        "can't use that here",
+        "too far",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 /// Extract audio file path and delay from Growtopia `action|play_sfx` packets.
@@ -418,6 +495,8 @@ pub struct Bot {
     /// Whether the bot should automatically rotate proxy on reconnect failures / IP limit / HTTP 403.
     pub auto_rotate_reconnect: bool,
     pub interactive: InteractiveState,
+    /// Optimistically subtracted tile placements `(x, y, item_id, sent_at)` awaiting server confirmation.
+    pending_placements: Vec<(i32, i32, u16, std::time::Instant)>,
 }
 
 fn sorted_blacklist_vec(set: &HashSet<u16>) -> Vec<u16> {
@@ -561,6 +640,7 @@ impl Bot {
             vsproxy_cfg: VsProxyConfig::from_env(),
             auto_rotate_reconnect,
             interactive: InteractiveState::default(),
+            pending_placements: Vec::new(),
         };
 
         {
@@ -842,6 +922,7 @@ rid|{rid}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{hash}\nmac|{mac}
             vsproxy_cfg: VsProxyConfig::from_env(),
             auto_rotate_reconnect,
             interactive: InteractiveState::default(),
+            pending_placements: Vec::new(),
         };
 
         {
@@ -1320,6 +1401,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             self.service_once();
             self.drain_script_requests();
+            if !self.pending_placements.is_empty() {
+                self.refund_pending_placements(true);
+            }
             if self.auto_collect && !self.captcha_active
                 && self.collect_timer.elapsed() >= std::time::Duration::from_millis(self.collect_interval)
             {
@@ -1785,6 +1869,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                                 GamePacketType::SendMapData => {
                                     let _ = std::fs::write("world.dat", &pkt.extra_data);
                                     self.players.clear();
+                                    self.pending_placements.clear();
                                     let prev_malady = self.local.malady;
                                     self.local = LocalPlayer::default();
                                     self.local.malady = prev_malady;
@@ -2170,11 +2255,16 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         let mut s = self.state.write().unwrap();
                         s.status = BotStatus::InGame;
                         s.net_id = self.local.net_id;
+                        s.user_id = self.local.user_id;
                         if let Some((x, y, _)) = settled_spawn {
                             s.pos_x = x / 32.0;
                             s.pos_y = y / 32.0;
                         }
                     }
+                    self.emit(WsEvent::BotUserId {
+                        bot_id: self.bot_id,
+                        user_id: self.local.user_id,
+                    });
                     if let Some((x, y, on_ground)) = settled_spawn {
                         self.emit(WsEvent::BotMove {
                             bot_id: self.bot_id,
@@ -2324,7 +2414,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                             .find_by_id(item.id as u32)
                             .map(|info| info.action_type)
                             .unwrap_or(0);
-                        if action_type == 20 {
+                        if action_type == 20 || action_type == 107 {
                             if clothes.contains(&(item.id as u32)) {
                                 item.flag |= 1;
                             } else {
@@ -2376,7 +2466,8 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             }
             "OnTalkBubble" => {
                 let net_id = vl.get(1).map(|v| v.as_int32()).unwrap_or(-1);
-                let text = vl.get(2).map(|v| v.as_string()).unwrap_or_default();
+                let raw_text = vl.get(2).map(|v| v.as_string()).unwrap_or_default();
+                let clean_text = clean_gt_talk_bubble(&raw_text);
                 let bubble_type = vl
                     .get(3)
                     .map(|v| v.as_int32().clamp(0, 255) as u8)
@@ -2386,45 +2477,58 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 } else {
                     self.local.net_id
                 };
-                self.log_console(format!("[Bot] TalkBubble (net_id={net_id}): {text}"));
+                let speaker = self.resolve_speaker_name(net_id);
+                if !self.pending_placements.is_empty() && is_placement_rejection_msg(&clean_text) {
+                    self.refund_pending_placements(false);
+                }
+                self.log_console(format!(
+                    "[Bot] TalkBubble ({speaker}, net_id={net_id}): {clean_text}"
+                ));
                 self.emit(WsEvent::TalkBubble {
                     bot_id: self.bot_id,
                     net_id: resolved_net_id,
-                    text: text.clone(),
+                    speaker: speaker.clone(),
+                    text: clean_text.clone(),
                     bubble_type,
                 });
-                self.emit(WsEvent::Chat {
-                    bot_id: self.bot_id,
-                    message: format!("[Bubble #{net_id}] {text}"),
-                    kind: ChatKind::Incoming,
-                });
+                if !clean_text.is_empty() {
+                    self.emit(WsEvent::Chat {
+                        bot_id: self.bot_id,
+                        message: format!("{speaker}: {clean_text}"),
+                        kind: ChatKind::Incoming,
+                    });
+                }
                 if net_id == self.local.net_id as i32 || net_id == -1 || self.local.net_id == 0 {
-                    if let Some(malady_opt) = crate::physics::parse_malady_event(&text) {
+                    if let Some(malady_opt) = crate::physics::parse_malady_event(&clean_text) {
                         self.local.malady = malady_opt;
                         self.recompute_physics_mods();
                     }
                 }
-                let lower = text.to_lowercase();
+                let lower = clean_text.to_lowercase();
                 if lower.contains("captcha")
                     || lower.contains("are you human")
                     || lower.contains("verification")
                     || lower.contains("antibot")
                 {
                     self.log_console(format!(
-                        "[Bot] ⚠️ CAPTCHA / VERIFIKASI TERDETEKSI: '{text}' — Freeze punch/place (TIDAK disconnect untuk cegah ban)"
+                        "[Bot] ⚠️ CAPTCHA / VERIFIKASI TERDETEKSI: '{clean_text}' — Freeze punch/place (TIDAK disconnect untuk cegah ban)"
                     ));
                     self.captcha_active = true;
                     self.pathfind_target = None;
                     self.pathfind_recalc = false;
                     self.emit(WsEvent::Chat {
                         bot_id: self.bot_id,
-                        message: format!("[SAFETY] Captcha terdeteksi: '{text}'. Bot di-freeze otomatis demi keamanan."),
+                        message: format!("[SAFETY] Captcha terdeteksi: '{clean_text}'. Bot di-freeze otomatis demi keamanan."),
                         kind: ChatKind::Incoming,
                     });
                 }
             }
             "OnConsoleMessage" => {
-                let message = vl.get(1).map(|v| v.as_string()).unwrap_or_default();
+                let raw_message = vl.get(1).map(|v| v.as_string()).unwrap_or_default();
+                let message = clean_gt_talk_bubble(&raw_message);
+                if !self.pending_placements.is_empty() && is_placement_rejection_msg(&message) {
+                    self.refund_pending_placements(false);
+                }
                 if let Some(malady_opt) = crate::physics::parse_malady_event(&message) {
                     self.local.malady = malady_opt;
                     self.recompute_physics_mods();
@@ -2503,6 +2607,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     raw_snippet
                 ));
                 self.world = None;
+                self.pending_placements.clear();
                 self.captcha_active = false;
                 self.pathfind_target = None;
                 self.pathfind_recalc = false;
@@ -2661,6 +2766,13 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             return;
         }
 
+        let is_seed = item_id != 18
+            && self
+                .items_dat
+                .find_by_id(item_id as u32)
+                .map(|info| info.action_type == 19)
+                .unwrap_or_else(|| item_id % 2 == 1);
+
         let result = {
             let world = Arc::make_mut(self.world.as_mut().unwrap());
             let is_bg = item_id != 18
@@ -2668,11 +2780,18 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     .items_dat
                     .find_by_id(item_id as u32)
                     .is_some_and(|info| info.action_type == 18);
-            if let Some(tile) = world.get_tile_mut(x, y) {
+            let width = world.tile_map.width;
+            let idx = (y * width + x) as usize;
+            let had_world_lock = world.tile_map.world_lock_index == Some(idx);
+            let mut cleared_world_lock = false;
+            let res = if let Some(tile) = world.get_tile_mut(x, y) {
                 if item_id == 18 {
                     if tile.fg_item_id != 0 {
                         tile.fg_item_id = 0;
                         tile.tile_type = TileType::Basic;
+                        if had_world_lock {
+                            cleared_world_lock = true;
+                        }
                     } else {
                         tile.bg_item_id = 0;
                     }
@@ -2680,14 +2799,27 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     tile.bg_item_id = item_id;
                 } else {
                     tile.fg_item_id = item_id;
+                    if is_seed {
+                        tile.tile_type = TileType::Seed {
+                            age: 0,
+                            item_on_tree: 1,
+                        };
+                    }
                 }
                 Some((tile.fg_item_id, tile.bg_item_id))
             } else {
                 None
+            };
+            if cleared_world_lock {
+                world.tile_map.world_lock_index = None;
             }
+            res
         };
 
         if result.is_some() {
+            if item_id != 18 && item_id != 32 {
+                self.confirm_pending_placement(x as i32, y as i32);
+            }
             self.clear_tile_damage(x, y);
             self.sync_and_emit_tile_update(x, y);
         }
@@ -2708,6 +2840,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
         match result {
             Ok((_fg, _bg)) => {
+                self.confirm_pending_placement(x as i32, y as i32);
                 self.clear_tile_damage(x, y);
                 self.sync_and_emit_tile_update(x, y);
                 self.log_console(format!("[Bot] TileUpdateData ({x},{y})"));
@@ -2739,6 +2872,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
             match result {
                 Ok((_fg, _bg)) => {
+                    self.confirm_pending_placement(x as i32, y as i32);
                     self.clear_tile_damage(x, y);
                     self.sync_and_emit_tile_update(x, y);
                     self.log_console(format!("[Bot] TileUpdateDataMultiple ({x},{y})"));
@@ -2776,6 +2910,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
     fn on_modify_item_inventory(&mut self, pkt: &GameUpdatePacket) {
         let item_id = pkt.value as u16;
+        if item_id == 112 {
+            return;
+        }
         if pkt.jump_count != 0 {
             let amount = pkt.jump_count;
             self.inventory.sub_item(item_id, amount);
@@ -2783,7 +2920,10 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 "[Bot] ModifyItemInventory item={item_id} -{amount}"
             ));
         } else {
-            // animation_type != 0
+            // animation_type != 0 — cancel matching optimistic pending refund so we never double-credit
+            if let Some(pos) = self.pending_placements.iter().position(|p| p.2 == item_id) {
+                self.pending_placements.swap_remove(pos);
+            }
             let amount = pkt.animation_type;
             self.inventory.add_item(item_id, amount);
             self.log_console(format!(
@@ -2981,6 +3121,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
             .inventory
             .items
             .values()
+            .filter(|i| i.id != 112)
             .map(|i| InvSlot {
                 item_id: i.id,
                 amount: i.amount,
@@ -2996,7 +3137,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         slots.sort_by_key(|s| {
             let tier: u8 = if s.item_id == 18 || s.item_id == 32 {
                 2
-            } else if s.action_type == 20 {
+            } else if s.action_type == 20 || s.action_type == 107 {
                 1
             } else {
                 0
@@ -3161,17 +3302,24 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                         objects: ws_objs,
                     });
                     if pkt.net_id == self.local.net_id {
-                        let current = self.inventory.items
-                            .get(&item.item_id)
-                            .map(|i| i.amount)
-                            .unwrap_or(0);
-                        let to_add = item.count.min(200u8.saturating_sub(current));
-                        self.inventory.add_item(item.item_id, to_add);
-                        self.log_console(format!(
-                            "[Bot] ItemCollect id={} count={}",
-                            item.item_id, item.count
-                        ));
-                        self.emit_inventory_update();
+                        let is_gem_like = item.item_id == 112
+                            || self
+                                .items_dat
+                                .find_by_id(item.item_id as u32)
+                                .is_some_and(|info| info.action_type == 4);
+                        if !is_gem_like {
+                            let current = self.inventory.items
+                                .get(&item.item_id)
+                                .map(|i| i.amount)
+                                .unwrap_or(0);
+                            let to_add = item.count.min(200u8.saturating_sub(current));
+                            self.inventory.add_item(item.item_id, to_add);
+                            self.log_console(format!(
+                                "[Bot] ItemCollect id={} count={}",
+                                item.item_id, item.count
+                            ));
+                            self.emit_inventory_update();
+                        }
                     }
                 }
             }
@@ -3224,17 +3372,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 return;
             };
 
-            // TODO: find better way than this ugly thing
-            const TOGGLEABLE_ITEM_BY_PUNCH: [u32; 7] = [1226, 6172, 6398, 8348, 8350, 8806, 8808];
-            if TOGGLEABLE_ITEM_BY_PUNCH.contains(&(tile.fg_item_id as u32)) {
-                tile.flags.toggle(TileFlags::IS_ON);
-                tile.flags_raw = tile.flags.bits();
-                flags_changed = true;
-            }
-
             if let Some(item_info) = self.items_dat.find_by_id(tile.fg_item_id as u32) {
-                if item_info.action_type == 31 {
-                    // switcheroo
+                let toggles_on_punch = item_info.action_type == 31
+                    || (item_info.action_type == 32 && item_info.collision_type == 4)
+                    || (item_info.action_type == 45 && (item_info.flags & 0x0010) != 0);
+                if toggles_on_punch {
                     tile.flags.toggle(TileFlags::IS_ON);
                     tile.flags_raw = tile.flags.bits();
                     flags_changed = true;
@@ -3243,6 +3385,9 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         }
         if flags_changed {
             self.sync_and_emit_tile_update(x, y);
+            if self.pathfind_target.is_some() {
+                self.pathfind_recalc = true;
+            }
         }
     }
 
@@ -3451,12 +3596,41 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                 return false;
             }
             if !is_punch && item_id != 18 && item_id != 32 {
+                let has_item = self
+                    .inventory
+                    .items
+                    .get(&(item_id as u16))
+                    .is_some_and(|s| s.amount > 0);
+                if !has_item {
+                    return false;
+                }
+                let item_info = self.items_dat.find_by_id(item_id);
+                if let Some(info) = item_info {
+                    if !info.is_placeable_tile() {
+                        return false;
+                    }
+                } else if !self.items_dat.items.is_empty() {
+                    return false;
+                }
+
+                let perm = world.tile_map.get_tile_permission(
+                    tile_x as u32,
+                    tile_y as u32,
+                    self.local.user_id,
+                );
+                if !perm.contains(WorldTilePermission::BUILD) {
+                    return false;
+                }
+
+                let action_type = item_info.map(|info| info.action_type).unwrap_or(0);
+                if action_type == 3
+                    && !crate::world::constants::NON_WORLDLOCK_TILE_IDS.contains(&(item_id as u16))
+                    && world.tile_map.world_lock_index.is_some()
+                {
+                    return false;
+                }
+
                 if let Some(tile) = world.get_tile(tile_x as u32, tile_y as u32) {
-                    let action_type = self
-                        .items_dat
-                        .find_by_id(item_id)
-                        .map(|info| info.action_type)
-                        .unwrap_or(0);
                     let valid = if action_type == 18 {
                         tile.bg_item_id == 0
                     } else if action_type == 19 || item_id % 2 == 1 {
@@ -3507,9 +3681,81 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
 
         if !is_punch && item_id != 18 && item_id != 32 {
             self.inventory.sub_item(item_id as u16, 1);
+            self.pending_placements.push((
+                tile_x,
+                tile_y,
+                item_id as u16,
+                std::time::Instant::now(),
+            ));
             self.emit_inventory_update();
         }
         true
+    }
+
+    fn resolve_speaker_name(&self, net_id: i32) -> String {
+        if net_id >= 0 {
+            let nid = net_id as u32;
+            if nid == self.local.net_id && self.local.net_id != 0 {
+                let me = strip_gt_color_codes(&self.username).trim().to_string();
+                if !me.is_empty() {
+                    return me;
+                }
+            }
+            if let Some(p) = self.players.get(&nid) {
+                let clean = strip_gt_color_codes(&p.name).trim().to_string();
+                if !clean.is_empty() {
+                    return clean;
+                }
+            }
+            if nid == self.local.net_id {
+                let me = strip_gt_color_codes(&self.username).trim().to_string();
+                if !me.is_empty() {
+                    return me;
+                }
+            }
+            if net_id == 0 {
+                return "System".to_string();
+            }
+            format!("Player #{nid}")
+        } else {
+            "System".to_string()
+        }
+    }
+
+    fn confirm_pending_placement(&mut self, x: i32, y: i32) {
+        self.pending_placements.retain(|p| !(p.0 == x && p.1 == y));
+    }
+
+    fn refund_pending_placements(&mut self, only_expired: bool) {
+        if self.pending_placements.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(1500);
+        let mut to_refund = Vec::new();
+        let mut kept = Vec::new();
+        for entry in self.pending_placements.drain(..) {
+            if !only_expired || now.duration_since(entry.3) >= timeout {
+                to_refund.push(entry.2);
+            } else {
+                kept.push(entry);
+            }
+        }
+        self.pending_placements = kept;
+        if to_refund.is_empty() {
+            return;
+        }
+        for item_id in &to_refund {
+            let current = self.inventory.items.get(item_id).map(|i| i.amount).unwrap_or(0);
+            if current < 200 {
+                self.inventory.add_item(*item_id, 1);
+            }
+        }
+        self.log_console(format!(
+            "[Bot] Refunded {} blocked/unconfirmed tile placement(s)",
+            to_refund.len()
+        ));
+        self.emit_inventory_update();
     }
 
     pub fn send_tile_action(&mut self, offset_x: i32, offset_y: i32, item_id: u32, is_punch: bool) {
@@ -3609,7 +3855,7 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
         let pos_x = self.pos_x;
         let pos_y = self.pos_y;
 
-        let radius_tiles = radius.unwrap_or(self.collect_radius_tiles.clamp(1, 5));
+        let radius_tiles = radius.unwrap_or(self.collect_radius_tiles.clamp(1, 20));
         let r_px = radius_tiles as f32 * 32.0;
         const MAX_PER_TICK: usize = 32; // cap packets per call
 
@@ -4812,10 +5058,11 @@ rid|{}\nplatformID|0,1,1\ndeviceVersion|0\ncountry|jp\nhash|{}\nmac|{}\nwk|{}\nz
                     0 => { true },
                     2 => { direction != ((0, 1)) }, // platform. Forbid going down
                     3 | 10 | 11 => {
-                        world.tile_map.get_tile_permission(x, y, user_id) != WorldTilePermission::NONE ||
-                        tile.flags.contains(TileFlags::IS_OPEN_TO_PUBLIC)
+                        world.tile_map.get_tile_permission(x, y, user_id) != WorldTilePermission::NONE
+                            || tile.flags.contains(TileFlags::IS_OPEN_TO_PUBLIC)
+                            || tile.flags.contains(TileFlags::IS_ON)
                     }
-                    4 => { tile.flags.contains(TileFlags::IS_ON) }
+                    4 | 8 => { tile.flags.contains(TileFlags::IS_ON) }
                     5 => { // Onw way
                         if tile.flags.contains(TileFlags::FLIPPED_X) { direction != (1, 0) }
                         else { direction != (-1, 0) } // forbid from right to left
@@ -5787,6 +6034,7 @@ mod tests {
             vsproxy_cfg: None,
             auto_rotate_reconnect: false,
             interactive: InteractiveState::default(),
+            pending_placements: Vec::new(),
         }
     }
 
@@ -5854,6 +6102,11 @@ mod tests {
             let world = crate::world::World::parse(&std::fs::read("world.dat").unwrap()).unwrap();
             let door = world.tile_map.tiles.iter().find(|t| t.fg_item_id == 6).unwrap();
             let (dx, dy) = (door.x as i32, door.y as i32);
+            if let Some(wl_idx) = world.tile_map.world_lock_index {
+                if let Some(TileType::Lock { owner_uid, .. }) = world.tile_map.tiles.get(wl_idx).map(|t| &t.tile_type) {
+                    bot.local.user_id = *owner_uid;
+                }
+            }
             bot.world = Some(Arc::new(world));
 
             // Position right-shifted inside tile (pos_x % 32 == 25 >= 22): old ox+base_x math was off by 1!
@@ -6171,5 +6424,234 @@ end_dialog|door_edit|Cancel|OK|";
         assert_eq!(trade.partner_slots[1].item_id, 1796);
         assert!(trade.partner_locked);
         assert!(trade.partner_accepted);
+    }
+
+    fn make_synthetic_world(width: u32, height: u32, lock_owner: Option<u32>) -> crate::world::World {
+        let mut tiles = Vec::with_capacity((width * height) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                tiles.push(crate::world::Tile {
+                    fg_item_id: 0,
+                    bg_item_id: 0,
+                    parent_block: 0,
+                    flags: TileFlags::empty(),
+                    flags_raw: 0,
+                    x,
+                    y,
+                    tile_type: TileType::Basic,
+                });
+            }
+        }
+        let mut world_lock_index = None;
+        if let Some(owner_uid) = lock_owner {
+            tiles[0].fg_item_id = 242;
+            tiles[0].tile_type = TileType::Lock {
+                settings: 0,
+                owner_uid,
+                access_count: 0,
+                access_uids: Vec::new(),
+                minimum_level: 0,
+                bpm: 0,
+                world_timer: 0,
+            };
+            world_lock_index = Some(0);
+        }
+        crate::world::World {
+            version: 0x16,
+            flags: 0,
+            tile_map: crate::world::WorldTileMap {
+                world_name: "TEST".into(),
+                width,
+                height,
+                tiles,
+                world_lock_index,
+            },
+            objects: Vec::new(),
+            npcs: Vec::new(),
+            next_object_uid: 1,
+            base_weather: 0,
+            current_weather: 0,
+        }
+    }
+
+    fn encode_talk_bubble_payload(net_id: i32, msg: &str) -> Vec<u8> {
+        let mut tb = vec![3u8];
+        tb.push(0);
+        tb.push(2);
+        tb.extend_from_slice(&(12u32).to_le_bytes());
+        tb.extend_from_slice(b"OnTalkBubble");
+        tb.push(1);
+        tb.push(9);
+        tb.extend_from_slice(&net_id.to_le_bytes());
+        tb.push(2);
+        tb.push(2);
+        tb.extend_from_slice(&(msg.len() as u32).to_le_bytes());
+        tb.extend_from_slice(msg.as_bytes());
+        tb
+    }
+
+    #[test]
+    fn test_placeable_guard_locked_world_anti_loss_and_refund() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let state = Arc::new(RwLock::new(BotState::default()));
+        let items = Arc::new(crate::items::ItemsDat {
+            version: 24,
+            items: vec![
+                crate::items::ItemInfo { id: 2, action_type: 17, name: "Dirt".into(), ..Default::default() },
+                crate::items::ItemInfo { id: 3, action_type: 19, name: "Dirt Seed".into(), ..Default::default() },
+                crate::items::ItemInfo { id: 98, action_type: 20, clothing_type: 5, name: "Pickaxe".into(), ..Default::default() },
+                crate::items::ItemInfo { id: 112, action_type: 4, name: "Gems".into(), ..Default::default() },
+                crate::items::ItemInfo { id: 916, action_type: 1, name: "Synthetic Chemical".into(), ..Default::default() },
+                crate::items::ItemInfo { id: 1482, action_type: 37, name: "Growtoken".into(), ..Default::default() },
+                crate::items::ItemInfo { id: 1272, action_type: 8, name: "Surgical Tool".into(), ..Default::default() },
+            ],
+        });
+        let mut bot = new_test_bot(items, state, rx, None);
+        bot.local.user_id = 100;
+        bot.pos_x = 64.0;
+        bot.pos_y = 64.0;
+
+        // Seed inventory with placeable + non-placeable items
+        bot.inventory.add_item(2, 5);
+        bot.inventory.add_item(3, 5);
+        bot.inventory.add_item(98, 1);
+        bot.inventory.add_item(916, 10);
+        bot.inventory.add_item(1482, 4);
+        bot.inventory.add_item(1272, 3);
+
+        // Locked by uid=999 -> non-owner (100) cannot place Dirt; Dirt remains 5
+        bot.world = Some(Arc::new(make_synthetic_world(10, 10, Some(999))));
+        assert!(!bot.send_tile_action_at(3, 2, 2, false));
+        assert_eq!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0), 5);
+
+        // Unlock / become owner (999) -> unplaceables STILL fail without decrementing
+        bot.local.user_id = 999;
+        for non_placeable in [98u32, 112, 916, 1482, 1272] {
+            assert!(!bot.send_tile_action_at(3, 2, non_placeable, false), "item {non_placeable} must not be placeable");
+        }
+        assert_eq!(bot.inventory.items.get(&98).map(|i| i.amount).unwrap_or(0), 1);
+        assert_eq!(bot.inventory.items.get(&916).map(|i| i.amount).unwrap_or(0), 10);
+        assert_eq!(bot.inventory.items.get(&1482).map(|i| i.amount).unwrap_or(0), 4);
+        assert_eq!(bot.inventory.items.get(&1272).map(|i| i.amount).unwrap_or(0), 3);
+
+        // Owner places Dirt -> optimistic decrement + pending tracking
+        assert!(bot.send_tile_action_at(3, 2, 2, false));
+        assert_eq!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0), 4);
+        assert_eq!(bot.pending_placements.len(), 1);
+
+        // Simulated server rejection via OnTalkBubble immediately refunds Dirt back to 5
+        let reject_tb = encode_talk_bubble_payload(-1, "`4That area is locked!``");
+        bot.on_call_function(enet::PeerID(0), 42, &reject_tb);
+        assert_eq!(bot.inventory.items.get(&2).map(|i| i.amount).unwrap_or(0), 5);
+        assert!(bot.pending_placements.is_empty());
+
+        // Planting a seed updates tile to TileType::Seed on server tile_change confirmation
+        assert!(bot.send_tile_action_at(4, 2, 3, false));
+        assert_eq!(bot.inventory.items.get(&3).map(|i| i.amount).unwrap_or(0), 4);
+        let tile_pkt = GameUpdatePacket {
+            packet_type: GamePacketType::TileChangeRequest,
+            int_x: 4,
+            int_y: 2,
+            value: 3,
+            ..Default::default()
+        };
+        bot.on_tile_change(&tile_pkt);
+        assert!(bot.pending_placements.is_empty());
+        let planted = bot.world.as_ref().unwrap().get_tile(4, 2).unwrap();
+        assert!(matches!(planted.tile_type, TileType::Seed { age: 0, item_on_tree: 1 }));
+    }
+
+    #[test]
+    fn test_gems_excluded_collect_range_above_5_and_talk_bubble_formatting() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let (ws_tx, mut ws_rx) = tokio::sync::broadcast::channel(32);
+        let state = Arc::new(RwLock::new(BotState::default()));
+        let items = Arc::new(crate::items::ItemsDat {
+            version: 24,
+            items: vec![
+                crate::items::ItemInfo { id: 112, action_type: 4, name: "Gems".into(), ..Default::default() },
+                crate::items::ItemInfo { id: 2, action_type: 17, name: "Dirt".into(), ..Default::default() },
+            ],
+        });
+        let mut bot = new_test_bot(items, state.clone(), rx, Some(ws_tx));
+        bot.local.net_id = 7;
+        bot.inventory.size = 100;
+        bot.username = "MoriHero".into();
+        bot.pos_x = 32.0;
+        bot.pos_y = 32.0;
+
+        let mut world = make_synthetic_world(30, 10, None);
+        world.objects.push(crate::world::WorldObject {
+            item_id: 2,
+            x: 32.0 + 10.0 * 32.0, // 10 tiles away (> 5 tile legacy limit)
+            y: 32.0,
+            count: 3,
+            flags: 0,
+            uid: 50,
+        });
+        world.objects.push(crate::world::WorldObject {
+            item_id: 112,
+            x: 32.0,
+            y: 32.0,
+            count: 5,
+            flags: 0,
+            uid: 51,
+        });
+        bot.world = Some(Arc::new(world));
+
+        bot.handle_command(BotCommand::SetCollectRange { tiles: 15 });
+        assert_eq!(bot.collect_radius_tiles, 15);
+        assert_eq!(state.read().unwrap().collect_radius_tiles, 15);
+        assert_eq!(bot.collect(None, None), 2);
+
+        // Collecting Gems (112) must NOT insert Gems into inventory
+        let gem_pkt = GameUpdatePacket {
+            packet_type: GamePacketType::ItemChangeObject,
+            net_id: 7,
+            int_x: -1,
+            value: 51,
+            ..Default::default()
+        };
+        bot.on_item_change_object(&gem_pkt);
+        assert!(!bot.inventory.items.contains_key(&112));
+
+        // Player name + CP:0_PL:1_OID:_ stripping in OnTalkBubble -> WsEvent::TalkBubble & WsEvent::Chat
+        bot.players.insert(
+            12,
+            crate::player::Player {
+                net_id: 12,
+                name: "`wBudiSantoso``".into(),
+                ..Default::default()
+            },
+        );
+        let tb1 = encode_talk_bubble_payload(12, "CP:0_PL:1_OID:_hi");
+        bot.on_call_function(enet::PeerID(0), 42, &tb1);
+
+        let tb2 = encode_talk_bubble_payload(0, "CP:_PL:0_OID:_halo");
+        bot.on_call_function(enet::PeerID(0), 42, &tb2);
+
+        let mut saw_bubble_speaker = false;
+        let mut saw_chat_speaker = false;
+        while let Ok(ev) = ws_rx.try_recv() {
+            match ev {
+                WsEvent::TalkBubble { net_id, speaker, text, .. } => {
+                    assert!(!text.contains("CP:"));
+                    if net_id == 12 {
+                        assert_eq!(speaker, "BudiSantoso");
+                        assert_eq!(text, "hi");
+                        saw_bubble_speaker = true;
+                    }
+                }
+                WsEvent::Chat { message, .. } => {
+                    assert!(!message.contains("[Bubble #"));
+                    assert!(!message.contains("CP:"));
+                    if message == "BudiSantoso: hi" {
+                        saw_chat_speaker = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_bubble_speaker && saw_chat_speaker);
     }
 }

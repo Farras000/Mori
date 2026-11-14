@@ -8,9 +8,18 @@ export interface TalkBubbleEntry {
   id: number
   bot_id: number
   net_id: number
+  speaker?: string
   text: string
   bubble_type: number
   expiresAt: number
+}
+
+/** Strip residual Growtopia `CP:.._PL:.._OID:.._` or `[Bubble #N]` metadata prefixes. */
+export function stripBubbleMetadata(raw: string): string {
+  return raw
+    .replace(/^(?:\s*\[Bubble\s+#-?\d+\]\s*)+/i, '')
+    .replace(/^(?:\s*CP:[^_\s]*_PL:[^_\s]*_OID:[^_\s]*_\s*)+/i, '')
+    .trim()
 }
 
 let nextBubbleId = 1
@@ -26,6 +35,7 @@ export interface TrackInfo {
 export interface LiveBot {
   id: number
   net_id: number
+  user_id: number
   username: string
   status: BotStatus
   world_name: string
@@ -39,6 +49,8 @@ export interface LiveBot {
   current_weather: number
   local_clothes: number[]
   tiles: TileData[]
+  worldLoadedAtMs: number
+  tileUpdatedAtMs: Map<number, number>
   players: Map<number, Player>
   objects: WorldObject[]
   inventory: InventoryItem[]
@@ -70,14 +82,14 @@ const pendingBotMoveUiTimer = new Map<number, ReturnType<typeof setTimeout>>()
 
 export function makeBot(id: number, username: string): LiveBot {
   return {
-    id, net_id: 0, username,
+    id, net_id: 0, user_id: 0, username,
     status: 'connecting',
     world_name: '', pos_x: 0, pos_y: 0,
     gems: 0, ping_ms: 0,
     world_width: 100, world_height: 60,
     base_weather: 0, current_weather: 0,
     local_clothes: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    tiles: [], players: new Map(),
+    tiles: [], worldLoadedAtMs: Date.now(), tileUpdatedAtMs: new Map(), players: new Map(),
     objects: [], inventory: [], inventory_slots: 0, console: [],
     delays: { place_ms: 200, place_max_ms: 240, walk_ms: 220, walk_max_ms: 260, twofa_secs: 120, server_overload_secs: 30, too_many_logins_secs: 5, maintenance_secs: 600 },
     track_info: null,
@@ -100,8 +112,35 @@ export function makeBot(id: number, username: string): LiveBot {
   }
 }
 
+const SELECTED_BOT_KEY = 'mori:selectedBotId'
+
+function readStoredSelectedBotId(): number | null {
+  try {
+    const raw = localStorage.getItem(SELECTED_BOT_KEY)
+    if (!raw) return null
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 export const botsAtom = atom<Map<number, LiveBot>>(new Map())
-export const selectedBotIdAtom = atom<number | null>(null)
+const baseSelectedBotIdAtom = atom<number | null>(readStoredSelectedBotId())
+export const selectedBotIdAtom = atom(
+  (get) => get(baseSelectedBotIdAtom),
+  (get, set, update: number | null | ((prev: number | null) => number | null)) => {
+    const prev = get(baseSelectedBotIdAtom)
+    const next = typeof update === 'function' ? update(prev) : update
+    set(baseSelectedBotIdAtom, next)
+    try {
+      if (next === null) localStorage.removeItem(SELECTED_BOT_KEY)
+      else localStorage.setItem(SELECTED_BOT_KEY, String(next))
+    } catch {
+      // Ignore storage access errors in restricted contexts
+    }
+  },
+)
 export const itemNamesAtom = atom<Record<string, string>>({})
 export const itemColorsAtom = atom<Record<string, number>>({})
 export const itemsMapAtom = atom<Map<number, ItemRecord>>(new Map())
@@ -134,11 +173,15 @@ export function useMoriStore(enabled = true) {
 
     const syncBots = () => {
       api.getBots().then((list: BotSummary[]) => {
+        const toHydrate: number[] = []
         setBots((prev) => {
           const map = new Map(prev)
           for (const b of list) {
             const existing = map.get(b.id)
             if (existing) {
+              if (b.world && b.world !== 'EXIT' && existing.tiles.length === 0) {
+                toHydrate.push(b.id)
+              }
               map.set(b.id, {
                 ...existing,
                 status: b.status,
@@ -150,6 +193,7 @@ export function useMoriStore(enabled = true) {
                 active_dialog: b.active_dialog !== undefined ? b.active_dialog : existing.active_dialog,
               })
             } else {
+              toHydrate.push(b.id)
               map.set(b.id, {
                 ...makeBot(b.id, b.username),
                 status: b.status,
@@ -164,6 +208,9 @@ export function useMoriStore(enabled = true) {
           }
           return map
         })
+        for (const id of toHydrate) {
+          hydrateBotFromState(id, setBots).catch(() => {})
+        }
       }).catch(() => {})
     }
 
@@ -191,8 +238,16 @@ export function useMoriStore(enabled = true) {
 
       ['BotWorld', (d: { bot_id: number; world_name: string }) =>
         setBots((m) => patchBot(m, d.bot_id, {
-          world_name: d.world_name, tiles: [], players: new Map(), objects: [],
+          world_name: d.world_name,
+          tiles: [],
+          worldLoadedAtMs: Date.now(),
+          tileUpdatedAtMs: new Map(),
+          players: new Map(),
+          objects: [],
         }))],
+
+      ['BotUserId', (d: { bot_id: number; user_id: number }) =>
+        setBots((m) => patchBot(m, d.bot_id, { user_id: d.user_id }))],
 
       ['BotMove', (d: { bot_id: number; x: number; y: number }) => {
         const now = performance.now()
@@ -312,7 +367,11 @@ export function useMoriStore(enabled = true) {
           base_weather: d.base_weather ?? 0,
           current_weather: d.current_weather ?? d.base_weather ?? 0,
           active_trade: null,
-          tiles: d.tiles, players: new Map(), objects: [],
+          tiles: d.tiles,
+          worldLoadedAtMs: Date.now(),
+          tileUpdatedAtMs: new Map(),
+          players: new Map(),
+          objects: [],
         }))
       }],
 
@@ -324,6 +383,7 @@ export function useMoriStore(enabled = true) {
           const bot = m.get(d.bot_id)
           if (!bot) return m
           const tiles = [...bot.tiles]
+          const tileUpdatedAtMs = new Map(bot.tileUpdatedAtMs)
           const idx = d.y * bot.world_width + d.x
           if (tiles[idx]) {
             tiles[idx] = {
@@ -333,15 +393,20 @@ export function useMoriStore(enabled = true) {
               flags: d.flags ?? tiles[idx].flags,
               tile_type: d.tile_type ?? tiles[idx].tile_type,
             }
+            tileUpdatedAtMs.set(idx, Date.now())
           }
-          return patchBot(m, d.bot_id, { tiles })
+          return patchBot(m, d.bot_id, { tiles, tileUpdatedAtMs })
         })],
 
       ['ObjectsUpdate', (d: { bot_id: number; objects: WorldObject[] }) =>
         setBots((m) => patchBot(m, d.bot_id, { objects: d.objects }))],
 
       ['InventoryUpdate', (d: { bot_id: number; gems: number; inventory_size: number; items: InventoryItem[] }) =>
-        setBots((m) => patchBot(m, d.bot_id, { gems: d.gems, inventory: d.items, inventory_slots: d.inventory_size }))],
+        setBots((m) => patchBot(m, d.bot_id, {
+          gems: d.gems,
+          inventory: d.items.filter((it) => it.item_id !== 112),
+          inventory_slots: d.inventory_size,
+        }))],
 
       ['BotUsername', (d: { bot_id: number; username: string }) =>
         setBots((m) => patchBot(m, d.bot_id, { username: d.username }))],
@@ -358,12 +423,13 @@ export function useMoriStore(enabled = true) {
         setBots((m) => {
           const bot = m.get(d.bot_id)
           if (!bot) return m
+          const clean = stripBubbleMetadata(d.message)
           const prefix = d.kind === 'outgoing' ? '[Kamu]' : ''
-          const line = prefix ? `${prefix} ${d.message}` : d.message
+          const line = prefix ? `${prefix} ${clean}` : clean
           const chat = [...bot.chat, line].slice(-500)
           return patchBot(m, d.bot_id, { chat })
         })],
-      ['TalkBubble', (d: { bot_id: number; net_id: number; text: string; bubble_type: number }) =>
+      ['TalkBubble', (d: { bot_id: number; net_id: number; speaker?: string; text: string; bubble_type: number }) =>
         setTalkBubbles((prev) => {
           const now = Date.now()
           const next = new Map(prev)
@@ -372,7 +438,8 @@ export function useMoriStore(enabled = true) {
             id: nextBubbleId++,
             bot_id: d.bot_id,
             net_id: d.net_id,
-            text: d.text,
+            speaker: d.speaker,
+            text: stripBubbleMetadata(d.text),
             bubble_type: d.bubble_type,
             expiresAt: now + 4500,
           })
@@ -454,8 +521,7 @@ export function hydrateBotFromState(
     .getBotState(botId)
     .then((s) => {
       setBots((m) => {
-        const existing = m.get(botId)
-        if (!existing) return m
+        const existing = m.get(botId) ?? makeBot(botId, s.username || '')
         const players = new Map(s.players.map((p) => [p.net_id, p]))
         const tiles = s.tiles.map((t) => ({
           fg: t.fg_item_id,
@@ -466,6 +532,8 @@ export function hydrateBotFromState(
         return new Map(m).set(botId, {
           ...existing,
           net_id: s.net_id ?? existing.net_id,
+          user_id: s.user_id ?? existing.user_id,
+          username: s.username || existing.username,
           status: s.status,
           world_name: s.world_name,
           pos_x: s.pos_x,
@@ -476,10 +544,12 @@ export function hydrateBotFromState(
           current_weather: s.current_weather ?? existing.current_weather ?? 0,
           local_clothes: s.local_clothes ?? existing.local_clothes ?? [0, 0, 0, 0, 0, 0, 0, 0, 0],
           tiles,
+          worldLoadedAtMs: Date.now(),
+          tileUpdatedAtMs: new Map(),
           players,
           objects: s.objects,
-          inventory: s.inventory,
-          inventory_slots: s.inventory_slots,
+          inventory: s.inventory.filter((it) => it.item_id !== 112),
+          inventory_slots: s.inventory_size ?? s.inventory_slots ?? existing.inventory_slots,
           gems: s.gems,
           console: s.console,
           ping_ms: s.ping_ms,

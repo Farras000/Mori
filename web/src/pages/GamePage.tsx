@@ -7,9 +7,11 @@ import {
   itemNamesAtom,
   itemsMapAtom,
   hydrateBotFromState,
+  stripBubbleMetadata,
   type LiveBot,
 } from '@/lib/store'
 import { api, type InventoryItem, type ItemRecord } from '@/lib/api'
+import { isPlaceableItem, isWearableItem } from '@/lib/constants'
 import { moriWs } from '@/lib/ws'
 import { GameCanvas } from '@/components/game-canvas'
 import { GameDialogModal } from '@/components/game-dialog-modal'
@@ -61,9 +63,11 @@ function extractChatDisplayText(line: string): string | null {
   )
   if (isSfxPayload) {
     const msgLine = parts.find((p) => p.startsWith('msg|'))
-    return msgLine ? msgLine.slice(4).trim() || null : null
+    const msg = msgLine ? stripBubbleMetadata(msgLine.slice(4)) : ''
+    return msg || null
   }
-  return cleaned
+  const normalized = stripBubbleMetadata(cleaned)
+  return normalized || null
 }
 
 /** Locate an adjacent or overlapping door/portal tile near the player's current position. */
@@ -120,9 +124,19 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   const botList = Array.from(bots.values())
   const bot: LiveBot | null = selectedBot || botList[0] || null
 
-  // Active item ID: 18 = punch, 32 = wrench, other = placeable item
+  // Active item ID: 18 = punch, 32 = wrench, other = placeable item; toolSlotId toggles via Tab
+  const [toolSlotId, setToolSlotId] = useState<18 | 32>(18)
   const [activeItemId, setActiveItemId] = useState<number>(18)
+  const [bagNotice, setBagNotice] = useState<string | null>(null)
+  const bagNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [reachOverride, setReachOverride] = useState<number | null>(bot?.reach_override ?? null)
+
+  // Remember fallback bot selection across reloads
+  useEffect(() => {
+    if (!selectedBot && botList[0]) {
+      setSelectedBotId(botList[0].id)
+    }
+  }, [selectedBot, botList, setSelectedBotId])
   const [chatOpen, setChatOpen] = useState(true)
   const [chatInput, setChatInput] = useState('')
   const [chatStatus, setChatStatus] = useState('')
@@ -155,11 +169,11 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const inputManagerRef = useRef<GameInputManager | null>(null)
 
-  // Hydrate full bot state (tiles, objects, players, inventory, action_reach) on bot switch
+  // Hydrate full bot state (tiles, objects, players, inventory, action_reach) on bot switch or world entry
   useEffect(() => {
-    if (!bot?.id) return
+    if (bot?.id == null) return
     hydrateBotFromState(bot.id, setBots).catch(() => {})
-  }, [bot?.id, setBots])
+  }, [bot?.id, bot?.world_name, setBots])
 
   // Ensure itemNames map is populated if initial app boot raced with authentication
   useEffect(() => {
@@ -242,7 +256,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
   // Play native Growtopia OnPlayPositioned / action|play_sfx sounds via backend CDN proxy
   useEffect(() => {
-    if (!bot?.id) return
+    if (bot?.id == null) return
     const activeTimers: number[] = []
     const onPlaySfx = (d: { bot_id: number; file: string; delay_ms: number }) => {
       if (d.bot_id !== bot.id || sfxMuted) return
@@ -349,7 +363,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   const [backpackTab, setBackpackTab] = useState<'all' | 'blocks' | 'wearables'>('all')
   const [pinnedHotbar, setPinnedHotbar] = useState<number[]>(() => {
     try {
-      const saved = bot?.id ? localStorage.getItem(`mori:hotbar:${bot.id}`) : null
+      const saved = bot?.id != null ? localStorage.getItem(`mori:hotbar:${bot.id}`) : null
       return saved ? (JSON.parse(saved) as number[]) : []
     } catch {
       return []
@@ -357,7 +371,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
   })
 
   useEffect(() => {
-    if (!bot?.id) return
+    if (bot?.id == null) return
     try {
       const saved = localStorage.getItem(`mori:hotbar:${bot.id}`)
       setPinnedHotbar(saved ? (JSON.parse(saved) as number[]) : [])
@@ -368,7 +382,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
   const promoteToHotbar = useCallback(
     (itemId: number) => {
-      if (!bot?.id || itemId === 18 || itemId === 32) return
+      if (bot?.id == null || itemId === 18 || itemId === 32 || itemId === 112) return
       setPinnedHotbar((prev) => {
         const next = [itemId, ...prev.filter((id) => id !== itemId)].slice(0, 6)
         try {
@@ -382,12 +396,15 @@ export function GamePage({ onBack }: { onBack: () => void }) {
     [bot?.id],
   )
 
-  // Quick hotbar items: Slots 1 & 2 are fixed Fist/Wrench; 3..8 hold usable non-wearable items
-  // with pinned items first, zero Fist (18) or Wrench (32) duplicates.
+  // Quick hotbar items: Slot 1 is unified Fist/Wrench (Tab-toggled); Slots 2..7 hold placeable non-wearable items
   const hotbarInventory: InventoryItem[] = useMemo(() => {
     const inv = bot?.inventory ?? []
     const usable = inv.filter(
-      (s) => s.item_id !== 18 && s.item_id !== 32 && s.action_type !== 20,
+      (s) =>
+        s.item_id !== 18 &&
+        s.item_id !== 32 &&
+        s.item_id !== 112 &&
+        isPlaceableItem({ id: s.item_id, action_type: s.action_type }),
     )
     const byId = new Map(usable.map((s) => [s.item_id, s]))
     const picked: InventoryItem[] = []
@@ -451,19 +468,38 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
       if (isInput) return
 
+      // TAB toggles unified Slot 1 between Fist (18) and Wrench (32)
+      const modalActive =
+        inventoryModalOpen ||
+        gameMenuOpen ||
+        !!actionItemModal ||
+        !!bot?.active_dialog ||
+        !!bot?.active_trade
+      if (e.key === 'Tab' && !modalActive) {
+        e.preventDefault()
+        const nextTool = toolSlotId === 18 ? 32 : 18
+        setToolSlotId(nextTool)
+        setActiveItemId(nextTool)
+        return
+      }
+
       // Hotkeys for tool selection & door interact
-      if (e.key === '1' || e.key.toLowerCase() === 'q') {
-        setActiveItemId(18) // Fist
-      } else if (e.key === '2' || e.key.toLowerCase() === 'e') {
-        setActiveItemId(32) // Wrench
+      if (e.key === '1') {
+        setActiveItemId(toolSlotId)
+      } else if (e.key.toLowerCase() === 'q') {
+        setToolSlotId(18)
+        setActiveItemId(18)
+      } else if (e.key.toLowerCase() === 'e') {
+        setToolSlotId(32)
+        setActiveItemId(32)
       } else if (e.key.toLowerCase() === 'r') {
         handleWrenchSelf()
       } else if (e.key.toLowerCase() === 'f') {
         handleEnterDoor()
       } else if (e.key.toLowerCase() === 'b') {
         setInventoryModalOpen((prev) => !prev)
-      } else if (e.key >= '3' && e.key <= '8') {
-        const slotIdx = parseInt(e.key, 10) - 3
+      } else if (e.key >= '2' && e.key <= '7') {
+        const slotIdx = parseInt(e.key, 10) - 2
         const slot = hotbarInventory[slotIdx]
         if (slot) {
           setActiveItemId(slot.item_id)
@@ -473,7 +509,18 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [bot, hotbarInventory, handleSendChat, handleWrenchSelf, handleEnterDoor, playersMenuOpen, actionItemModal, inventoryModalOpen])
+  }, [
+    bot,
+    toolSlotId,
+    hotbarInventory,
+    handleSendChat,
+    handleWrenchSelf,
+    handleEnterDoor,
+    playersMenuOpen,
+    actionItemModal,
+    inventoryModalOpen,
+    gameMenuOpen,
+  ])
 
   const itemLabel = (id: number) => {
     if (id === 18) return 'Fist / Punch'
@@ -494,15 +541,29 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
   const isWorldExit = !bot.world_name || bot.world_name === 'EXIT'
 
-  // Filtered backpack inventory by tab + search (excluding duplicate built-in Fist 18 / Wrench 32)
-  const filteredInventory = bot.inventory.filter((slot) => {
-    if (slot.item_id === 18 || slot.item_id === 32) return false
-    if (backpackTab === 'blocks' && slot.action_type === 20) return false
-    if (backpackTab === 'wearables' && slot.action_type !== 20) return false
+  // Built-in Fist (18) & Wrench (32) entries for manual selection in Bag + filtered backpack items (excluding Gems 112)
+  const builtinTools: InventoryItem[] = [
+    { item_id: 18, amount: 1, is_active: toolSlotId === 18, action_type: 0 },
+    { item_id: 32, amount: 1, is_active: toolSlotId === 32, action_type: 1 },
+  ]
+  const matchesSearch = (id: number) => {
     if (!backpackSearch.trim()) return true
-    const name = itemLabel(slot.item_id).toLowerCase()
-    return name.includes(backpackSearch.toLowerCase()) || String(slot.item_id).includes(backpackSearch)
-  })
+    const name = itemLabel(id).toLowerCase()
+    return name.includes(backpackSearch.toLowerCase()) || String(id).includes(backpackSearch)
+  }
+  const filteredInventory = [
+    ...(backpackTab === 'all' ? builtinTools.filter((t) => matchesSearch(t.item_id)) : []),
+    ...bot.inventory.filter((slot) => {
+      if (slot.item_id === 18 || slot.item_id === 32 || slot.item_id === 112) return false
+      if (backpackTab === 'blocks' && !isPlaceableItem({ id: slot.item_id, action_type: slot.action_type })) {
+        return false
+      }
+      if (backpackTab === 'wearables' && !isWearableItem({ action_type: slot.action_type })) {
+        return false
+      }
+      return matchesSearch(slot.item_id)
+    }),
+  ]
 
   // Drop / Trash submission
   const handleConfirmItemAction = async () => {
@@ -897,43 +958,38 @@ export function GamePage({ onBack }: { onBack: () => void }) {
 
           {/* Quick Inventory Hotbar with Native Graphical Icons */}
           <div className="pointer-events-auto flex items-center gap-1.5 p-1.5 rounded-xl bg-black/90 backdrop-blur-md border border-white/20 shadow-2xl">
-            {/* Slot 1: Fist / Punch (18) */}
+            {/* Slot 1: Combined Fist (18) / Wrench (32) toggled via TAB */}
             <button
               onClick={(e) => {
                 e.currentTarget.blur()
-                setActiveItemId(18)
+                if (activeItemId === toolSlotId) {
+                  const nextTool = toolSlotId === 18 ? 32 : 18
+                  setToolSlotId(nextTool)
+                  setActiveItemId(nextTool)
+                } else {
+                  setActiveItemId(toolSlotId)
+                }
               }}
               className={cn(
                 'relative w-12 h-12 rounded-lg border flex flex-col items-center justify-center p-1 transition-all',
-                activeItemId === 18
+                activeItemId === 18 || activeItemId === 32
                   ? 'border-primary bg-primary/25 scale-105 shadow-[0_0_12px_rgba(59,130,246,0.6)]'
                   : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
               )}
-              title="Fist / Punch (Press 1 or Q)"
+              title={
+                toolSlotId === 18
+                  ? 'Fist / Punch (Press TAB to switch to Wrench)'
+                  : 'Wrench Tool (Press TAB to switch to Fist)'
+              }
             >
               <span className="absolute top-0.5 left-1 text-[9px] font-mono text-white/50">1</span>
-              <ItemIcon itemId={18} size={28} />
+              <ItemIcon itemId={toolSlotId} size={28} />
+              <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-white/15 text-[8px] font-mono font-bold text-white/85 leading-tight">
+                TAB
+              </span>
             </button>
 
-            {/* Slot 2: Wrench (32) */}
-            <button
-              onClick={(e) => {
-                e.currentTarget.blur()
-                setActiveItemId(32)
-              }}
-              className={cn(
-                'relative w-12 h-12 rounded-lg border flex flex-col items-center justify-center p-1 transition-all',
-                activeItemId === 32
-                  ? 'border-primary bg-primary/25 scale-105 shadow-[0_0_12px_rgba(59,130,246,0.6)]'
-                  : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
-              )}
-              title="Wrench Tool (Press 2 or E)"
-            >
-              <span className="absolute top-0.5 left-1 text-[9px] font-mono text-white/50">2</span>
-              <ItemIcon itemId={32} size={28} />
-            </button>
-
-            {/* Slots 3..8: Fixed-width 6 Hotbar Quick Slots */}
+            {/* Slots 2..7: Fixed-width 6 Hotbar Quick Slots */}
             {Array.from({ length: 6 }, (_, idx) => {
               const slot = hotbarInventory[idx]
               if (!slot) {
@@ -941,10 +997,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
                   <div
                     key={`empty-${idx}`}
                     className="relative w-12 h-12 rounded-lg border border-white/10 bg-white/[0.02] flex items-center justify-center"
-                    title={`Empty Quick Slot ${idx + 3} — Select an item from Bag`}
+                    title={`Empty Quick Slot ${idx + 2} — Select an item from Bag`}
                   >
                     <span className="absolute top-0.5 left-1 text-[9px] font-mono text-white/25">
-                      {idx + 3}
+                      {idx + 2}
                     </span>
                   </div>
                 )
@@ -963,10 +1019,10 @@ export function GamePage({ onBack }: { onBack: () => void }) {
                       ? 'border-primary bg-primary/25 scale-105 shadow-[0_0_12px_rgba(59,130,246,0.6)]'
                       : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
                   )}
-                  title={`${itemLabel(slot.item_id)} (${slot.amount}) - Press ${idx + 3}`}
+                  title={`${itemLabel(slot.item_id)} (${slot.amount}) - Press ${idx + 2}`}
                 >
                   <span className="absolute top-0.5 left-1 text-[9px] font-mono text-white/50">
-                    {idx + 3}
+                    {idx + 2}
                   </span>
                   <ItemIcon itemId={slot.item_id} size={26} />
                   <span className="absolute bottom-0.5 right-1 text-[10px] font-mono font-black text-amber-300 drop-shadow">
@@ -1041,9 +1097,17 @@ export function GamePage({ onBack }: { onBack: () => void }) {
             </div>
           </div>
 
+          {bagNotice && (
+            <div className="px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs font-medium">
+              {bagNotice}
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2 p-1">
             {filteredInventory.map((slot) => {
-              const isWearable = slot.action_type === 20
+              const isTool = slot.item_id === 18 || slot.item_id === 32
+              const isWearable = isWearableItem({ action_type: slot.action_type })
+              const isPlaceable = isPlaceableItem({ id: slot.item_id, action_type: slot.action_type })
               const isSelected = activeItemId === slot.item_id
               return (
                 <div
@@ -1054,26 +1118,40 @@ export function GamePage({ onBack }: { onBack: () => void }) {
                       ? 'border-emerald-500/80 bg-emerald-500/15 shadow-sm'
                       : isSelected
                       ? 'border-primary bg-primary/20 shadow-sm'
+                      : !isTool && !isWearable && !isPlaceable
+                      ? 'border-border/60 bg-background/60 opacity-85 hover:opacity-100 hover:bg-accent/50'
                       : 'border-border bg-background hover:bg-accent'
                   )}
                   onClick={() => {
-                    if (isWearable) {
+                    if (isTool) {
+                      setToolSlotId(slot.item_id as 18 | 32)
+                      setActiveItemId(slot.item_id)
+                      setInventoryModalOpen(false)
+                    } else if (isWearable) {
                       api
                         .sendCmd(bot.id, {
                           type: slot.is_active ? 'unwear' : 'wear',
                           item_id: slot.item_id,
                         })
                         .catch(() => {})
-                    } else {
+                    } else if (isPlaceable) {
                       setActiveItemId(slot.item_id)
                       promoteToHotbar(slot.item_id)
                       setInventoryModalOpen(false)
+                    } else {
+                      setBagNotice(`${itemLabel(slot.item_id)} tidak bisa di-place ke world`)
+                      if (bagNoticeTimerRef.current) clearTimeout(bagNoticeTimerRef.current)
+                      bagNoticeTimerRef.current = setTimeout(() => setBagNotice(null), 2200)
                     }
                   }}
                   title={
-                    isWearable
+                    isTool
+                      ? `${itemLabel(slot.item_id)} — Click to select tool`
+                      : isWearable
                       ? `${itemLabel(slot.item_id)} — Click to ${slot.is_active ? 'Unequip' : 'Equip'}`
-                      : `${itemLabel(slot.item_id)} — Click to equip to Hotbar`
+                      : isPlaceable
+                      ? `${itemLabel(slot.item_id)} — Click to equip to Hotbar`
+                      : `${itemLabel(slot.item_id)} — Non-placeable item (Drop/Trash only)`
                   }
                 >
                   {isWearable && slot.is_active && (
@@ -1087,10 +1165,22 @@ export function GamePage({ onBack }: { onBack: () => void }) {
                     {itemLabel(slot.item_id)}
                   </span>
                   <span className="text-[10px] font-mono font-bold text-primary mt-0.5">
-                    {isWearable ? (slot.is_active ? 'Equipped' : 'Wear') : `x${slot.amount}`}
+                    {isTool
+                      ? 'Tool'
+                      : isWearable
+                      ? slot.is_active
+                        ? 'Equipped'
+                        : 'Wear'
+                      : `x${slot.amount}`}
                   </span>
+                  {!isTool && !isWearable && !isPlaceable && (
+                    <span className="text-[8px] text-amber-400/90 leading-tight mt-0.5">
+                      No-Place
+                    </span>
+                  )}
 
-                  {/* Drop / Trash action triggers on hover */}
+                  {/* Drop / Trash action triggers on hover (real inventory items only) */}
+                  {!isTool && (
                   <div className="absolute top-1 right-1 hidden group-hover:flex items-center gap-0.5">
                     <button
                       type="button"
@@ -1125,6 +1215,7 @@ export function GamePage({ onBack }: { onBack: () => void }) {
                       <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
+                  )}
                 </div>
               )
             })}

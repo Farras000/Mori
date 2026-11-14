@@ -1,3 +1,31 @@
+import type { ItemRecord } from '@/lib/api';
+
+export const NON_WORLDLOCK_TILE_IDS = new Set([202, 204, 206, 4994]);
+
+// Matches Rust ItemInfo::is_placeable_tile in src/items.rs
+export const NON_PLACEABLE_ACTION_TYPES = new Set([
+  0,   // Fist
+  1,   // Wrench
+  4,   // Gems
+  8,   // Consumables / Wands / Auras
+  20,  // Clothing / Wearables
+  37,  // Components / Chemicals / Surgical Tools / Caduceus / Growtoken / Golden Ticket
+  107, // Ancestral Items
+  112, // MAGPLANT Remote
+  114, // Bot Commands
+  115, // Lucky Tokens
+  132, // Mining Explosives
+]);
+
+export function isWearableItem(item?: Pick<ItemRecord, 'action_type'> | null): boolean {
+  return !!item && (item.action_type === 20 || item.action_type === 107);
+}
+
+export function isPlaceableItem(item?: Pick<ItemRecord, 'id' | 'action_type'> | null): boolean {
+  if (!item || item.id <= 0) return false;
+  return !NON_PLACEABLE_ACTION_TYPES.has(item.action_type);
+}
+
 export const TILE_RENDER_TYPE = {
   FILLER: 0,
   SINGLE: 1,

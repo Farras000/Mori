@@ -95,17 +95,19 @@ impl<'a> CollisionProvider for BotWorldCollision<'a> {
                     3 | 10 | 11 => {
                         if self.world.get_tile_permission(tx as u32, ty as u32, self.user_id) != WorldTilePermission::NONE
                             || tile.flags.contains(TileFlags::IS_OPEN_TO_PUBLIC)
+                            || tile.flags.contains(TileFlags::IS_ON)
                         {
                             TileCollisionKind::Air
                         } else {
                             TileCollisionKind::Solid
                         }
                     }
-                    4 => {
+                    // Openable gates/doors/chests (e.g. Dragon Gate, Wolf Gate, Adventure Barrier): solid when closed, passable when IS_ON
+                    4 | 8 => {
                         if tile.flags.contains(TileFlags::IS_ON) {
-                            TileCollisionKind::Solid
-                        } else {
                             TileCollisionKind::Air
+                        } else {
+                            TileCollisionKind::Solid
                         }
                     }
                     5 => {
@@ -116,8 +118,9 @@ impl<'a> CollisionProvider for BotWorldCollision<'a> {
                         }
                     }
                     7 => TileCollisionKind::Air,
+                    // Punch-activated obstacles (e.g. Starship Airlock, Evil Eye, Suit of Armor): solid only when IS_ON
                     9 => {
-                        if !tile.flags.contains(TileFlags::IS_ON) {
+                        if tile.flags.contains(TileFlags::IS_ON) {
                             TileCollisionKind::Solid
                         } else {
                             TileCollisionKind::Air

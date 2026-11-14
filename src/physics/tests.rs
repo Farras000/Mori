@@ -793,3 +793,132 @@ fn test_settle_on_ground_snaps_spawn_flush_without_airborne_flash() {
     assert!(!mid_air.on_ground);
     assert!((mid_air.pos.1 - 600.0).abs() < 0.001);
 }
+
+#[test]
+fn test_toggleable_gates_and_obstacles_collision() {
+    use crate::items::{ItemInfo, ItemsDat};
+    use crate::world::{Tile, TileFlags, TileType, WorldTileMap};
+
+    let make_item = |id: u32, name: &str, collision_type: u8, action_type: u8| -> ItemInfo {
+        ItemInfo {
+            id,
+            name: name.to_string(),
+            collision_type,
+            action_type,
+            ..Default::default()
+        }
+    };
+
+    let items = ItemsDat {
+        version: 18,
+        items: vec![
+            make_item(0, "Blank", 0, 0),
+            make_item(2, "Dirt", 1, 17),
+            make_item(60, "Portcullis", 3, 9),
+            make_item(224, "House Entrance", 3, 9),
+            make_item(242, "World Lock", 1, 3),
+            make_item(598, "Dragon Gate", 4, 31),
+            make_item(4706, "Adventure Barrier", 8, 31),
+            make_item(6398, "Starship Airlock", 9, 45),
+        ],
+    };
+
+    let width = 10u32;
+    let height = 6u32;
+    let mut tiles = Vec::with_capacity((width * height) as usize);
+    for idx in 0..(width * height) {
+        let x = idx % width;
+        let y = idx / width;
+        let fg_item_id = if y == 4 { 2 } else { 0 };
+        tiles.push(Tile {
+            fg_item_id,
+            bg_item_id: 0,
+            parent_block: 0,
+            flags: TileFlags::empty(),
+            flags_raw: 0,
+            x,
+            y,
+            tile_type: TileType::Basic,
+        });
+    }
+
+    // Place private World Lock at (0, 0) owned by uid 100
+    tiles[0].fg_item_id = 242;
+    tiles[0].tile_type = TileType::Lock {
+        settings: 0,
+        owner_uid: 100,
+        access_count: 0,
+        access_uids: Vec::new(),
+        bpm: 0,
+        minimum_level: 0,
+        world_timer: 0,
+    };
+
+    // Place Dragon Gate (col 4) at (3, 3) initially closed (IS_ON = false)
+    let dg_idx = (3 * width + 3) as usize;
+    tiles[dg_idx].fg_item_id = 598;
+    tiles[dg_idx].flags = TileFlags::empty();
+
+    // Place Portcullis (col 3) at (5, 3) initially closed/private
+    let pc_idx = (3 * width + 5) as usize;
+    tiles[pc_idx].fg_item_id = 60;
+    tiles[pc_idx].flags = TileFlags::empty();
+
+    // Place Adventure Barrier (col 8) at (6, 3)
+    let ab_idx = (3 * width + 6) as usize;
+    tiles[ab_idx].fg_item_id = 4706;
+    tiles[ab_idx].flags = TileFlags::empty();
+
+    // Place Starship Airlock (col 9) at (7, 3)
+    let al_idx = (3 * width + 7) as usize;
+    tiles[al_idx].fg_item_id = 6398;
+    tiles[al_idx].flags = TileFlags::IS_ON;
+
+    let mut world = WorldTileMap {
+        world_name: "GATETEST".to_string(),
+        width,
+        height,
+        tiles,
+        world_lock_index: Some(0),
+    };
+
+    // Closed gates block visitor (uid 999)
+    {
+        let col_visitor = BotWorldCollision::new(&world, &items, 999);
+        assert_eq!(col_visitor.get_tile_collision(3, 3), TileCollisionKind::Solid, "Closed Dragon Gate must be Solid");
+        assert_eq!(col_visitor.get_tile_collision(5, 3), TileCollisionKind::Solid, "Private Portcullis must be Solid for non-owner");
+        assert_eq!(col_visitor.get_tile_collision(6, 3), TileCollisionKind::Solid, "Closed Adventure Barrier must be Solid");
+        assert_eq!(col_visitor.get_tile_collision(7, 3), TileCollisionKind::Solid, "Active Starship Airlock (IS_ON) must be Solid");
+    }
+
+    // Owner (uid 100) can pass Portcullis (col 3) even without public flag
+    {
+        let col_owner = BotWorldCollision::new(&world, &items, 100);
+        assert_eq!(col_owner.get_tile_collision(5, 3), TileCollisionKind::Air, "Owner must pass Portcullis");
+        assert_eq!(col_owner.get_tile_collision(3, 3), TileCollisionKind::Solid, "Closed Dragon Gate still blocks even owner until opened");
+    }
+
+    // Toggle gates open (IS_ON for col 4 & 8, IS_OPEN_TO_PUBLIC for col 3, !IS_ON for col 9)
+    world.tiles[dg_idx].flags = TileFlags::IS_ON;
+    world.tiles[ab_idx].flags = TileFlags::IS_ON;
+    world.tiles[pc_idx].flags = TileFlags::IS_OPEN_TO_PUBLIC;
+    world.tiles[al_idx].flags = TileFlags::empty();
+
+    {
+        let col_visitor = BotWorldCollision::new(&world, &items, 999);
+        assert_eq!(col_visitor.get_tile_collision(3, 3), TileCollisionKind::Air, "Opened Dragon Gate must be Air");
+        assert_eq!(col_visitor.get_tile_collision(5, 3), TileCollisionKind::Air, "Public Portcullis must be Air");
+        assert_eq!(col_visitor.get_tile_collision(6, 3), TileCollisionKind::Air, "Opened Adventure Barrier must be Air");
+        assert_eq!(col_visitor.get_tile_collision(7, 3), TileCollisionKind::Air, "Deactivated Starship Airlock must be Air");
+    }
+
+    // Also verify walking horizontally across opened Dragon Gate (x=3) succeeds
+    let col_visitor = BotWorldCollision::new(&world, &items, 999);
+    let engine = PhysicsEngine::default();
+    let mut phys = PhysicsState::new(32.0 * 2.0 + 6.0, 32.0 * 3.0 + 2.0);
+    phys.on_ground = true;
+    for _ in 0..90 {
+        engine.step(&mut phys, MovementInput { move_right: true, ..Default::default() }, &col_visitor, 1.0 / 60.0);
+    }
+    assert!(phys.pos.0 > 32.0 * 4.0, "Player should walk cleanly past open Dragon Gate at x=3, pos.0={}", phys.pos.0);
+}

@@ -131,6 +131,8 @@ export interface WorldMenuSection {
 
 export interface BotState {
   net_id?: number;
+  user_id?: number;
+  username?: string;
   status: BotStatus;
   world_name: string;
   pos_x: number;
@@ -150,6 +152,7 @@ export interface BotState {
   objects: WorldObject[];
   inventory: InventoryItem[];
   inventory_slots: number;
+  inventory_size?: number;
   gems: number;
   console: string[];
   ping_ms: number;

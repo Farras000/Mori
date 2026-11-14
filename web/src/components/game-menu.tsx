@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useSetAtom } from 'jotai'
 import { api } from '@/lib/api'
-import type { LiveBot } from '@/lib/store'
+import { botsAtom, type LiveBot } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -11,6 +12,7 @@ import {
   ArrowLeft,
   X,
   Zap,
+  Magnet,
 } from 'lucide-react'
 
 interface GameMenuProps {
@@ -31,9 +33,19 @@ export function GameMenu({
   onActionReachChange,
 }: GameMenuProps) {
   const [tab, setTab] = useState<'main' | 'options'>('main')
+  const setBots = useSetAtom(botsAtom)
   const extendedReach = bot.reach_override !== null && bot.reach_override !== undefined
+  const collectRadius = Math.max(1, Math.min(20, bot.collect_radius_tiles || 3))
 
   if (!isOpen) return null
+
+  const patchLocalBot = (patch: Partial<LiveBot>) => {
+    setBots((prev) => {
+      const cur = prev.get(bot.id)
+      if (!cur) return prev
+      return new Map(prev).set(bot.id, { ...cur, ...patch })
+    })
+  }
 
   const handleRespawn = async () => {
     try {
@@ -60,8 +72,24 @@ export function GameMenu({
     api.sendCmd(bot.id, { type: 'set_action_reach', tiles: val }).catch(() => {})
   }
 
+  const handleToggleAutoCollect = (enabled: boolean) => {
+    patchLocalBot({ auto_collect: enabled })
+    api.sendCmd(bot.id, { type: 'set_auto_collect', enabled }).catch(() => {})
+  }
+
+  const handleCollectRangeSlider = (val: number) => {
+    const clamped = Math.max(1, Math.min(20, val))
+    patchLocalBot({ collect_radius_tiles: clamped })
+    api.sendCmd(bot.id, {
+      type: 'set_collect_config',
+      radius_tiles: clamped,
+      blacklist: bot.collect_blacklist,
+    }).catch(() => {})
+  }
+
   const handleToggleThroughWall = async (throughWall: boolean) => {
     // throughWall = true means path_check is disabled/false
+    patchLocalBot({ collect_path_check: !throughWall })
     await api.sendCmd(bot.id, { type: 'set_collect_path_check', enabled: !throughWall }).catch(() => {})
   }
 
@@ -167,6 +195,40 @@ export function GameMenu({
                       />
                     </div>
                   )}
+                </div>
+
+                {/* Auto-Collect & Collection Range */}
+                <div className="p-2.5 rounded-lg border border-border bg-background flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        <Magnet className="w-3.5 h-3.5 text-emerald-400" /> Auto-Collect Drops
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Otomatis ambil item &amp; gems dalam jangkauan
+                      </span>
+                    </div>
+                    <Switch
+                      checked={bot.auto_collect}
+                      onCheckedChange={handleToggleAutoCollect}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 pt-2 border-t border-border">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Collection range:</span>
+                      <span className="font-bold text-emerald-400">{collectRadius} tiles</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={20}
+                      step={1}
+                      value={collectRadius}
+                      onChange={(e) => handleCollectRangeSlider(parseInt(e.target.value, 10))}
+                      className="w-full accent-emerald-500 h-1.5 bg-muted rounded cursor-pointer"
+                    />
+                  </div>
                 </div>
 
                 {/* Through Wall Collect */}

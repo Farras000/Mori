@@ -136,8 +136,23 @@ async fn auth_middleware(
     next: Next,
 ) -> Response {
     let path = req.uri().path();
+    let is_html_spa_nav = req.method() == axum::http::Method::GET
+        && req
+            .headers()
+            .get(axum::http::header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|accept| accept.contains("text/html"))
+        && !path.starts_with("/bots")
+        && !path.starts_with("/items")
+        && !path.starts_with("/proxy")
+        && !path.starts_with("/settings")
+        && !path.starts_with("/oauth")
+        && path != "/ws";
     if path.starts_with("/auth/")
         || path == "/"
+        || path == "/game"
+        || path.starts_with("/game/")
+        || is_html_spa_nav
         || path.starts_with("/assets/")
         || path.starts_with("/docs")
         || path == "/favicon.svg"

@@ -16,6 +16,7 @@ export type WsEventMap = {
   BotStatus: { bot_id: number; status: BotStatus }
   BotWorld: { bot_id: number; world_name: string }
   BotMove: { bot_id: number; x: number; y: number; on_ground?: boolean }
+  BotUserId: { bot_id: number; user_id: number }
   BotGems: { bot_id: number; gems: number }
   BotPing: { bot_id: number; ping_ms: number }
   BotAutoCollect: { bot_id: number; enabled: boolean }
@@ -41,7 +42,7 @@ export type WsEventMap = {
   InventoryUpdate: { bot_id: number; gems: number; items: InventoryItem[] }
   Console: { bot_id: number; message: string }
   Chat: { bot_id: number; message: string; kind: "incoming" | "outgoing" }
-  TalkBubble: { bot_id: number; net_id: number; text: string; bubble_type: number }
+  TalkBubble: { bot_id: number; net_id: number; speaker?: string; text: string; bubble_type: number }
   PlaySfx: { bot_id: number; file: string; delay_ms: number }
   TradeStart: { bot_id: number; partner_net_id: number; partner_name: string }
   TradeStatus: { bot_id: number; trade: TradeState }

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { Application, Graphics, Container, Sprite, Texture, Text } from 'pixi.js'
+import { Application, Graphics, Container, ImageSource, Sprite, Texture, Text } from 'pixi.js'
 import { cn } from '@/lib/utils'
 import { stripGTColors } from '@/lib/gt-colors'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -10,7 +10,6 @@ import { TileManager, type WorldData, type TileData as TileManagerData } from '@
 import { textureCacheManager } from '@/lib/texture-cache'
 import { Progress } from '@/components/ui/progress'
 import {
-  collectUniqueAtlasRequests,
   getOrCreateTileTexture,
   getTileTextureRequest,
   type TileLayerTile,
@@ -186,6 +185,7 @@ function MinimapInner({
   const colorTileLayerRef = useRef<ColorTileLayer | null>(null)
   const spriteTileLayerRef = useRef<SpriteTileLayer | null>(null)
   const pixiTextureCacheRef = useRef<Map<string, Texture>>(new Map())
+  const sheetSourcesRef = useRef<Map<string, ImageSource>>(new Map())
   const previousTilesRef = useRef<TileData[] | null>(null)
 
   const botRef = useRef(bot)
@@ -374,7 +374,7 @@ function MinimapInner({
         layer.bgSprites[idx] = null
       }
     } else {
-      const tex = await getOrCreateTileTexture(bgReq, textureCache)
+      const tex = await getOrCreateTileTexture(bgReq, textureCache, sheetSourcesRef.current)
       if (tex) {
         if (!layer.bgSprites[idx]) {
           const sprite = new Sprite(tex)
@@ -398,7 +398,7 @@ function MinimapInner({
         layer.fgSprites[idx] = null
       }
     } else {
-      const tex = await getOrCreateTileTexture(fgReq, textureCache)
+      const tex = await getOrCreateTileTexture(fgReq, textureCache, sheetSourcesRef.current)
       if (tex) {
         if (!layer.fgSprites[idx]) {
           const sprite = new Sprite(tex)
@@ -541,9 +541,15 @@ function MinimapInner({
         stage: 'loading'
       })
 
-      const chunkTextureReqs = collectUniqueAtlasRequests(chunk.map(item => item.req))
+      const chunkSheets = Array.from(
+        new Set(
+          chunk.flatMap((item) =>
+            item.req.isTree ? [item.req.textureFileName, 'tiles_page1.rttex'] : [item.req.textureFileName],
+          ),
+        ),
+      )
 
-      await textureCacheManager.batchLoadTiles(chunkTextureReqs)
+      await textureCacheManager.preloadSheetBitmaps(chunkSheets)
 
       setLoadingProgress({
         current: chunkStart,
@@ -552,7 +558,7 @@ function MinimapInner({
       })
 
       for (const item of chunk) {
-        const texture = await getOrCreateTileTexture(item.req, textureCache)
+        const texture = await getOrCreateTileTexture(item.req, textureCache, sheetSourcesRef.current)
         if (texture) {
           const sprite = new Sprite(texture)
           sprite.x = item.req.x * TILE_PX
@@ -715,7 +721,14 @@ function MinimapInner({
       botLabelRef.current = null
       colorTileLayerRef.current = null
       spriteTileLayerRef.current = null
+      for (const tex of pixiTextureCacheRef.current.values()) {
+        if (!tex.destroyed) tex.destroy(false)
+      }
       pixiTextureCacheRef.current.clear()
+      for (const src of sheetSourcesRef.current.values()) {
+        if (!src.destroyed) src.destroy()
+      }
+      sheetSourcesRef.current.clear()
       previousTilesRef.current = null
     }
   }, [centerOnBot])

@@ -61,7 +61,7 @@ impl Default for LocalPlayer {
 }
 
 /// Another player present in the same world.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Player {
     pub net_id:     u32,
     pub user_id:    u32,

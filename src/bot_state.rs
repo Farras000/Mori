@@ -156,6 +156,7 @@ pub struct WorldMenuSection {
 #[derive(Clone, Serialize)]
 pub struct BotState {
     pub net_id:          u32,
+    pub user_id:         u32,
     pub status:          BotStatus,
     pub username:        String,
     pub mac:             String,
@@ -227,6 +228,7 @@ impl Default for BotState {
     fn default() -> Self {
         Self {
             net_id: 0,
+            user_id: 0,
             status: BotStatus::default(),
             username: String::new(),
             mac: String::new(),

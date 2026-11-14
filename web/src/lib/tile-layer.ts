@@ -1,4 +1,4 @@
-import { Container, Sprite, Texture, Graphics } from 'pixi.js'
+import { Container, Sprite, Texture, Graphics, ImageSource, Rectangle } from 'pixi.js'
 import { Color } from '@/lib/color'
 import { TILE_FLAGS } from '@/lib/constants'
 import { textureCacheManager } from '@/lib/texture-cache'
@@ -121,114 +121,89 @@ export function colorToCss(color: number) {
 }
 
 export async function createCompositeTreeTexture(
-  baseUrl: string,
-  overlayUrl: string,
+  baseBmp: ImageBitmap,
+  baseTileX: number,
+  baseTileY: number,
+  overlayBmp: ImageBitmap,
+  overlayTileX: number,
+  overlayTileY: number,
   baseColor?: Color,
   overlayColor?: Color,
   scale: number = 1,
   fruitCount: number = 0,
 ): Promise<HTMLCanvasElement> {
-  return new Promise((resolve, reject) => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 32
-    canvas.height = 32
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  const canvas = document.createElement('canvas')
+  canvas.width = 32
+  canvas.height = 32
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) {
+    throw new Error('Could not get canvas context')
+  }
 
-    if (!ctx) {
-      reject(new Error('Could not get canvas context'))
-      return
+  const applyTint = (bmp: ImageBitmap, tx: number, ty: number, tint?: Color) => {
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = 32
+    tempCanvas.height = 32
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true })
+    if (!tempCtx) return null
+    const sx = tx * 32
+    const sy = ty * 32
+    if (sx >= 0 && sy >= 0 && sx + 32 <= bmp.width && sy + 32 <= bmp.height) {
+      tempCtx.imageSmoothingEnabled = false
+      tempCtx.drawImage(bmp, sx, sy, 32, 32, 0, 0, 32, 32)
     }
-
-    const baseImg = new Image()
-    const overlayImg = new Image()
-
-    let baseLoaded = false
-    let overlayLoaded = false
-
-    const applyTint = (img: HTMLImageElement, tint?: Color) => {
-      const tempCanvas = document.createElement('canvas')
-      tempCanvas.width = 32
-      tempCanvas.height = 32
-      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true })
-      if (!tempCtx) return null
-      tempCtx.drawImage(img, 0, 0, 32, 32)
-      if (tint && tint.getUint() !== 0xFFFFFFFF) {
-        const imageData = tempCtx.getImageData(0, 0, 32, 32)
-        const data = imageData.data
-        const r = tint.getRed() / 255
-        const g = tint.getGreen() / 255
-        const b = tint.getBlue() / 255
-        for (let i = 0; i < data.length; i += 4) {
-          if (data[i + 3] > 0) {
-            data[i] = Math.floor(data[i] * r)
-            data[i + 1] = Math.floor(data[i + 1] * g)
-            data[i + 2] = Math.floor(data[i + 2] * b)
-          }
-        }
-        tempCtx.putImageData(imageData, 0, 0)
-      }
-      return tempCanvas
-    }
-
-    const tryRender = () => {
-      if (!baseLoaded || !overlayLoaded) return
-
-      ctx.clearRect(0, 0, 32, 32)
-      const clampedScale = Math.max(0.4, Math.min(1, scale))
-      const drawW = 32 * clampedScale
-      const drawH = 32 * clampedScale
-      const drawX = (32 - drawW) / 2
-      const drawY = 32 - drawH
-
-      const baseCanvas = applyTint(baseImg, baseColor)
-      const overlayCanvas = applyTint(overlayImg, overlayColor)
-      if (!baseCanvas || !overlayCanvas) {
-        reject(new Error('Could not get temp canvas context'))
-        return
-      }
-      ctx.imageSmoothingEnabled = false
-      ctx.drawImage(baseCanvas, drawX, drawY, drawW, drawH)
-      ctx.drawImage(overlayCanvas, drawX, drawY, drawW, drawH)
-
-      if (fruitCount > 0 && clampedScale >= 0.99) {
-        const fruitHex = overlayColor && overlayColor.getUint() !== 0xFFFFFFFF
-          ? `#${(overlayColor.getRed() & 0xff).toString(16).padStart(2, '0')}${(overlayColor.getGreen() & 0xff).toString(16).padStart(2, '0')}${(overlayColor.getBlue() & 0xff).toString(16).padStart(2, '0')}`
-          : '#fbbf24'
-        const pips = [
-          [11, 10],
-          [19, 12],
-          [14, 15],
-          [17, 7],
-        ].slice(0, Math.min(4, fruitCount))
-        for (const [fx, fy] of pips) {
-          ctx.fillStyle = '#0f172a'
-          ctx.fillRect(fx - 1, fy - 1, 5, 5)
-          ctx.fillStyle = fruitHex
-          ctx.fillRect(fx, fy, 3, 3)
+    if (tint && tint.getUint() !== 0xFFFFFFFF) {
+      const imageData = tempCtx.getImageData(0, 0, 32, 32)
+      const data = imageData.data
+      const r = tint.getRed() / 255
+      const g = tint.getGreen() / 255
+      const b = tint.getBlue() / 255
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] > 0) {
+          data[i] = Math.floor(data[i] * r)
+          data[i + 1] = Math.floor(data[i + 1] * g)
+          data[i + 2] = Math.floor(data[i + 2] * b)
         }
       }
-
-      resolve(canvas)
+      tempCtx.putImageData(imageData, 0, 0)
     }
+    return tempCanvas
+  }
 
-    baseImg.crossOrigin = 'anonymous'
-    overlayImg.crossOrigin = 'anonymous'
+  const clampedScale = Math.max(0.4, Math.min(1, scale))
+  const drawW = 32 * clampedScale
+  const drawH = 32 * clampedScale
+  const drawX = (32 - drawW) / 2
+  const drawY = 32 - drawH
 
-    baseImg.onload = () => {
-      baseLoaded = true
-      tryRender()
+  const baseCanvas = applyTint(baseBmp, baseTileX, baseTileY, baseColor)
+  const overlayCanvas = applyTint(overlayBmp, overlayTileX, overlayTileY, overlayColor)
+  if (!baseCanvas || !overlayCanvas) {
+    throw new Error('Could not get temp canvas context')
+  }
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(baseCanvas, drawX, drawY, drawW, drawH)
+  ctx.drawImage(overlayCanvas, drawX, drawY, drawW, drawH)
+
+  if (fruitCount > 0 && clampedScale >= 0.99) {
+    const fruitHex = overlayColor && overlayColor.getUint() !== 0xFFFFFFFF
+      ? `#${(overlayColor.getRed() & 0xff).toString(16).padStart(2, '0')}${(overlayColor.getGreen() & 0xff).toString(16).padStart(2, '0')}${(overlayColor.getBlue() & 0xff).toString(16).padStart(2, '0')}`
+      : '#fbbf24'
+    const pips = [
+      [11, 10],
+      [19, 12],
+      [14, 15],
+      [17, 7],
+    ].slice(0, Math.min(4, fruitCount))
+    for (const [fx, fy] of pips) {
+      ctx.fillStyle = '#0f172a'
+      ctx.fillRect(fx - 1, fy - 1, 5, 5)
+      ctx.fillStyle = fruitHex
+      ctx.fillRect(fx, fy, 3, 3)
     }
-    baseImg.onerror = () => reject(new Error(`Failed to load base image: ${baseUrl}`))
+  }
 
-    overlayImg.onload = () => {
-      overlayLoaded = true
-      tryRender()
-    }
-    overlayImg.onerror = () => reject(new Error(`Failed to load overlay image: ${overlayUrl}`))
-
-    baseImg.src = baseUrl
-    overlayImg.src = overlayUrl
-  })
+  return canvas
 }
 
 export function getTileTextureRequest(
@@ -293,6 +268,25 @@ export function getTileTextureRequest(
   }
 }
 
+/** Get or create a Pixi v8 nearest-sampled ImageSource bound to the active canvas context. */
+export async function getOrCreateSheetSource(
+  textureFileName: string,
+  sheetSourceCache: Map<string, ImageSource>,
+): Promise<ImageSource | null> {
+  const existing = sheetSourceCache.get(textureFileName)
+  if (existing && !existing.destroyed) {
+    return existing
+  }
+  try {
+    const bmp = await textureCacheManager.getSheetBitmap(textureFileName)
+    const src = new ImageSource({ resource: bmp, scaleMode: 'nearest' })
+    sheetSourceCache.set(textureFileName, src)
+    return src
+  } catch {
+    return null
+  }
+}
+
 export async function getOrCreateTileTexture(
   req: {
     textureFileName: string
@@ -306,35 +300,38 @@ export async function getOrCreateTileTexture(
     baseColor?: number
     overlayColor?: number
   },
-  textureCache: Map<string, Texture>
+  textureCache: Map<string, Texture>,
+  sheetSourceCache: Map<string, ImageSource>,
 ): Promise<Texture | null> {
   const key = getTileTextureCacheKey(req)
 
   const cached = textureCache.get(key)
-  if (cached && !cached.destroyed) {
+  if (cached && !cached.destroyed && !cached.source.destroyed) {
     return cached
   }
 
   if (req.isTree && req.treeOverlayY !== undefined && req.treeOverlayX !== undefined) {
     try {
-      const trunkUrl = await textureCacheManager.getCroppedTile(req.textureFileName, req.textureX, req.textureY)
-      const overlayUrl = await textureCacheManager.getCroppedTile(
-        "tiles_page1.rttex",
-        req.treeOverlayX,
-        req.treeOverlayY
-      )
-      if (!trunkUrl || !overlayUrl) return null
+      const [trunkBmp, overlayBmp] = await Promise.all([
+        textureCacheManager.getSheetBitmap(req.textureFileName),
+        textureCacheManager.getSheetBitmap('tiles_page1.rttex'),
+      ])
       const baseColor = req.baseColor && req.baseColor !== 0 ? new Color(req.baseColor) : undefined
       const overlayColor = req.overlayColor && req.overlayColor !== 0 ? new Color(req.overlayColor) : undefined
       const compositeCanvas = await createCompositeTreeTexture(
-        trunkUrl,
-        overlayUrl,
+        trunkBmp,
+        req.textureX,
+        req.textureY,
+        overlayBmp,
+        req.treeOverlayX,
+        req.treeOverlayY,
         baseColor,
         overlayColor,
         req.treeScale ?? 1,
         req.treeItemOnTree ?? 0,
       )
       const texture = Texture.from(compositeCanvas)
+      texture.source.scaleMode = 'nearest'
       textureCache.set(key, texture)
       return texture
     } catch {
@@ -343,22 +340,19 @@ export async function getOrCreateTileTexture(
   }
 
   try {
-    const url = await textureCacheManager.getCroppedTile(req.textureFileName, req.textureX, req.textureY)
-    if (!url) return null
-    const img = new Image()
-    img.src = url
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve()
-      img.onerror = reject
-      setTimeout(() => reject(new Error('Image load timeout')), 5000)
+    const source = await getOrCreateSheetSource(req.textureFileName, sheetSourceCache)
+    if (!source || source.destroyed) return null
+    const sx = req.textureX * 32
+    const sy = req.textureY * 32
+    const cols = Math.max(1, Math.floor(source.pixelWidth / 32))
+    const rows = Math.max(1, Math.floor(source.pixelHeight / 32))
+    if (req.textureX < 0 || req.textureY < 0 || req.textureX >= cols || req.textureY >= rows) {
+      return Texture.EMPTY
+    }
+    const texture = new Texture({
+      source,
+      frame: new Rectangle(sx, sy, 32, 32),
     })
-    const canvas = document.createElement('canvas')
-    canvas.width = img.width
-    canvas.height = img.height
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
-    ctx.drawImage(img, 0, 0)
-    const texture = Texture.from(canvas)
     textureCache.set(key, texture)
     return texture
   } catch {

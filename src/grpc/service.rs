@@ -284,7 +284,8 @@ fn event_bot_id(ev: &WsEvent) -> u32 {
         | WsEvent::DialogClose { bot_id }
         | WsEvent::WorldMenu { bot_id, .. }
         | WsEvent::BotPhysicsMods { bot_id, .. }
-        | WsEvent::TileDamage { bot_id, .. } => *bot_id,
+        | WsEvent::TileDamage { bot_id, .. }
+        | WsEvent::BotUserId { bot_id, .. } => *bot_id,
     }
 }
 
@@ -552,10 +553,10 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
                 message: format!("[TileDamage] ({x},{y}) {damage}/{max_health}"),
             })
         }
-        WsEvent::TalkBubble { bot_id, net_id, text, .. } => {
+        WsEvent::TalkBubble { bot_id, speaker, text, .. } => {
             mori::bot_event::Event::Console(mori::ConsoleEvent {
                 bot_id: *bot_id,
-                message: format!("[Bubble #{net_id}] {text}"),
+                message: format!("[{speaker}] {text}"),
             })
         }
         WsEvent::PlaySfx { bot_id, file, .. } => {
@@ -580,6 +581,12 @@ fn event_to_proto(ev: &WsEvent) -> mori::BotEvent {
             mori::bot_event::Event::Console(mori::ConsoleEvent {
                 bot_id: *bot_id,
                 message: format!("[Trade] Ended ({reason})"),
+            })
+        }
+        WsEvent::BotUserId { bot_id, user_id } => {
+            mori::bot_event::Event::Console(mori::ConsoleEvent {
+                bot_id: *bot_id,
+                message: format!("[Bot] UserID: {user_id}"),
             })
         }
     };

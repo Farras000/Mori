@@ -224,7 +224,7 @@ pub enum WsEvent {
     /// A chat / game message arrived from the server or sent by the bot.
     Chat { bot_id: u32, message: String, kind: ChatKind },
     /// Overhead speech bubble triggered via OnTalkBubble.
-    TalkBubble { bot_id: u32, net_id: u32, text: String, bubble_type: u8 },
+    TalkBubble { bot_id: u32, net_id: u32, speaker: String, text: String, bubble_type: u8 },
     /// Server requested audio SFX playback (`action|play_sfx`).
     PlaySfx { bot_id: u32, file: String, delay_ms: u32 },
     /// Player-to-player trade session started (`OnStartTrade`).
@@ -237,6 +237,8 @@ pub enum WsEvent {
     BotTrackInfo { bot_id: u32, level: u32, grow_id: u64, install_date: u64, global_playtime: u64, awesomeness: u32 },
     /// GrowID resolved from SetHasGrowID (useful when logged in via ltoken).
     BotUsername { bot_id: u32, username: String },
+    /// Local user ID resolved from OnSpawn (used for client-side lock access display).
+    BotUserId { bot_id: u32, user_id: u32 },
     /// Bot auto-collect toggled.
     BotAutoCollect { bot_id: u32, enabled: bool },
     /// Bot delays updated.

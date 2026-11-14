@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { Application, Container, Graphics, Sprite, Texture, Text } from 'pixi.js'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { Application, Container, Graphics, ImageSource, Sprite, Texture, Text } from 'pixi.js'
 import { useAtom, useAtomValue } from 'jotai'
-import { itemsMapAtom, itemColorsAtom, talkBubblesAtom, type LiveBot, type TalkBubbleEntry } from '@/lib/store'
+import { itemsMapAtom, itemColorsAtom, stripBubbleMetadata, talkBubblesAtom, type LiveBot, type TalkBubbleEntry } from '@/lib/store'
 import { api } from '@/lib/api'
 import { moriWs } from '@/lib/ws'
-import { TILE_FLAGS } from '@/lib/constants'
+import { isPlaceableItem, NON_WORLDLOCK_TILE_IDS, TILE_FLAGS } from '@/lib/constants'
 import { TileManager, type WorldData } from '@/lib/tile-manager'
 import { textureCacheManager } from '@/lib/texture-cache'
 import { stripGTColors } from '@/lib/gt-colors'
@@ -15,7 +15,6 @@ import {
   type SpriteTileLayer,
   type TileLayerTile,
   clampOffset,
-  collectUniqueAtlasRequests,
   getTileTextureCacheKey,
   getTileTextureRequest,
   getOrCreateTileTexture,
@@ -151,7 +150,19 @@ export function GameCanvas({
   const tileManagerRef = useRef<TileManager | null>(null)
   const spriteTileLayerRef = useRef<SpriteTileLayer | null>(null)
   const pixiTextureCacheRef = useRef<Map<string, Texture>>(new Map())
+  const sheetSourcesRef = useRef<Map<string, ImageSource>>(new Map())
+  const centeredWorldKeyRef = useRef('')
   const previousTilesRef = useRef(bot.tiles)
+  const treePopupRef = useRef<HTMLDivElement>(null)
+  const treePopupCoordRef = useRef<{ x: number; y: number } | null>(null)
+  const tileRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [treePopupState, setTreePopupState] = useState<{
+    tileX: number
+    tileY: number
+    treeName: string
+    remainingSec: number
+    growTimeSec: number
+  } | null>(null)
 
   const charTexRef = useRef<GtCharacterTextures | null>(null)
   const worldUiTexRef = useRef<GtWorldUiTextures | null>(null)
@@ -342,9 +353,9 @@ export function GameCanvas({
     const el = containerRef.current
     if (!el) return
     let mounted = true
+    let initialized = false
 
     const app = new Application()
-    appRef.current = app
 
     app.init({
       resizeTo: el,
@@ -353,10 +364,12 @@ export function GameCanvas({
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
     }).then(() => {
+      initialized = true
       if (!mounted) {
         app.destroy(true, { children: true })
         return
       }
+      appRef.current = app
 
       el.appendChild(app.canvas)
 
@@ -730,13 +743,27 @@ export function GameCanvas({
             let stackYOffset = 0
             for (let idx = visible.length - 1; idx >= 0; idx--) {
               const b = visible[idx]
-              const cleanText = stripGTColors(b.text).trim()
+              const cleanText = stripBubbleMetadata(stripGTColors(b.text)).trim()
               if (!cleanText) continue
 
               const isSystemStyle = b.bubble_type === 1 || b.bubble_type === 2
+              const resolvedSpeaker = stripGTColors(
+                b.speaker?.trim() ||
+                  (b.net_id === curBot.net_id
+                    ? curBot.username
+                    : curBot.players.get(b.net_id)?.name ?? ''),
+              ).trim()
+              const alreadyPrefixed =
+                resolvedSpeaker.length > 0 &&
+                cleanText.toLowerCase().startsWith(`${resolvedSpeaker.toLowerCase()}:`)
+              const displayText =
+                resolvedSpeaker && resolvedSpeaker !== 'System' && !isSystemStyle && !alreadyPrefixed
+                  ? `${resolvedSpeaker}: ${cleanText}`
+                  : cleanText
+
               const node = new Container()
               const label = new Text({
-                text: cleanText,
+                text: displayText,
                 style: {
                   fontSize: 11,
                   fontFamily: 'Inter, system-ui, sans-serif',
@@ -800,6 +827,13 @@ export function GameCanvas({
             (anchor.y - TILE_PX * 1.45) * zoom.current - 20 - bNode.yOffset,
           )
         }
+
+        if (treePopupRef.current && treePopupCoordRef.current) {
+          const tc = treePopupCoordRef.current
+          const sx = Math.round(offset.current.x + (tc.x + 0.5) * TILE_PX * zoom.current)
+          const sy = Math.round(offset.current.y + tc.y * TILE_PX * zoom.current - 12)
+          treePopupRef.current.style.transform = `translate3d(${sx}px, ${sy}px, 0) translate(-50%, -100%)`
+        }
       })
 
       centerCamera()
@@ -815,18 +849,128 @@ export function GameCanvas({
       cloudsRef.current = []
       skyKeyRef.current = ''
       worldLayerKeyRef.current = ''
+      centeredWorldKeyRef.current = ''
       renderedBubblesSigRef.current = ''
       bubbleNodeRefs.current = []
-      if (appRef.current) {
+      renderedKnownItemsRef.current.clear()
+      spriteTileLayerRef.current = null
+      if (initialized && appRef.current) {
         appRef.current.destroy(true, { children: true })
         appRef.current = null
       }
       layersRef.current = null
+      for (const tex of pixiTextureCacheRef.current.values()) {
+        if (!tex.destroyed) tex.destroy(false)
+      }
       pixiTextureCacheRef.current.clear()
+      for (const src of sheetSourcesRef.current.values()) {
+        if (!src.destroyed) src.destroy()
+      }
+      sheetSourcesRef.current.clear()
+      if (tileRetryTimerRef.current) {
+        clearTimeout(tileRetryTimerRef.current)
+        tileRetryTimerRef.current = null
+      }
+      if (blockedNoticeTimerRef.current) {
+        clearTimeout(blockedNoticeTimerRef.current)
+        blockedNoticeTimerRef.current = null
+      }
     }
   }, [centerCamera])
 
-  // Ensure all item definitions used by world tiles, overlays, clothes & drops are hydrated into itemsMapAtom
+  // Auto-center camera cleanly when world state hydrates after reload (`Ctrl+R`) or world entry
+  const worldCenterKey =
+    bot.tiles.length > 0 && bot.world_width > 0
+      ? `${bot.id}:${bot.world_name}:${bot.world_width}x${bot.world_height}`
+      : ''
+  useEffect(() => {
+    if (!pixiReady || !worldCenterKey) return
+    if (centeredWorldKeyRef.current === worldCenterKey) return
+    centeredWorldKeyRef.current = worldCenterKey
+    if (bot.pos_x > 0 || bot.pos_y > 0) {
+      botPosRef.current = { x: bot.pos_x, y: bot.pos_y }
+    }
+    centerCamera()
+  }, [pixiReady, worldCenterKey, bot.pos_x, bot.pos_y, centerCamera])
+
+  // Track standing growing tree countdown when player stands on a Seed tile
+  useEffect(() => {
+    const syncStandingTree = () => {
+      const curBot = botRef.current
+      if (!curBot.world_width || curBot.tiles.length === 0) {
+        treePopupCoordRef.current = null
+        setTreePopupState((prev) => (prev === null ? prev : null))
+        return
+      }
+      const bx = botPosRef.current.x
+      const by = botPosRef.current.y
+      const tx = Math.max(0, Math.min(curBot.world_width - 1, Math.floor(bx + 10 / 32)))
+      const primaryY = Math.max(0, Math.min(curBot.world_height - 1, Math.floor(by + 20 / 32)))
+      const altY = Math.max(0, Math.min(curBot.world_height - 1, Math.floor(by + 10 / 32)))
+
+      let matched: { tx: number; ty: number; idx: number; fg: number; tt: Record<string, unknown> } | null = null
+      for (const ty of primaryY === altY ? [primaryY] : [primaryY, altY]) {
+        const idx = ty * curBot.world_width + tx
+        const tile = curBot.tiles[idx]
+        if (!tile || tile.fg <= 0) continue
+        const tt = tile.tile_type as Record<string, unknown> | undefined
+        const fgItem = itemsMapRef.current.get(tile.fg)
+        const isSeedTile = tt?.type === 'Seed' || fgItem?.action_type === 19 || tile.fg % 2 === 1
+        if (isSeedTile && (tt?.type === 'Seed' || fgItem?.action_type === 19)) {
+          matched = { tx, ty, idx, fg: tile.fg, tt: tt ?? {} }
+          break
+        }
+      }
+
+      if (!matched) {
+        treePopupCoordRef.current = null
+        setTreePopupState((prev) => (prev === null ? prev : null))
+        return
+      }
+
+      const seedItem = itemsMapRef.current.get(matched.fg)
+      const productItem = itemsMapRef.current.get(matched.fg > 0 ? matched.fg - 1 : 0)
+      let treeName = seedItem?.name ?? productItem?.name ?? `Item #${matched.fg}`
+      if (/\s+Seed$/i.test(treeName)) {
+        treeName = treeName.replace(/\s+Seed$/i, ' Tree')
+      } else if (productItem?.name && !/\s+Tree$/i.test(productItem.name)) {
+        treeName = `${productItem.name} Tree`
+      }
+
+      const baseAge = typeof matched.tt.age === 'number' ? matched.tt.age : 0
+      const updatedAt = curBot.tileUpdatedAtMs?.get(matched.idx) ?? curBot.worldLoadedAtMs ?? Date.now()
+      const elapsedSec = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000))
+      const growTimeSec = Math.max(0, seedItem?.grow_time ?? 0)
+      const remainingSec = Math.max(0, growTimeSec - (baseAge + elapsedSec))
+
+      treePopupCoordRef.current = { x: matched.tx, y: matched.ty }
+      setTreePopupState((prev) => {
+        if (
+          prev &&
+          prev.tileX === matched!.tx &&
+          prev.tileY === matched!.ty &&
+          prev.treeName === treeName &&
+          prev.remainingSec === remainingSec &&
+          prev.growTimeSec === growTimeSec
+        ) {
+          return prev
+        }
+        return {
+          tileX: matched!.tx,
+          tileY: matched!.ty,
+          treeName,
+          remainingSec,
+          growTimeSec,
+        }
+      })
+    }
+
+    syncStandingTree()
+    const id = setInterval(syncStandingTree, 250)
+    return () => clearInterval(id)
+  }, [bot.id, bot.world_name])
+
+  // Ensure all item definitions used by world tiles, overlays, clothes, drops & inventory are hydrated into itemsMapAtom
   useEffect(() => {
     const missing = new Set<number>()
     const addIfMissing = (id: unknown) => {
@@ -834,8 +978,15 @@ export function GameCanvas({
         missing.add(id)
       }
     }
+    addIfMissing(activeItemId)
+    for (const slot of bot.inventory) {
+      addIfMissing(slot.item_id)
+    }
     for (const t of bot.tiles) {
       addIfMissing(t.fg)
+      if (t.fg > 1 && t.fg % 2 === 1) {
+        addIfMissing(t.fg - 1)
+      }
       addIfMissing(t.bg)
       const tt = t.tile_type as Record<string, unknown> | undefined
       if (tt) {
@@ -859,12 +1010,19 @@ export function GameCanvas({
     }
     if (missing.size === 0) return
 
-    const ids = Array.from(missing)
-    ids.forEach((id) => fetchedItemIdsRef.current.add(id))
-    api
-      .getItemsByIds(ids)
-      .then((records) => {
-        if (!records || records.length === 0) return
+    const allIds = Array.from(missing)
+    allIds.forEach((id) => fetchedItemIdsRef.current.add(id))
+
+    const CHUNK = 80
+    const batches: number[][] = []
+    for (let i = 0; i < allIds.length; i += CHUNK) {
+      batches.push(allIds.slice(i, i + CHUNK))
+    }
+
+    Promise.all(batches.map((batch) => api.getItemsByIds(batch)))
+      .then((chunks) => {
+        const records = chunks.flat()
+        if (records.length === 0) return
         setItemsMap((prev) => {
           const next = new Map(prev)
           for (const rec of records) next.set(rec.id, rec)
@@ -872,9 +1030,9 @@ export function GameCanvas({
         })
       })
       .catch(() => {
-        ids.forEach((id) => fetchedItemIdsRef.current.delete(id))
+        allIds.forEach((id) => fetchedItemIdsRef.current.delete(id))
       })
-  }, [bot.tiles, bot.objects, bot.local_clothes, bot.players, itemsMap, setItemsMap])
+  }, [activeItemId, bot.tiles, bot.objects, bot.local_clothes, bot.players, bot.inventory, itemsMap, setItemsMap])
 
   // Update world tiles with TileManager textures
   useEffect(() => {
@@ -922,8 +1080,10 @@ export function GameCanvas({
       for (let i = 0; i < bot.tiles.length; i++) {
         const curTile = bot.tiles[i]
         const oldTile = prev[i]
+        const seedFruitId = curTile.fg > 1 && curTile.fg % 2 === 1 ? curTile.fg - 1 : 0
         const newlyResolved =
           (curTile.fg > 0 && itemsMap.has(curTile.fg) && !renderedKnownItemsRef.current.has(curTile.fg)) ||
+          (seedFruitId > 0 && itemsMap.has(seedFruitId) && !renderedKnownItemsRef.current.has(seedFruitId)) ||
           (curTile.bg > 0 && itemsMap.has(curTile.bg) && !renderedKnownItemsRef.current.has(curTile.bg))
         if (
           newlyResolved ||
@@ -986,26 +1146,33 @@ export function GameCanvas({
         })
       }
 
-      // Deduplicate atlas sprite coordinates so each distinct block/tree tile is decoded once
-      const uniqueAtlasReqs = collectUniqueAtlasRequests(requests.map((r) => r.req))
+      // Deduplicate sheet filenames so each distinct .rttex sheet decodes once into an ImageBitmap/ImageSource
+      const neededSheets = Array.from(
+        new Set(
+          requests.flatMap((r) =>
+            r.req.isTree ? [r.req.textureFileName, 'tiles_page1.rttex'] : [r.req.textureFileName],
+          ),
+        ),
+      )
       const uniqueSamples = new Map<string, NonNullable<ReturnType<typeof getTileTextureRequest>>>()
       for (const { req } of requests) {
         const rk = getTileTextureCacheKey(req)
         if (!uniqueSamples.has(rk)) uniqueSamples.set(rk, req)
       }
 
-      await textureCacheManager.batchLoadTiles(uniqueAtlasReqs)
+      await textureCacheManager.preloadSheetBitmaps(neededSheets)
       if (fullRenderVersionRef.current !== worldVersion) return
 
       const resolvedTextures = new Map<string, Texture | null>()
       await Promise.all(
         Array.from(uniqueSamples.entries()).map(async ([rk, sample]) => {
-          const tex = await getOrCreateTileTexture(sample, textureCache)
+          const tex = await getOrCreateTileTexture(sample, textureCache, sheetSourcesRef.current)
           resolvedTextures.set(rk, tex)
         })
       )
       if (fullRenderVersionRef.current !== worldVersion) return
 
+      const failedTileIndices = new Set<number>()
       const CHUNK_SIZE = 800
       for (let chunkStart = 0; chunkStart < requests.length; chunkStart += CHUNK_SIZE) {
         if (fullRenderVersionRef.current !== worldVersion) return
@@ -1020,7 +1187,10 @@ export function GameCanvas({
 
         for (const item of chunk) {
           const texture = resolvedTextures.get(getTileTextureCacheKey(item.req))
-          if (!texture || texture.destroyed) continue
+          if (!texture || texture.destroyed) {
+            failedTileIndices.add(item.idx)
+            continue
+          }
 
           const prevSprite = item.req.isBg
             ? targetLayer.bgSprites[item.idx]
@@ -1058,6 +1228,15 @@ export function GameCanvas({
 
       if (fullRenderVersionRef.current === worldVersion && showProgress) {
         setLoadingProgress(null)
+      }
+      if (failedTileIndices.size > 0 && showProgress && fullRenderVersionRef.current === worldVersion) {
+        if (tileRetryTimerRef.current) clearTimeout(tileRetryTimerRef.current)
+        tileRetryTimerRef.current = setTimeout(() => {
+          tileRetryTimerRef.current = null
+          if (fullRenderVersionRef.current === worldVersion) {
+            flushIncrementalCoords(targetLayer, failedTileIndices, worldVersion)
+          }
+        }, 1200)
       }
     }
 
@@ -1551,6 +1730,58 @@ export function GameCanvas({
     return false
   }
 
+  const worldLockTile = useMemo(() => {
+    for (let i = 0; i < bot.tiles.length; i++) {
+      const t = bot.tiles[i]
+      if (t.tile_type?.type === 'Lock' && !NON_WORLDLOCK_TILE_IDS.has(t.fg)) {
+        return { index: i, tile: t }
+      }
+    }
+    return null
+  }, [bot.tiles])
+
+  const [blockedPlaceNotice, setBlockedPlaceNotice] = useState<string | null>(null)
+  const blockedNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const triggerBlockedNotice = (msg: string) => {
+    setBlockedPlaceNotice(msg)
+    if (blockedNoticeTimerRef.current) clearTimeout(blockedNoticeTimerRef.current)
+    blockedNoticeTimerRef.current = setTimeout(() => setBlockedPlaceNotice(null), 1600)
+  }
+
+  const canBuildAtTile = (tileX: number, tileY: number): { ok: boolean; reason?: string } => {
+    if (activeItemId === 18 || activeItemId === 32) return { ok: true }
+    const activeItem = itemsMap.get(activeItemId)
+    if (activeItem && !isPlaceableItem(activeItem)) {
+      return { ok: false, reason: `${activeItem.name} tidak bisa di-place` }
+    }
+    const tile = getTileAt(tileX, tileY)
+    if (!tile) return { ok: false }
+
+    if (tile.tile_type?.type === 'Lock') {
+      const ownerUid = Number((tile.tile_type as Record<string, unknown>).owner_uid ?? 0)
+      if (bot.user_id > 0 && ownerUid !== bot.user_id) {
+        return { ok: false, reason: 'Area ini di-lock!' }
+      }
+    }
+
+    if (worldLockTile) {
+      if (activeItem && activeItem.action_type === 3 && !NON_WORLDLOCK_TILE_IDS.has(activeItem.id)) {
+        return { ok: false, reason: 'World sudah memiliki World Lock' }
+      }
+      if (bot.user_id > 0) {
+        const wlType = worldLockTile.tile.tile_type as Record<string, unknown>
+        const ownerUid = Number(wlType.owner_uid ?? 0)
+        const accessUids = Array.isArray(wlType.access_uids) ? (wlType.access_uids as number[]) : []
+        const isPublic = (worldLockTile.tile.flags & TILE_FLAGS.PUBLIC) !== 0
+        const hasParent = (tile.flags & TILE_FLAGS.HAS_PARENT) !== 0
+        if (ownerUid !== bot.user_id && !hasParent && !accessUids.includes(bot.user_id) && !isPublic) {
+          return { ok: false, reason: 'World di-lock — kamu tidak punya akses' }
+        }
+      }
+    }
+    return { ok: true }
+  }
+
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     const { tileX, tileY } = getTileUnderCursor(e)
 
@@ -1566,6 +1797,13 @@ export function GameCanvas({
 
     if (activeItemId === 32) {
       if (tryHandleWrenchClick(e, tileX, tileY)) return
+    }
+
+    const buildCheck = canBuildAtTile(tileX, tileY)
+    if (!buildCheck.ok) {
+      faceTileAndMarkAction(tileX)
+      if (buildCheck.reason) triggerBlockedNotice(buildCheck.reason)
+      return
     }
 
     isMouseDownRef.current = true
@@ -1599,6 +1837,7 @@ export function GameCanvas({
     }
 
     const inReach = isTileInReach(tileX, tileY)
+    const buildCheck = canBuildAtTile(tileX, tileY)
 
     onTileHover?.({ x: tileX, y: tileY, inReach })
 
@@ -1606,13 +1845,18 @@ export function GameCanvas({
     const hg = layersRef.current?.hoverGfx
     if (hg) {
       hg.clear()
-      const color = inReach ? 0x22c55e : 0xef4444
+      const color = inReach && buildCheck.ok ? 0x22c55e : 0xef4444
       hg.rect(tileX * TILE_PX, tileY * TILE_PX, TILE_PX, TILE_PX)
         .stroke({ color, width: 1.5, alpha: 0.85 })
     }
 
     // If mouse is held down and dragged to another tile, transition hold action
     if (isMouseDownRef.current) {
+      if (!buildCheck.ok) {
+        handleMouseUp()
+        if (buildCheck.reason) triggerBlockedNotice(buildCheck.reason)
+        return
+      }
       faceTileAndMarkAction(tileX)
       const last = lastHoldTileRef.current
       if (!last || last.x !== tileX || last.y !== tileY) {
@@ -1657,6 +1901,47 @@ export function GameCanvas({
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {treePopupState && (
+        <div
+          ref={treePopupRef}
+          style={{
+            left: 0,
+            top: 0,
+            transform: `translate3d(${Math.round(
+              offset.current.x + (treePopupState.tileX + 0.5) * TILE_PX * zoom.current,
+            )}px, ${Math.round(offset.current.y + treePopupState.tileY * TILE_PX * zoom.current - 12)}px, 0) translate(-50%, -100%)`,
+          }}
+          className={cn(
+            'absolute z-20 pointer-events-none select-none px-2.5 py-1 rounded-md bg-slate-950/90 border shadow-lg backdrop-blur-sm text-center whitespace-nowrap',
+            treePopupState.remainingSec <= 0 ? 'border-emerald-400/70' : 'border-amber-400/50',
+          )}
+        >
+          <div className="text-[11px] font-semibold text-white leading-tight">{treePopupState.treeName}</div>
+          <div
+            className={cn(
+              'text-[10px] font-mono font-bold leading-tight mt-0.5',
+              treePopupState.remainingSec <= 0 ? 'text-emerald-300' : 'text-amber-300',
+            )}
+          >
+            {treePopupState.remainingSec <= 0
+              ? 'Ready to harvest!'
+              : (() => {
+                  const s = treePopupState.remainingSec
+                  const h = Math.floor(s / 3600)
+                  const m = Math.floor((s % 3600) / 60)
+                  const rem = s % 60
+                  if (h > 0) return `Ready in ${h}h ${m}m ${rem}s`
+                  if (m > 0) return `Ready in ${m}m ${rem}s`
+                  return `Ready in ${rem}s`
+                })()}
+          </div>
+        </div>
+      )}
+      {blockedPlaceNotice && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-md bg-red-950/90 border border-red-500/50 text-red-100 text-xs font-medium pointer-events-none shadow-lg">
+          {blockedPlaceNotice}
+        </div>
+      )}
       {loadingProgress && (
         <div className="absolute top-3 right-3 px-3 py-1.5 rounded-lg bg-black/80 backdrop-blur-md border border-white/15 flex items-center gap-2.5 z-10 pointer-events-none shadow-lg">
           <div className="text-[11px] text-white/90 font-medium">

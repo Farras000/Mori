@@ -36,10 +36,14 @@ impl Inventory {
             let id     = cur.u16()?;
             let amount = cur.u8()?;
             let flag   = cur.u8()?;
-            items.insert(id, InventoryItem { id, amount, flag });
+            // Gems (112) are tracked separately in `gems` via OnSetBux, never as an inventory item.
+            if id != 112 {
+                items.insert(id, InventoryItem { id, amount, flag });
+            }
         }
+        let actual_count = items.len() as u16;
 
-        Ok(Self { size, item_count, items, gems: 0 })
+        Ok(Self { size, item_count: actual_count, items, gems: 0 })
     }
 
     pub fn clear(&mut self) {
@@ -49,6 +53,10 @@ impl Inventory {
     }
 
     pub fn add_item(&mut self, id: u16, amount: u8) {
+        // Gems (112) are currency and must never be placed into inventory slots.
+        if id == 112 || amount == 0 {
+            return;
+        }
         if let Some(item) = self.items.get_mut(&id) {
             item.amount = item.amount.saturating_add(amount);
         } else {
@@ -105,5 +113,20 @@ impl Inventory {
         }
 
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gems_112_never_stored_in_inventory() {
+        let mut inv = Inventory::default();
+        inv.add_item(112, 50);
+        inv.add_item(2, 10);
+        assert!(!inv.items.contains_key(&112));
+        assert_eq!(inv.items.get(&2).map(|i| i.amount), Some(10));
+        assert_eq!(inv.item_count, 1);
     }
 }

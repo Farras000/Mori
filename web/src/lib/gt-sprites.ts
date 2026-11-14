@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Texture } from 'pixi.js'
+import { Container, Graphics, ImageSource, Rectangle, Sprite, Texture } from 'pixi.js'
 import { Color } from '@/lib/color'
 import type { ItemRecord } from '@/lib/api'
 import { textureCacheManager } from '@/lib/texture-cache'
@@ -21,17 +21,90 @@ export interface GtWorldUiTextures {
 
 const seedUrlCache = new Map<string, string>()
 const seedTextureCache = new Map<string, Texture>()
-const clothingTextureCache = new Map<number, Promise<Texture | null>>()
+const clothingTextureCache = new Map<number, Texture>()
+const clothingInFlight = new Map<number, Promise<Texture | null>>()
+const sheetSourceByFile = new Map<string, Promise<ImageSource | null>>()
 
-/** Load and cache a crisp Pixi texture for an equipped wearable item. */
+async function getOrCreateCharacterSheetSource(fileName: string): Promise<ImageSource | null> {
+  const normalized = fileName.replace(/^game\//i, '').trim()
+  if (!normalized) return null
+  const existing = sheetSourceByFile.get(normalized)
+  if (existing) {
+    const src = await existing
+    if (src && !src.destroyed) return src
+    sheetSourceByFile.delete(normalized)
+  }
+  const promise = textureCacheManager
+    .getSheetBitmap(normalized)
+    .then((bmp) => new ImageSource({ resource: bmp, scaleMode: 'nearest' }))
+    .catch(() => null)
+  sheetSourceByFile.set(normalized, promise)
+  const resolved = await promise
+  if (!resolved) {
+    sheetSourceByFile.delete(normalized)
+  }
+  return resolved
+}
+
+async function sliceSheetTexture(
+  fileName: string,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+): Promise<Texture | null> {
+  const source = await getOrCreateCharacterSheetSource(fileName)
+  if (!source || source.destroyed) return null
+  const maxW = source.pixelWidth || source.width || 0
+  const maxH = source.pixelHeight || source.height || 0
+  if (sx < 0 || sy < 0 || sx >= maxW || sy >= maxH) return null
+  const w = Math.max(1, Math.min(sw, maxW - sx))
+  const h = Math.max(1, Math.min(sh, maxH - sy))
+  return new Texture({ source, frame: new Rectangle(sx, sy, w, h) })
+}
+
+/** Resolve cell coordinates `(x, y)` for a wearable item, supporting `extra_options` fallback. */
+function resolveClothingCellCoords(item: ItemRecord): { tx: number; ty: number } {
+  if (item.texture_x >= 0 && item.texture_y >= 0) {
+    return { tx: item.texture_x, ty: item.texture_y }
+  }
+  const match = item.extra_options?.match(/(-?\d+)\s*,\s*(-?\d+)/)
+  if (match) {
+    return { tx: Math.max(0, Number(match[1]) || 0), ty: Math.max(0, Number(match[2]) || 0) }
+  }
+  return { tx: Math.max(0, item.texture_x || 0), ty: Math.max(0, item.texture_y || 0) }
+}
+
+/** Load and cache a crisp Pixi texture for an equipped wearable item without sticky failure caching. */
 function getClothingSpriteTexture(item: ItemRecord): Promise<Texture | null> {
   const existing = clothingTextureCache.get(item.id)
-  if (existing) return existing
-  const promise = textureCacheManager
-    .getCroppedTile(item.texture_file_name, item.texture_x, item.texture_y)
-    .then((url) => loadCrispTextureFromUrl(url))
-    .catch(() => null)
-  clothingTextureCache.set(item.id, promise)
+  if (existing && !existing.destroyed) return Promise.resolve(existing)
+
+  const pending = clothingInFlight.get(item.id)
+  if (pending) return pending
+
+  const promise = (async () => {
+    const candidates = [item.texture_file_name, item.texture_path_2]
+      .map((s) => (s || '').replace(/^game\//i, '').trim())
+      .filter((s, idx, arr) => s.length > 0 && arr.indexOf(s) === idx)
+    const { tx, ty } = resolveClothingCellCoords(item)
+
+    for (const fileName of candidates) {
+      const isLongHand = /^player_longhanditem\d*\.rttex$/i.test(fileName)
+      const cellW = isLongHand ? 64 : 32
+      const cellH = 32
+      const tex = await sliceSheetTexture(fileName, tx * cellW, ty * cellH, cellW, cellH)
+      if (tex && !tex.destroyed) {
+        clothingTextureCache.set(item.id, tex)
+        return tex
+      }
+    }
+    return null
+  })().finally(() => {
+    clothingInFlight.delete(item.id)
+  })
+
+  clothingInFlight.set(item.id, promise)
   return promise
 }
 
@@ -66,26 +139,18 @@ export async function loadCrispTextureFromUrl(url: string | null): Promise<Textu
   }
 }
 
-/** Load and slice official Growtopia character layers from `/growtopia-cdn/`. */
+/** Load and slice official Growtopia character layers directly from decoded GPU sheets. */
 export function loadGtCharacterTextures(): Promise<GtCharacterTextures | null> {
   if (!charTexturesPromise) {
     charTexturesPromise = (async () => {
       // Slice head/torso (top 24px) separately from lower legs (y=24..32) so hip-pivoted legs swing cleanly
-      const [headUrl, headAirUrl, eyesUrl, armUrl, feetBackUrl, feetFrontUrl] = await Promise.all([
-        textureCacheManager.getCroppedRegion('player_head.rttex', 0, 0, 32, 24),
-        textureCacheManager.getCroppedRegion('player_head.rttex', 0, 32, 32, 24),
-        textureCacheManager.getCroppedRegion('player_eyes.rttex', 0, 0, 32, 32),
-        textureCacheManager.getCroppedRegion('player_arm.rttex', 0, 0, 8, 12),
-        textureCacheManager.getCroppedRegion('player_feet.rttex', 0, 0, 32, 32),
-        textureCacheManager.getCroppedRegion('player_feet.rttex', 0, 32, 32, 32),
-      ])
       const [head, headAir, eyes, arm, feetBack, feetFront] = await Promise.all([
-        loadCrispTextureFromUrl(headUrl),
-        loadCrispTextureFromUrl(headAirUrl),
-        loadCrispTextureFromUrl(eyesUrl),
-        loadCrispTextureFromUrl(armUrl),
-        loadCrispTextureFromUrl(feetBackUrl),
-        loadCrispTextureFromUrl(feetFrontUrl),
+        sliceSheetTexture('player_head.rttex', 0, 0, 32, 24),
+        sliceSheetTexture('player_head.rttex', 0, 32, 32, 24),
+        sliceSheetTexture('player_eyes.rttex', 0, 0, 32, 32),
+        sliceSheetTexture('player_arm.rttex', 0, 0, 8, 12),
+        sliceSheetTexture('player_feet.rttex', 0, 0, 32, 32),
+        sliceSheetTexture('player_feet.rttex', 0, 32, 32, 32),
       ])
       if (!head || !eyes || !arm || !feetBack || !feetFront) {
         charTexturesPromise = null
@@ -111,15 +176,10 @@ export function loadGtCharacterTextures(): Promise<GtCharacterTextures | null> {
 export function loadGtWorldUiTextures(): Promise<GtWorldUiTextures | null> {
   if (!worldUiTexturesPromise) {
     worldUiTexturesPromise = (async () => {
-      const [sunUrl, cloudUrl, boxUrl] = await Promise.all([
-        textureCacheManager.getCroppedRegion('sun.rttex', 0, 0, 161, 160),
-        textureCacheManager.getCroppedRegion('cloud.rttex', 0, 0, 197, 111),
-        textureCacheManager.getCroppedRegion('pickup_box.rttex', 0, 0, 32, 20),
-      ])
       const [sun, cloud, pickupBox] = await Promise.all([
-        loadCrispTextureFromUrl(sunUrl),
-        loadCrispTextureFromUrl(cloudUrl),
-        loadCrispTextureFromUrl(boxUrl),
+        sliceSheetTexture('sun.rttex', 0, 0, 161, 160),
+        sliceSheetTexture('cloud.rttex', 0, 0, 197, 111),
+        sliceSheetTexture('pickup_box.rttex', 0, 0, 32, 20),
       ])
       if (!sun && !cloud && !pickupBox) {
         worldUiTexturesPromise = null
@@ -134,9 +194,11 @@ export function loadGtWorldUiTextures(): Promise<GtWorldUiTextures | null> {
   return worldUiTexturesPromise
 }
 
-function applyTintToCanvas(
+function drawSeedSpriteSlice(
   ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
+  sheet: ImageBitmap,
+  sx: number,
+  sy: number,
   colorVal?: number,
 ) {
   const w = 16
@@ -147,7 +209,9 @@ function applyTintToCanvas(
   const tctx = temp.getContext('2d')
   if (!tctx) return
   tctx.imageSmoothingEnabled = false
-  tctx.drawImage(img, 0, 0, w, h)
+  if (sx + w <= sheet.width && sy + h <= sheet.height) {
+    tctx.drawImage(sheet, sx, sy, w, h, 0, 0, w, h)
+  }
   if (colorVal && colorVal !== 0) {
     const c = new Color(colorVal)
     const imgData = tctx.getImageData(0, 0, w, h)
@@ -167,13 +231,25 @@ function applyTintToCanvas(
   ctx.drawImage(temp, 0, 0)
 }
 
-function loadHtmlImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('Image load failed'))
-    img.src = url
-  })
+/** Composite a crisp 16x16 Growtopia seed canvas from `seed.rttex`. */
+async function buildSeedCanvas(
+  baseSprite: number,
+  overlaySprite: number,
+  baseColor?: number,
+  overlayColor?: number,
+): Promise<HTMLCanvasElement | null> {
+  const sheet = await textureCacheManager.getSheetBitmap('seed.rttex')
+  const colBase = ((baseSprite % 16) + 16) % 16
+  const colOverlay = ((overlaySprite % 16) + 16) % 16
+  const canvas = document.createElement('canvas')
+  canvas.width = 16
+  canvas.height = 16
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.imageSmoothingEnabled = false
+  drawSeedSpriteSlice(ctx, sheet, colBase * 16, 0, baseColor)
+  drawSeedSpriteSlice(ctx, sheet, colOverlay * 16, 16, overlayColor)
+  return canvas
 }
 
 /** Composite a crisp 16x16 Growtopia seed PNG data URL from `seed.rttex`. */
@@ -188,29 +264,8 @@ export async function getGtSeedDataUrl(
   if (existing) return existing
 
   try {
-    const colBase = ((baseSprite % 16) + 16) % 16
-    const colOverlay = ((overlaySprite % 16) + 16) % 16
-    const [baseUrl, overlayUrl] = await Promise.all([
-      textureCacheManager.getCroppedRegion('seed.rttex', colBase * 16, 0, 16, 16),
-      textureCacheManager.getCroppedRegion('seed.rttex', colOverlay * 16, 16, 16, 16),
-    ])
-    if (!baseUrl) return null
-
-    const [baseImg, overlayImg] = await Promise.all([
-      loadHtmlImage(baseUrl),
-      overlayUrl ? loadHtmlImage(overlayUrl) : Promise.resolve(null),
-    ])
-
-    const canvas = document.createElement('canvas')
-    canvas.width = 16
-    canvas.height = 16
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
-    ctx.imageSmoothingEnabled = false
-    applyTintToCanvas(ctx, baseImg, baseColor)
-    if (overlayImg) {
-      applyTintToCanvas(ctx, overlayImg, overlayColor)
-    }
+    const canvas = await buildSeedCanvas(baseSprite, overlaySprite, baseColor, overlayColor)
+    if (!canvas) return null
     const dataUrl = canvas.toDataURL('image/png')
     seedUrlCache.set(key, dataUrl)
     return dataUrl
@@ -229,10 +284,17 @@ export async function getGtSeedTexture(
   const key = `${baseSprite}:${overlaySprite}:${baseColor ?? 0}:${overlayColor ?? 0}`
   const cached = seedTextureCache.get(key)
   if (cached && !cached.destroyed) return cached
-  const url = await getGtSeedDataUrl(baseSprite, overlaySprite, baseColor, overlayColor)
-  const tex = await loadCrispTextureFromUrl(url)
-  if (tex) seedTextureCache.set(key, tex)
-  return tex
+  try {
+    const canvas = await buildSeedCanvas(baseSprite, overlaySprite, baseColor, overlayColor)
+    if (!canvas) return null
+    const tex = new Texture({
+      source: new ImageSource({ resource: canvas, scaleMode: 'nearest' }),
+    })
+    seedTextureCache.set(key, tex)
+    return tex
+  } catch {
+    return null
+  }
 }
 
 export interface GtCharacterRig {
@@ -400,7 +462,7 @@ export function createGtCharacterRig(
     eyesSprite.position.set(0, 0)
 
     const armS = new Sprite(textures.arm)
-    armS.anchor.set(0.45, 0.2)
+    armS.anchor.set(0.5, 0.15)
     armS.position.set(0, 0)
     armS.tint = skinTint
     armContainer.addChild(armS)
@@ -411,92 +473,161 @@ export function createGtCharacterRig(
     upperBody.addChild(eyesSprite)
   }
 
-  armContainer.position.set(-1.5, -13.5)
+  armContainer.position.set(-1, -16)
+
+  // Clothing overlay containers arranged in native 32x32 Growtopia z-order
+  const backClothContainer = new Container()
+  const ancestralClothContainer = new Container()
+  ancestralClothContainer.position.set(-12, -24)
+  const legsClothContainer = new Container()
+  const upperClothContainer = new Container()
+  const handClothContainer = new Container()
+  armContainer.addChildAt(handClothContainer, 0)
+
+  upperBody.addChild(upperClothContainer)
   upperBody.addChild(armContainer)
   upperBody.addChild(gear.parasol)
-
-  // Clothing overlay containers mounted inside upperBody / legs / arm
-  const backClothContainer = new Container()
-  upperBody.addChildAt(backClothContainer, 0)
-  const upperClothContainer = new Container()
-  upperBody.addChild(upperClothContainer)
-  const handClothContainer = new Container()
-  armContainer.addChild(handClothContainer)
-  const shoesClothContainer = new Container()
-  frontLegContainer.addChild(shoesClothContainer)
 
   let lastClothSig = ''
   let clothLoadGen = 0
   let hasCustomBackSprite = false
 
-  // Slot offsets tuned inside the 32x32 GT character frame (feet at y=0, head top at ~y=-32)
-  const SLOT_LAYOUT: Record<number, { parent: Container; x: number; y: number; size: number; ax: number; ay: number }> = {
-    6: { parent: backClothContainer, x: -3.5, y: -15.5, size: 19, ax: 0.5, ay: 0.5 }, // back/wings
-    2: { parent: upperClothContainer, x: 0, y: -8.5, size: 13.5, ax: 0.5, ay: 0.5 }, // pants
-    1: { parent: upperClothContainer, x: 0, y: -12.5, size: 14.5, ax: 0.5, ay: 0.5 }, // shirt
-    8: { parent: upperClothContainer, x: 0, y: -15.8, size: 12.5, ax: 0.5, ay: 0.5 }, // neck
-    4: { parent: upperClothContainer, x: 0, y: -22.2, size: 14, ax: 0.5, ay: 0.5 }, // face
-    7: { parent: upperClothContainer, x: 0.5, y: -18.5, size: 13.5, ax: 0.5, ay: 0.5 }, // mask
-    0: { parent: upperClothContainer, x: 0, y: -27.2, size: 17.5, ax: 0.5, ay: 0.5 }, // hair/hat
-    5: { parent: handClothContainer, x: 2.5, y: 6.5, size: 14, ax: 0.35, ay: 0.65 }, // hand
-    3: { parent: shoesClothContainer, x: 0.2, y: 5.5, size: 10.5, ax: 0.5, ay: 0.5 }, // feet
-  }
-
   const clearClothContainers = () => {
     backClothContainer.removeChildren()
+    ancestralClothContainer.removeChildren()
+    legsClothContainer.removeChildren()
     upperClothContainer.removeChildren()
     handClothContainer.removeChildren()
-    shoesClothContainer.removeChildren()
     hasCustomBackSprite = false
   }
 
-  // Draw order: subtle ground contact shadow behind back leg, torso, front leg
+  // Draw order: ground shadow -> back/wings/ancestral -> bare legs -> pants/shoes -> torso/upper clothes/arm
   const groundShadow = new Graphics()
   groundShadow.ellipse(0, 0.25, 5.6, 1.35).fill({ color: 0x000000, alpha: 0.34 })
   body.addChild(groundShadow)
+  body.addChild(backClothContainer)
+  body.addChild(ancestralClothContainer)
   body.addChild(backLegContainer)
-  body.addChild(upperBody)
   body.addChild(frontLegContainer)
+  body.addChild(legsClothContainer)
+  body.addChild(upperBody)
   void armSprite
 
   return {
     root,
     setClothes: (clothes, itemsMap) => {
       const normalized = clothes && clothes.length > 0 ? clothes : []
+      let allItemsKnown = true
       const resolvedKey = normalized
-        .map((id, idx) => (id > 0 && itemsMap.has(id) ? `${idx}:${id}` : `${idx}:0`))
+        .map((id, idx) => {
+          if (id <= 0) return `${idx}:0`
+          if (!itemsMap.has(id)) {
+            allItemsKnown = false
+            return `${idx}:pending:${id}`
+          }
+          return `${idx}:${id}`
+        })
         .join('|')
-      if (resolvedKey === lastClothSig) return
-      lastClothSig = resolvedKey
+      if (resolvedKey === lastClothSig && allItemsKnown) return
+      lastClothSig = allItemsKnown ? resolvedKey : ''
       const gen = ++clothLoadGen
       clearClothContainers()
 
       if (normalized.length === 0) return
 
-      const drawOrder = [6, 2, 1, 8, 4, 7, 0, 5, 3]
+      const baseOrder = [6, 2, 3, 1, 8, 7, 4, 0, 5]
+      const extraSlots: number[] = []
+      for (let i = 0; i < normalized.length; i++) {
+        if (!baseOrder.includes(i)) extraSlots.push(i)
+      }
+      const drawOrder = [...baseOrder, ...extraSlots]
+
       Promise.all(
         drawOrder.map(async (slotIdx) => {
           const itemId = normalized[slotIdx] ?? 0
           if (!itemId) return null
           const item = itemsMap.get(itemId)
-          if (!item) return null
+          if (!item) return { slotIdx, item: null, tex: null, failed: true }
           const tex = await getClothingSpriteTexture(item)
-          return tex && !tex.destroyed ? { slotIdx, tex } : null
+          if (!tex || tex.destroyed) return { slotIdx, item, tex: null, failed: true }
+          return { slotIdx, item, tex, failed: false }
         }),
       ).then((loaded) => {
         if (gen !== clothLoadGen || root.destroyed) return
         clearClothContainers()
+        let anyFailed = false
         for (const entry of loaded) {
           if (!entry) continue
-          const cfg = SLOT_LAYOUT[entry.slotIdx]
-          if (!cfg) continue
-          const sp = new Sprite(entry.tex)
-          sp.anchor.set(cfg.ax, cfg.ay)
-          sp.position.set(cfg.x, cfg.y)
-          sp.width = cfg.size
-          sp.height = cfg.size
-          cfg.parent.addChild(sp)
-          if (entry.slotIdx === 6) hasCustomBackSprite = true
+          if (entry.failed || !entry.item || !entry.tex || entry.tex.destroyed) {
+            anyFailed = true
+            continue
+          }
+          const { item, tex, slotIdx } = entry
+          const isAncestral = item.action_type === 107
+          const ct = item.clothing_type <= 8 ? item.clothing_type : slotIdx
+          const sp = new Sprite(tex)
+
+          if (isAncestral) {
+            sp.anchor.set(0.5, 0.5)
+            sp.position.set(0, 0)
+            sp.width = 32
+            sp.height = 32
+            ancestralClothContainer.addChild(sp)
+            continue
+          }
+
+          if (ct === 6) {
+            sp.anchor.set(0.5, 1)
+            sp.position.set(0, 0)
+            sp.width = 32
+            sp.height = 32
+            backClothContainer.addChild(sp)
+            hasCustomBackSprite = true
+          } else if (ct === 2 || ct === 3) {
+            sp.anchor.set(0.5, 1)
+            sp.position.set(0, 0)
+            sp.width = 32
+            sp.height = 32
+            legsClothContainer.addChild(sp)
+          } else if (ct === 5) {
+            const normalizedSheet = item.texture_file_name.replace(/^game\//i, '').trim()
+            const isLongHand = (tex.frame?.width ?? 32) > 32
+              || /^player_longhanditem\d*\.rttex$/i.test(normalizedSheet)
+            if (isLongHand) {
+              sp.anchor.set(0.5, 0.5)
+              sp.width = 64
+              sp.height = 32
+            } else {
+              sp.anchor.set(0.5, 0.22)
+              sp.width = 32
+              sp.height = 32
+            }
+            sp.position.set(0, 6)
+            handClothContainer.addChild(sp)
+          } else if (ct === 0) {
+            sp.anchor.set(0.5, 1)
+            sp.position.set(0, -15)
+            sp.width = 32
+            sp.height = 32
+            upperClothContainer.addChild(sp)
+          } else if (ct === 7) {
+            const isFaceItemSheet = /faceitem/i.test(item.texture_file_name || '')
+            sp.anchor.set(0.5, 1)
+            sp.position.set(0, isFaceItemSheet ? 0 : -15)
+            sp.width = 32
+            sp.height = 32
+            upperClothContainer.addChild(sp)
+          } else {
+            // ct === 1 (shirt), 4 (face), 8 (neck), or fallback 32x32 frame
+            sp.anchor.set(0.5, 1)
+            sp.position.set(0, 0)
+            sp.width = 32
+            sp.height = 32
+            upperClothContainer.addChild(sp)
+          }
+        }
+        if (anyFailed) {
+          lastClothSig = ''
         }
       })
     },
@@ -571,6 +702,11 @@ export function createGtCharacterRig(
         armContainer.rotation = swing * 0.52
       } else {
         armContainer.rotation = 0.06
+      }
+
+      backClothContainer.y = upperBody.y
+      if (ancestralClothContainer.children.length > 0) {
+        ancestralClothContainer.y = -24 + Math.sin(time * 0.1) * 1.5
       }
     },
   }

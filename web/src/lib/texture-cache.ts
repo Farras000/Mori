@@ -1,6 +1,5 @@
 import { external_api } from "@/lib/api";
 import { RTTEX } from "@/lib/rttex";
-import { cropTileFromAtlas } from "@/lib/utils";
 
 interface TextureEntry {
   blob: Blob;
@@ -16,14 +15,25 @@ interface TileEntry {
 class TextureCacheManager {
   private loadingTextures = new Map<string, Promise<TextureEntry>>();
   private textures = new Map<string, TextureEntry>();
+  private loadingBitmaps = new Map<string, Promise<ImageBitmap>>();
+  private bitmaps = new Map<string, ImageBitmap>();
   private tiles = new Map<string, TileEntry>();
-  private cacheApi: Cache | null = null;
+  private cacheApi: Cache | null | undefined = undefined;
 
-  private async getCacheApi(): Promise<Cache> {
-    if (!this.cacheApi) {
-      this.cacheApi = await caches.open("texture-cache");
+  private async getCacheApi(): Promise<Cache | null> {
+    if (this.cacheApi !== undefined) {
+      return this.cacheApi;
     }
-    return this.cacheApi;
+    try {
+      if (typeof caches !== "undefined" && typeof caches.open === "function") {
+        this.cacheApi = await caches.open("texture-cache");
+        return this.cacheApi;
+      }
+    } catch {
+      // Cache API is unavailable on non-secure origins (e.g. plain HTTP LAN IPs)
+    }
+    this.cacheApi = null;
+    return null;
   }
 
   private async getTexture(textureFileName: string): Promise<TextureEntry> {
@@ -52,7 +62,7 @@ class TextureCacheManager {
   private async _loadTexture(textureFileName: string): Promise<TextureEntry> {
     const cache = await this.getCacheApi();
     const cacheKey = `https://texture-cache.local/v2/${textureFileName}`;
-    const cachedResponse = await cache.match(cacheKey);
+    const cachedResponse = cache ? await cache.match(cacheKey).catch(() => undefined) : undefined;
 
     let pngBlob: Blob | null = null;
 
@@ -60,8 +70,8 @@ class TextureCacheManager {
       const candidate = await cachedResponse.blob();
       if (candidate.size > 0) {
         pngBlob = candidate;
-      } else {
-        await cache.delete(cacheKey);
+      } else if (cache) {
+        await cache.delete(cacheKey).catch(() => {});
       }
     }
 
@@ -80,12 +90,14 @@ class TextureCacheManager {
           const pngData = await RTTEX.decode(uint8Array);
           // @ts-expect-error idk but it works
           pngBlob = new Blob([pngData.buffer], { type: "image/png" });
-          await cache.put(cacheKey, new Response(pngBlob.slice()));
+          if (cache) {
+            await cache.put(cacheKey, new Response(pngBlob.slice())).catch(() => {});
+          }
           break;
         } catch (err) {
           lastError = err;
           if (attempt < 3) {
-            await new Promise((r) => setTimeout(r, 300 * attempt));
+            await new Promise((r) => setTimeout(r, 250 * attempt));
           }
         }
       }
@@ -105,35 +117,95 @@ class TextureCacheManager {
     };
   }
 
+  /**
+   * Decode and cache an `ImageBitmap` for a `.rttex` sheet once in memory so every
+   * tile crop and Pixi GPU `ImageSource` slices instantaneously without re-decoding the sheet.
+   */
+  async getSheetBitmap(textureFileName: string): Promise<ImageBitmap> {
+    const normalizedName = textureFileName.replace(/^game\//i, "").trim();
+    const existing = this.bitmaps.get(normalizedName);
+    if (existing) {
+      return existing;
+    }
+
+    const inFlight = this.loadingBitmaps.get(normalizedName);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = (async () => {
+      const entry = await this.getTexture(normalizedName);
+      const bmp = await createImageBitmap(entry.blob);
+      this.bitmaps.set(normalizedName, bmp);
+      return bmp;
+    })();
+
+    this.loadingBitmaps.set(normalizedName, promise);
+    try {
+      return await promise;
+    } finally {
+      this.loadingBitmaps.delete(normalizedName);
+    }
+  }
+
+  /** Preload and decode a batch of `.rttex` sheet bitmaps; returns set of successfully loaded names. */
+  async preloadSheetBitmaps(textureFileNames: string[]): Promise<Set<string>> {
+    const unique = Array.from(new Set(textureFileNames.filter(Boolean)));
+    const loaded = new Set<string>();
+    await Promise.all(
+      unique.map(async (name) => {
+        try {
+          await this.getSheetBitmap(name);
+          loaded.add(name);
+        } catch {
+          // Leave missing from `loaded` so callers can retry later
+        }
+      })
+    );
+    return loaded;
+  }
+
   async getCroppedTile(
     textureFileName: string,
     textureX: number,
     textureY: number
   ): Promise<string> {
-    const tileKey = `${textureFileName}:${textureX}:${textureY}`;
+    const normalizedName = textureFileName.replace(/^game\//i, "").trim();
+    const tileKey = `${normalizedName}:${textureX}:${textureY}`;
 
     const cached = this.tiles.get(tileKey);
-    if (cached) {
+    if (cached && cached.objectUrl) {
       cached.refCount++;
       return cached.objectUrl;
     }
 
-    const textureEntry = await this.getTexture(textureFileName);
-    textureEntry.refCount++;
+    const isLongHand = /^player_longhanditem\d*\.rttex$/i.test(normalizedName);
+    const cellW = isLongHand ? 64 : 32;
+    const cellH = 32;
 
-    const croppedUrl = await cropTileFromAtlas(
-      textureEntry.objectUrl,
-      textureX,
-      textureY
-    );
+    const bitmap = await this.getSheetBitmap(normalizedName);
+    const canvas = document.createElement("canvas");
+    canvas.width = cellW;
+    canvas.height = cellH;
+    const ctx = canvas.getContext("2d");
+    if (ctx && textureX >= 0 && textureY >= 0) {
+      const cols = Math.max(1, Math.floor(bitmap.width / cellW));
+      const rows = Math.max(1, Math.floor(bitmap.height / cellH));
+      if (textureX < cols && textureY < rows) {
+        const sx = textureX * cellW;
+        const sy = textureY * cellH;
+        const cw = Math.max(0, Math.min(cellW, bitmap.width - sx));
+        const ch = Math.max(0, Math.min(cellH, bitmap.height - sy));
+        if (cw > 0 && ch > 0) {
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(bitmap, sx, sy, cw, ch, 0, 0, cw, ch);
+        }
+      }
+    }
 
-    const tileEntry: TileEntry = {
-      objectUrl: croppedUrl,
-      refCount: 1,
-    };
-    this.tiles.set(tileKey, tileEntry);
-
-    return croppedUrl;
+    const dataUrl = canvas.toDataURL("image/png");
+    this.tiles.set(tileKey, { objectUrl: dataUrl, refCount: 1 });
+    return dataUrl;
   }
 
   private itemIcons = new Map<string, string>();
@@ -225,27 +297,12 @@ class TextureCacheManager {
   ): void {
     const tileKey = `${textureFileName}:${textureX}:${textureY}`;
     const tileEntry = this.tiles.get(tileKey);
-
-    if (tileEntry) {
+    if (tileEntry && tileEntry.refCount > 0) {
       tileEntry.refCount--;
-      if (tileEntry.refCount <= 0) {
-        URL.revokeObjectURL(tileEntry.objectUrl);
-        this.tiles.delete(tileKey);
-      }
     }
-
     const textureEntry = this.textures.get(textureFileName);
-    if (textureEntry) {
+    if (textureEntry && textureEntry.refCount > 0) {
       textureEntry.refCount--;
-      if (textureEntry.refCount <= 0) {
-        setTimeout(() => {
-          const entry = this.textures.get(textureFileName);
-          if (entry && entry.refCount <= 0) {
-            URL.revokeObjectURL(entry.objectUrl);
-            this.textures.delete(textureFileName);
-          }
-        }, 10000);
-      }
     }
   }
 
@@ -259,34 +316,28 @@ class TextureCacheManager {
   ): Promise<string | null> {
     const cacheKey = `${textureFileName}:reg:${sx},${sy},${sw},${sh}`;
     const existing = this.tiles.get(cacheKey);
-    if (existing) {
+    if (existing && existing.objectUrl) {
       existing.refCount++;
       return existing.objectUrl;
     }
 
     try {
-      const texture = await this.getTexture(textureFileName);
-      const bitmap = await createImageBitmap(texture.blob);
+      const bitmap = await this.getSheetBitmap(textureFileName);
       const canvas = document.createElement("canvas");
-      canvas.width = sw;
-      canvas.height = sh;
+      canvas.width = Math.max(1, sw);
+      canvas.height = Math.max(1, sh);
       const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        bitmap.close();
-        return null;
-      }
+      if (!ctx) return null;
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
-      bitmap.close();
+      const clampedW = Math.max(0, Math.min(sw, bitmap.width - sx));
+      const clampedH = Math.max(0, Math.min(sh, bitmap.height - sy));
+      if (sx >= 0 && sy >= 0 && clampedW > 0 && clampedH > 0) {
+        ctx.drawImage(bitmap, sx, sy, clampedW, clampedH, 0, 0, clampedW, clampedH);
+      }
 
-      const croppedBlob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob((blob) => resolve(blob), "image/png"),
-      );
-      if (!croppedBlob) return null;
-
-      const objectUrl = URL.createObjectURL(croppedBlob);
-      this.tiles.set(cacheKey, { objectUrl, refCount: 1 });
-      return objectUrl;
+      const dataUrl = canvas.toDataURL("image/png");
+      this.tiles.set(cacheKey, { objectUrl: dataUrl, refCount: 1 });
+      return dataUrl;
     } catch {
       return null;
     }
@@ -304,9 +355,18 @@ class TextureCacheManager {
 
   async clearAll(): Promise<void> {
     for (const entry of this.tiles.values()) {
-      URL.revokeObjectURL(entry.objectUrl);
+      if (entry.objectUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(entry.objectUrl);
+      }
     }
     this.tiles.clear();
+    this.itemIcons.clear();
+
+    for (const bmp of this.bitmaps.values()) {
+      bmp.close();
+    }
+    this.bitmaps.clear();
+    this.loadingBitmaps.clear();
 
     for (const entry of this.textures.values()) {
       URL.revokeObjectURL(entry.objectUrl);
@@ -315,8 +375,10 @@ class TextureCacheManager {
     this.loadingTextures.clear();
 
     const cache = await this.getCacheApi();
-    const keys = await cache.keys();
-    await Promise.all(keys.map((key) => cache.delete(key)));
+    if (cache) {
+      const keys = await cache.keys();
+      await Promise.all(keys.map((key) => cache.delete(key)));
+    }
   }
 
   async batchLoadTiles(

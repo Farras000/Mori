@@ -53,6 +53,8 @@ impl World {
         let bg = tile.bg_item_id;
         if let TileType::Lock{ .. } = tile.tile_type && !NON_WORLDLOCK_TILE_IDS.contains(&tile.fg_item_id) {
             self.tile_map.world_lock_index = Some(idx as usize);
+        } else if self.tile_map.world_lock_index == Some(idx as usize) {
+            self.tile_map.world_lock_index = None;
         }
         let target_tile = self.get_tile_mut(x, y)
             .ok_or_else(|| anyhow::anyhow!("target_tile.is_none! coord: {x},{y}, world size: {width},{height}"))?;
@@ -235,9 +237,14 @@ impl WorldTileMap {
                     return WorldTilePermission::FULL_ACCESS;
                 }
             }
+            return WorldTilePermission::NONE;
         }
 
-        return WorldTilePermission::NONE;
+        if self.world_lock_index.is_some() {
+            return WorldTilePermission::NONE;
+        }
+
+        WorldTilePermission::FULL_ACCESS
     }
 }
 
@@ -283,12 +290,15 @@ impl Tile {
     pub fn parse(cur: &mut Cursor, _map_version: u16, x: u32, y: u32) -> Result<Self> {
         let fg_item_id = cur.u16()?;
         let bg_item_id = cur.u16()?;
-        let parent_block = cur.u16()?;
+        let mut parent_block = cur.u16()?;
         let flags_raw = cur.u16()?;
         let flags = TileFlags::from_bits_retain(flags_raw);
 
         if flags.contains(TileFlags::HAS_PARENT) {
-            cur.u16()?;
+            let lock_parent = cur.u16()?;
+            if lock_parent != 0 || parent_block == 0 {
+                parent_block = lock_parent;
+            }
         }
 
         let mut tile_type = TileType::Basic;

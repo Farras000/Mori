@@ -55,6 +55,36 @@ pub struct ItemInfo {
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 
+impl ItemInfo {
+    /// Returns `true` if this item is equipped on the player rather than placed in the world.
+    pub fn is_wearable(&self) -> bool {
+        matches!(self.action_type, 20 | 107)
+    }
+
+    /// Returns `true` if this item can be placed as a world tile (foreground, background, seed, lock, furniture, etc.).
+    /// Tools, currency/gems, consumables/auras, wearables, crafting/surgery components, tokens, and remote triggers
+    /// are excluded based on Growtopia's `items.dat` `action_type` semantics.
+    pub fn is_placeable_tile(&self) -> bool {
+        if self.id == 0 {
+            return false;
+        }
+        !matches!(
+            self.action_type,
+            0   // Fist tool
+            | 1 // Wrench tool
+            | 4 // Gems currency
+            | 8 // Consumables, wands, temporary auras/effects
+            | 20 // Wearable clothing
+            | 37 // Components, chemicals, surgical tools, Growtokens, Golden Tickets, Caduceus
+            | 107 // Ancestral artifacts (wearable slot)
+            | 112 // MAGPLANT 5000 Remote (activated/held, not placed as tile)
+            | 114 // Bot programming commands
+            | 115 // Lucky Tokens
+            | 132 // Mining Explosives (single-use consumable action)
+        )
+    }
+}
+
 /// Items.dat packs colors as BGRA (MSB→LSB). Returns `(b, g, r, a)`.
 pub fn extract_bgra(color: u32) -> (u8, u8, u8, u8) {
     let b = (color >> 24) as u8;
@@ -247,5 +277,28 @@ mod tests {
 
         assert!(!db.items.is_empty());
         assert!(db.items.last().unwrap().name != "");
+    }
+
+    #[test]
+    fn placeable_classification_matches_gt() {
+        let data = std::fs::read("items.dat").expect("items.dat not found in project root");
+        let db = ItemsDat::parse(&data).expect("parse failed");
+
+        // Placeable blocks, backgrounds, seeds, and locks
+        for id in [2u32, 3, 14, 102, 202, 242] {
+            let item = db.find_by_id(id).unwrap();
+            assert!(item.is_placeable_tile(), "expected {} ({id}) to be placeable", item.name);
+        }
+
+        // Non-placeable tools, gems, wearables, consumables, chemicals, surgery, tokens
+        for id in [0u32, 18, 32, 98, 112, 196, 228, 914, 1260, 1486, 1898, 4298, 5078, 5640, 5752] {
+            let item = db.find_by_id(id).unwrap();
+            assert!(!item.is_placeable_tile(), "expected {} ({id}) NOT to be placeable", item.name);
+        }
+
+        // Wearables (clothing + ancestrals)
+        assert!(db.find_by_id(98).unwrap().is_wearable());
+        assert!(db.find_by_id(5078).unwrap().is_wearable());
+        assert!(!db.find_by_id(914).unwrap().is_wearable());
     }
 }
